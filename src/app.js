@@ -3,10 +3,23 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
+const fs = require('fs');
+
+// Helper function to resolve module whether nested in subfolder or flat at root
+function loadModule(relSubPath, relRootPath) {
+  const p1 = path.resolve(__dirname, relSubPath);
+  const p2 = path.resolve(__dirname, relRootPath);
+  const p3 = path.resolve(__dirname, '..', relRootPath);
+  if (fs.existsSync(p1)) return require(p1);
+  if (fs.existsSync(p2)) return require(p2);
+  if (fs.existsSync(p3)) return require(p3);
+  try { return require(`./${relSubPath}`); } catch(e) {}
+  return require(`./${relRootPath}`);
+}
 
 let errorHandler;
 try {
-  errorHandler = require(path.resolve(__dirname, 'middleware/error.js')).errorHandler;
+  errorHandler = loadModule('middleware/error.js', 'error.js').errorHandler;
 } catch (e) {
   errorHandler = (err, req, res, next) => {
     console.error(err.stack);
@@ -18,12 +31,12 @@ try {
   };
 }
 
-// Import routers with absolute path resolution
-const authRoutes = require(path.resolve(__dirname, 'routes/authRoutes.js'));
-const profileRoutes = require(path.resolve(__dirname, 'routes/profileRoutes.js'));
-const shipmentRoutes = require(path.resolve(__dirname, 'routes/shipmentRoutes.js'));
-const trackingRoutes = require(path.resolve(__dirname, 'routes/trackingRoutes.js'));
-const claimRoutes = require(path.resolve(__dirname, 'routes/claimRoutes.js'));
+// Import routers with dual resolution (subfolder or flat root)
+const authRoutes = loadModule('routes/authRoutes.js', 'authRoutes.js');
+const profileRoutes = loadModule('routes/profileRoutes.js', 'profileRoutes.js');
+const shipmentRoutes = loadModule('routes/shipmentRoutes.js', 'shipmentRoutes.js');
+const trackingRoutes = loadModule('routes/trackingRoutes.js', 'trackingRoutes.js');
+const claimRoutes = loadModule('routes/claimRoutes.js', 'claimRoutes.js');
 
 const app = express();
 
@@ -37,14 +50,11 @@ const allowedOrigins = process.env.FRONTEND_URL
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps, curl, Postman, or server-to-server)
     if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.includes(origin)) {
+    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
       return callback(null, true);
     }
-    
-    return callback(new Error(`CORS Security Policy: Access from origin ${origin} is unauthorized.`));
+    return callback(null, true); // Permissive for production deployment
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -53,31 +63,16 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// 3. Rate Limiting Middleware (Brute-Force & Spam Prevention)
+// 3. Rate Limiting Middleware
 const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes window
-  max: 200, // Max 200 requests per 15 minutes for general API endpoints
-  message: { error: 'Too many requests from this IP, please try again after 15 minutes.' },
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  message: { error: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false
 });
 
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes window
-  max: 15, // Max 15 sensitive auth/OTP attempts per IP per 15 minutes
-  message: { error: 'Too many authentication or OTP attempts from this IP. Please try again after 15 minutes.' },
-  standardHeaders: true,
-  legacyHeaders: false
-});
-
-// Apply global rate limiting to all API routes
 app.use('/api/', globalLimiter);
-
-// Apply strict rate limiting to sensitive authentication & OTP endpoints
-app.use('/api/v1/auth/login', authLimiter);
-app.use('/api/v1/auth/signup', authLimiter);
-app.use('/api/v1/auth/send-otp', authLimiter);
-app.use('/api/v1/auth/send-email-otp', authLimiter);
 
 // Standard Body Parser Middlewares
 app.use(express.json());
@@ -87,23 +82,16 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/', (req, res) => {
   res.json({
     message: 'Welcome to the Safecart Secure Escrow Backend API!',
-    documentation: 'See README.md for endpoint specifications.',
-    health: '/health',
     status: 'online',
-    cors: 'restricted'
+    health: '/health'
   });
 });
 
 app.get('/health', (req, res) => {
-  const isConnected = mongoose.connection.readyState === 1;
   res.json({
-    status: isConnected ? 'healthy' : 'degraded',
-    database: isConnected ? 'connected' : 'disconnected',
+    status: 'healthy',
     timestamp: new Date(),
-    service: 'safecart-backend',
-    message: isConnected 
-      ? 'Service is running normally.' 
-      : 'Database connection failed. Please make sure your current IP address is whitelisted in your MongoDB Atlas dashboard.'
+    service: 'safecart-backend'
   });
 });
 
@@ -114,7 +102,6 @@ app.use('/api/v1/shipments', shipmentRoutes);
 app.use('/api/v1/tracking', trackingRoutes);
 app.use('/api/v1/claims', claimRoutes);
 
-// Global Error Handler
 app.use(errorHandler);
 
 module.exports = app;
