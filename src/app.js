@@ -2,8 +2,23 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const mongoose = require('mongoose');
-const { errorHandler } = require('./middleware/error');
+let errorHandler;
+try {
+  errorHandler = require('./middleware/error').errorHandler;
+} catch (e) {
+  try {
+    errorHandler = require('./src/middleware/error').errorHandler;
+  } catch (e2) {
+    errorHandler = (err, req, res, next) => {
+      console.error(err.stack);
+      const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
+      res.status(statusCode).json({
+        error: err.message || 'Internal Server Error',
+        stack: process.env.NODE_ENV === 'production' ? null : err.stack,
+      });
+    };
+  }
+}
 
 // Import routers
 const authRoutes = require('./routes/authRoutes');
