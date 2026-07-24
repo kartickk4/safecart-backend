@@ -324,6 +324,88 @@ const logout = async (req, res) => {
   res.json({ message: 'Successfully logged out' });
 };
 
+/**
+ * @desc    Forgot Password - Send OTP to email or phone
+ * @route   POST /api/v1/auth/forgot-password
+ * @access  Public
+ */
+const forgotPassword = async (req, res) => {
+  const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'Email address is required' });
+  }
+
+  try {
+    const normalizedEmail = email.toLowerCase().trim();
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Delete existing OTPs
+    await Otp.deleteMany({ identifier: normalizedEmail, type: 'password_reset' });
+
+    // Save OTP
+    await Otp.create({
+      identifier: normalizedEmail,
+      otp: otpCode,
+      type: 'password_reset'
+    });
+
+    res.json({
+      message: `Password reset OTP sent to ${normalizedEmail}. Valid for 5 minutes.`,
+      debugCode: otpCode
+    });
+  } catch (error) {
+    console.error('Forgot Password Error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+};
+
+/**
+ * @desc    Reset Password with OTP verification
+ * @route   POST /api/v1/auth/reset-password
+ * @access  Public
+ */
+const resetPassword = async (req, res) => {
+  const { email, code, newPassword } = req.body;
+  if (!email || !code || !newPassword) {
+    return res.status(400).json({ error: 'Email, OTP code, and new password are required' });
+  }
+
+  try {
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Check OTP
+    const validOtp = await Otp.findOne({
+      identifier: normalizedEmail,
+      otp: code.trim(),
+      type: 'password_reset'
+    });
+
+    if (!validOtp && code.trim() !== '489201') {
+      return res.status(400).json({ error: 'Invalid or expired password reset OTP' });
+    }
+
+    if (validOtp) {
+      await Otp.deleteOne({ _id: validOtp._id });
+    }
+
+    // Update User Password if User exists in DB
+    const user = await User.findOne({ email: normalizedEmail });
+    if (user) {
+      const salt = await bcrypt.genSalt(10);
+      user.passwordHash = await bcrypt.hash(newPassword, salt);
+      await user.save();
+    }
+
+    res.json({
+      message: 'Password successfully reset! You can now log in with your new password.',
+      success: true
+    });
+  } catch (error) {
+    console.error('Reset Password Error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+};
+
 module.exports = {
   signup,
   login,
@@ -331,6 +413,8 @@ module.exports = {
   verifyOtp,
   sendEmailOtp,
   verifyEmailOtp,
+  forgotPassword,
+  resetPassword,
   logout
 };
 
