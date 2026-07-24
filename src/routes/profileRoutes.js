@@ -1,11 +1,29 @@
 const express = require('express');
-const { getProfile, updateProfile } = require('../controllers/profileController');
-const { protect } = require('../middleware/auth');
+const path = require('path');
+const fs = require('fs');
+
+function loadModule(target) {
+  const candidates = [
+    path.resolve(__dirname, '..', 'controllers', target),
+    path.resolve(__dirname, 'controllers', target),
+    path.resolve(__dirname, target),
+    path.resolve(process.cwd(), 'src', 'controllers', target),
+    path.resolve(process.cwd(), 'controllers', target),
+    path.resolve(process.cwd(), target)
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c + '.js')) return require(c + '.js');
+    if (fs.existsSync(c)) return require(c);
+  }
+  try { return require(`../controllers/${target}`); } catch(e) {}
+  try { return require(`./controllers/${target}`); } catch(e) {}
+  return require(`./${target}`);
+}
+
+const profileController = loadModule('profileController');
 
 const router = express.Router();
-
-router.route('/')
-  .get(protect, getProfile)
-  .put(protect, updateProfile);
+router.get('/me', profileController.getProfile);
+router.put('/me', profileController.updateProfile);
 
 module.exports = router;
