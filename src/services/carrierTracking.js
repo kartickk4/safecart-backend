@@ -48,13 +48,13 @@ const getTrackingDetails = async (carrierSlug, awbCode) => {
       activities: [
         {
           activity: "Package Picked Up by Courier Partner",
-          location: "Sender Location",
+          location: "Bhiwandi Warehouse, Maharashtra",
           date: new Date(Date.now() - 3600000 * 4).toISOString(),
           status: "Picked Up"
         },
         {
-          activity: "Arrived at Sorting Hub",
-          location: "Intermediate Sorting Hub",
+          activity: "Arrived at Regional Sorting Hub",
+          location: "Bhiwandi Sorting Hub, Maharashtra",
           date: new Date(Date.now() - 3600000 * 2).toISOString(),
           status: "In Transit"
         }
