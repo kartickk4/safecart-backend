@@ -1,57 +1,44 @@
-# Safecart Backend
+# Safecart Escrow & Logistics Backend API
 
-Node.js + Express + MongoDB Atlas backend for **Safecart (ParcelSafe)** — an escrow-based secure delivery platform with **Shiprocket Sandbox** logistics integration.
+Express & MongoDB REST API server powering the Safecart Escrow and Logistics platform.
 
-## Stack
-- **Runtime:** Node.js 18+
-- **Framework:** Express.js
-- **Database:** MongoDB Atlas (Mongoose)
-- **Auth:** JWT + bcrypt
-- **Logistics:** Shiprocket API v2 (sandbox or mock mode)
-- **Jobs:** node-cron tracking poll fallback
+## 🚀 API Endpoints
 
-## Quick Start
+- **`POST /api/v1/auth/signup`**: Register user with 2FA mobile OTP.
+- **`POST /api/v1/auth/login`**: Authenticate user & issue JWT token.
+- **`POST /api/v1/auth/send-otp`**: Dispatch SMS OTP.
+- **`POST /api/v1/auth/verify-otp`**: Verify dynamic 6-digit OTP code.
+- **`GET /api/v1/profile`**: Get user profile & bank payout details.
+- **`GET /api/v1/shipments`**: List all escrow shipments.
+- **`POST /api/v1/shipments`**: Book new escrow shipment.
+- **`POST /api/v1/shipments/:id/fund`**: Lock payment in escrow vault.
+- **`PUT /api/v1/shipments/:id/release`**: Release escrow payment to seller upon delivery.
+- **`GET /api/v1/tracking/:awb`**: Fetch live courier milestone updates (TrackCourier).
+- **`POST /api/v1/claims`**: File dispute claim with proof evidence links.
+
+## 🛠️ Tech Stack
+
+- **Runtime**: Node.js + Express
+- **Database**: MongoDB Atlas + Mongoose
+- **Security**: Helmet, Rate-Limit, CORS, JWT
+- **Services**: BigDataCloud SMS API, TrackCourier API
+
+## 🏃 Getting Started
+
+### 1. Installation
 ```bash
-cd scratch/safecart-backend
-cp .env.example .env
-# Edit .env with your MongoDB URI and secrets
 npm install
-npm run dev
 ```
-Server runs at `http://localhost:5000`.
 
-## Environment Variables
-| Variable | Description |
-|---|---|
-| `MONGODB_URI` | MongoDB Atlas connection string |
-| `JWT_SECRET` | Secret for signing JWT tokens |
-| `SHIPROCKET_EMAIL` | Shiprocket sandbox account email |
-| `SHIPROCKET_PASSWORD` | Shiprocket sandbox password |
-| `SHIPROCKET_MOCK` | Set `true` to simulate Shiprocket locally |
-| `ENABLE_TRACKING_CRON` | Set `true` to enable 30-min tracking poll |
+### 2. Environment Variables (`.env`)
+```env
+PORT=5001
+MONGODB_URI=mongodb+srv://...
+JWT_SECRET=your_secret_key
+SMS_API_KEY=your_sms_api_key
+```
 
-## API Endpoints
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| POST | `/api/v1/auth/signup` | No | Register user |
-| POST | `/api/v1/auth/login` | No | Login, returns JWT |
-| GET | `/api/v1/profile` | Yes | View profile & bank details |
-| PUT | `/api/v1/profile` | Yes | Update profile / payout bank |
-| GET | `/api/v1/shipments` | Yes | List user's shipments |
-| GET | `/api/v1/shipments/:id` | Yes | Get shipment + carrier journey |
-| POST | `/api/v1/shipments` | Yes | Create escrow booking |
-| POST | `/api/v1/shipments/:id/fund` | Yes | Fund escrow & create Shiprocket order |
-| PUT | `/api/v1/shipments/:id/release` | Yes | Receiver confirms; release escrow |
-| POST | `/api/v1/claims` | Yes | File dispute; lock escrow |
-| POST | `/api/v1/tracking/webhook/shiprocket` | No | Shiprocket status webhook |
-
-All protected routes require header: `Authorization: Bearer <token>`
-
-## Escrow Lifecycle
-1. **Stage 1** — Shipment created (`Awaiting Payment`)
-2. **Stage 2** — Escrow funding initiated
-3. **Stage 3** — Shiprocket order created (`Pending Pickup`)
-4. **Stage 4** — In transit / out for delivery
-5. **Stage 5** — Delivered (receiver notified to confirm)
-6. **Stage 6** — Released (funds disbursed)
-7. **Stage -1** — Locked (dispute claim filed)
+### 3. Start Server
+```bash
+npm start
+```
