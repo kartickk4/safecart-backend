@@ -1,10 +1,30 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const User = require('../models/User');
-const Otp = require('../models/Otp');
-const smsService = require('../services/smsService');
-const emailVerifierService = require('../services/emailVerifierService');
+const path = require('path');
+const fs = require('fs');
+
+function loadMod(type, name) {
+  const candidates = [
+    path.resolve(__dirname, '..', type, name),
+    path.resolve(__dirname, type, name),
+    path.resolve(__dirname, name),
+    path.resolve(process.cwd(), 'src', type, name),
+    path.resolve(process.cwd(), type, name),
+    path.resolve(process.cwd(), name)
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c + '.js')) return require(c + '.js');
+    if (fs.existsSync(c)) return require(c);
+  }
+  try { return require(`../${type}/${name}`); } catch(e) {}
+  return require(`./${name}`);
+}
+
+const User = loadMod('models', 'User');
+const Otp = loadMod('models', 'Otp');
+const smsService = loadMod('services', 'smsService');
+const emailVerifierService = loadMod('services', 'emailVerifierService');
 
 // Helper: Generate long-lived Access Token (30 days)
 const generateAccessToken = (id) => {
