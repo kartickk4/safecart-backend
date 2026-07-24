@@ -6,7 +6,7 @@ const path = require('path');
 
 let errorHandler;
 try {
-  errorHandler = require(path.join(__dirname, 'middleware', 'error')).errorHandler;
+  errorHandler = require('./middleware/error.js').errorHandler;
 } catch (e) {
   errorHandler = (err, req, res, next) => {
     console.error(err.stack);
@@ -18,12 +18,12 @@ try {
   };
 }
 
-// Import routers with absolute path resolution
-const authRoutes = require(path.join(__dirname, 'routes', 'authRoutes'));
-const profileRoutes = require(path.join(__dirname, 'routes', 'profileRoutes'));
-const shipmentRoutes = require(path.join(__dirname, 'routes', 'shipmentRoutes'));
-const trackingRoutes = require(path.join(__dirname, 'routes', 'trackingRoutes'));
-const claimRoutes = require(path.join(__dirname, 'routes', 'claimRoutes'));
+// Import routers with explicit .js extension
+const authRoutes = require('./routes/authRoutes.js');
+const profileRoutes = require('./routes/profileRoutes.js');
+const shipmentRoutes = require('./routes/shipmentRoutes.js');
+const trackingRoutes = require('./routes/trackingRoutes.js');
+const claimRoutes = require('./routes/claimRoutes.js');
 
 const app = express();
 
