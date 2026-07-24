@@ -15,7 +15,7 @@ function loadModule(target) {
     if (fs.existsSync(c + '.js')) return require(c + '.js');
     if (fs.existsSync(c)) return require(c);
   }
-  return require(`../controllers/${target}`);
+  return require(`./${target}`);
 }
 
 const authController = loadModule('authController');
