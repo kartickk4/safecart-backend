@@ -2,30 +2,28 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const path = require('path');
+
 let errorHandler;
 try {
-  errorHandler = require('./middleware/error').errorHandler;
+  errorHandler = require(path.join(__dirname, 'middleware', 'error')).errorHandler;
 } catch (e) {
-  try {
-    errorHandler = require('./src/middleware/error').errorHandler;
-  } catch (e2) {
-    errorHandler = (err, req, res, next) => {
-      console.error(err.stack);
-      const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
-      res.status(statusCode).json({
-        error: err.message || 'Internal Server Error',
-        stack: process.env.NODE_ENV === 'production' ? null : err.stack,
-      });
-    };
-  }
+  errorHandler = (err, req, res, next) => {
+    console.error(err.stack);
+    const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
+    res.status(statusCode).json({
+      error: err.message || 'Internal Server Error',
+      stack: process.env.NODE_ENV === 'production' ? null : err.stack,
+    });
+  };
 }
 
-// Import routers
-const authRoutes = require('./routes/authRoutes');
-const profileRoutes = require('./routes/profileRoutes');
-const shipmentRoutes = require('./routes/shipmentRoutes');
-const trackingRoutes = require('./routes/trackingRoutes');
-const claimRoutes = require('./routes/claimRoutes');
+// Import routers with absolute path resolution
+const authRoutes = require(path.join(__dirname, 'routes', 'authRoutes'));
+const profileRoutes = require(path.join(__dirname, 'routes', 'profileRoutes'));
+const shipmentRoutes = require(path.join(__dirname, 'routes', 'shipmentRoutes'));
+const trackingRoutes = require(path.join(__dirname, 'routes', 'trackingRoutes'));
+const claimRoutes = require(path.join(__dirname, 'routes', 'claimRoutes'));
 
 const app = express();
 

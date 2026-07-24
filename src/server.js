@@ -1,7 +1,8 @@
 require('dotenv').config();
-const app = require('./app');
-const connectDB = require('./config/db');
-const { initTrackingJob } = require('./jobs/trackingPoll');
+const path = require('path');
+const app = require(path.join(__dirname, 'app'));
+const connectDB = require(path.join(__dirname, 'config', 'db'));
+const { initTrackingJob } = require(path.join(__dirname, 'jobs', 'trackingPoll'));
 
 const PORT = process.env.PORT || 5000;
 
