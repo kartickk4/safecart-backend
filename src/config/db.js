@@ -7,7 +7,9 @@ const connectDB = async () => {
       console.warn('⚠️ WARNING: MONGODB_URI is not set in environment variables. Database operations will fail until MONGODB_URI is provided.');
       return;
     }
-    const conn = await mongoose.connect(connStr);
+    const conn = await mongoose.connect(connStr, {
+      serverSelectionTimeoutMS: 5000,
+    });
     console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {
     console.error(`❌ MongoDB Connection Error: ${error.message}`);
