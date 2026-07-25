@@ -142,13 +142,20 @@ const login = async (req, res) => {
  * @access  Public
  */
 const sendOtp = async (req, res) => {
-  const { phone, email } = req.body;
-  if (!phone) {
+  let { phone, email } = req.body;
+
+  // Handle nested object payloads
+  if (typeof phone === 'object' && phone !== null) {
+    email = phone.email || email;
+    phone = phone.phone;
+  }
+
+  if (!phone || typeof phone !== 'string') {
     return res.status(400).json({ error: 'Phone number is required' });
   }
 
   try {
-    const normalizedPhone = (phone || '').toString().trim().replace(/\s+/g, '');
+    const normalizedPhone = phone.trim().replace(/\s+/g, '');
 
     // Check if user with this phone or email already exists
     const existingUser = await User.findOne({
@@ -198,13 +205,19 @@ const sendOtp = async (req, res) => {
  * @access  Public
  */
 const verifyOtp = async (req, res) => {
-  const { phone, code } = req.body;
+  let { phone, code } = req.body;
+  if (typeof phone === 'object' && phone !== null) {
+    code = phone.code || code;
+    phone = phone.phone;
+  }
+
   if (!phone || !code) {
     return res.status(400).json({ error: 'Phone and OTP code are required' });
   }
 
   try {
-    const normalizedPhone = phone.trim();
+    const normalizedPhone = (phone || '').toString().trim().replace(/\s+/g, '');
+    const cleanCode = (code || '').toString().trim();
 
     // Query MongoDB for valid OTP
     const validOtp = await Otp.findOne({
