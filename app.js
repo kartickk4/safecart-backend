@@ -2,71 +2,85 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const path = require('path');
-const fs = require('fs');
 
-// Helper function to resolve module whether nested in subfolder or flat at root
-function loadModule(relSubPath, relRootPath) {
-  const p1 = path.resolve(__dirname, relSubPath);
-  const p2 = path.resolve(__dirname, relRootPath);
-  const p3 = path.resolve(__dirname, '..', relRootPath);
-  if (fs.existsSync(p1)) return require(p1);
-  if (fs.existsSync(p2)) return require(p2);
-  if (fs.existsSync(p3)) return require(p3);
-  try { return require(`./${relSubPath}`); } catch(e) {}
-  return require(`./${relRootPath}`);
-}
-
+// Error handler
 const { errorHandler } = require('./middleware/error');
 
-// Import routers with dual resolution (subfolder or flat root)
-const authRoutes = loadModule('routes/authRoutes.js', 'authRoutes.js');
-const profileRoutes = loadModule('routes/profileRoutes.js', 'profileRoutes.js');
-const shipmentRoutes = loadModule('routes/shipmentRoutes.js', 'shipmentRoutes.js');
-const trackingRoutes = loadModule('routes/trackingRoutes.js', 'trackingRoutes.js');
-const claimRoutes = loadModule('routes/claimRoutes.js', 'claimRoutes.js');
+// Routes
+const authRoutes = require('./routes/authRoutes');
+const profileRoutes = require('./routes/profileRoutes');
+const shipmentRoutes = require('./routes/shipmentRoutes');
+const trackingRoutes = require('./routes/trackingRoutes');
+const claimRoutes = require('./routes/claimRoutes');
 
 const app = express();
 
-// 1. Security Headers Middleware (Helmet)
+// Security Headers
 app.use(helmet());
 
-// 2. Strict CORS Security Policy (Restricted to Authorized Domains)
-const allowedOrigins = process.env.FRONTEND_URL 
-  ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
-  : ['http://localhost:3000', 'http://localhost:5173', 'https://safecart.app'];
+// CORS
+const allowedOrigins = process.env.FRONTEND_URL
+  ? process.env.FRONTEND_URL
+      .split(',')
+      .map(url => url.trim())
+  : [
+      'http://localhost:3000',
+      'http://localhost:5173',
+      'https://safecart.app'
+    ];
 
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+    if (!origin) {
       return callback(null, true);
     }
-    return callback(null, true); // Permissive for production deployment
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error('Not allowed by CORS'));
   },
+
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+
+  methods: [
+    'GET',
+    'POST',
+    'PUT',
+    'DELETE',
+    'OPTIONS'
+  ],
+
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With'
+  ]
 };
 
 app.use(cors(corsOptions));
 
-// 3. Rate Limiting Middleware
+// Rate Limiting
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 200,
-  message: { error: 'Too many requests, please try again later.' },
+
+  message: {
+    error: 'Too many requests, please try again later.'
+  },
+
   standardHeaders: true,
   legacyHeaders: false
 });
 
 app.use('/api/', globalLimiter);
 
-// Standard Body Parser Middlewares
+// Body Parsers
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Basic Welcome & Healthcheck API
+// Welcome Route
 app.get('/', (req, res) => {
   res.json({
     message: 'Welcome to the Safecart Secure Escrow Backend API!',
@@ -75,6 +89,7 @@ app.get('/', (req, res) => {
   });
 });
 
+// Health Check
 app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
@@ -83,13 +98,14 @@ app.get('/health', (req, res) => {
   });
 });
 
-// App Router Declarations
+// API Routes
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/profile', profileRoutes);
 app.use('/api/v1/shipments', shipmentRoutes);
 app.use('/api/v1/tracking', trackingRoutes);
 app.use('/api/v1/claims', claimRoutes);
 
+// Error Handler MUST be last
 app.use(errorHandler);
 
 module.exports = app;
