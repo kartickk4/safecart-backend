@@ -16,13 +16,15 @@ function loadMod(type, name) {
     if (fs.existsSync(c)) return require(c);
   }
   try { return require(`../${type}/${name}`); } catch(e) {}
+  try { return require(`./${type}/${name}`); } catch(e) {}
   return require(`./${name}`);
 }
 
-const { handleWebhook } = loadMod('controllers', 'trackingController');
+const { getTrackingByAwb, handleWebhook } = loadMod('controllers', 'trackingController');
 
 const router = express.Router();
 
+router.get('/:awb', getTrackingByAwb);
 router.post('/webhook/carrier-tracking', handleWebhook);
 router.post('/webhook/shiprocket', handleWebhook);
 

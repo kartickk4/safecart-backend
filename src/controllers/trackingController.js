@@ -4,6 +4,39 @@ const User = require('../models/User');
 const { createNotification } = require('../services/notification');
 
 /**
+ * @desc    Get tracking journey details by AWB code or Shipment ID
+ * @route   GET /api/v1/tracking/:awb
+ * @access  Public
+ */
+const getTrackingByAwb = async (req, res) => {
+  const { awb } = req.params;
+
+  try {
+    const shipment = await Shipment.findOne({
+      $or: [{ awbCode: awb }, { shipmentId: awb }]
+    });
+
+    const journey = await CarrierJourney.findOne({
+      $or: [{ awbCode: awb }, { shipmentId: awb }]
+    });
+
+    if (!shipment && !journey) {
+      return res.status(404).json({ error: 'Tracking info not found for provided AWB or Shipment ID' });
+    }
+
+    res.json({
+      shipment: shipment || null,
+      awb: awb,
+      status: shipment ? shipment.status : (journey ? journey.courierName : 'In Transit'),
+      journey: journey ? journey.milestones : []
+    });
+  } catch (error) {
+    console.error('Get Tracking Error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+};
+
+/**
  * @desc    Receive simulated tracking webhook updates
  * @route   POST /api/v1/tracking/webhook/carrier-tracking
  * @access  Public
@@ -72,7 +105,6 @@ const handleWebhook = async (req, res) => {
       newStage = 3;
     }
 
-    // Save only if changes occurred
     if (newStatus !== shipment.status || newStage !== shipment.escrowStage) {
       shipment.status = newStatus;
       shipment.escrowStage = newStage;
@@ -80,7 +112,6 @@ const handleWebhook = async (req, res) => {
 
       console.log(`[TRACKING WEBHOOK] Shipment ${shipment.shipmentId} updated to: ${newStatus}`);
 
-      // Send notifications to sender
       await createNotification(
         shipment.senderId,
         'local_shipping',
@@ -89,7 +120,6 @@ const handleWebhook = async (req, res) => {
         'shipping'
       );
 
-      // Send notification to receiver (if in database)
       const receiver = await User.findOne({ phone: shipment.receiverPhone });
       if (receiver) {
         await createNotification(
@@ -100,7 +130,6 @@ const handleWebhook = async (req, res) => {
           'shipping'
         );
 
-        // If delivered, notify receiver to confirm and release
         if (newStage === 5) {
           const amtFormatted = `₹${new Intl.NumberFormat('en-IN').format(shipment.amount)}`;
           await createNotification(
@@ -122,5 +151,6 @@ const handleWebhook = async (req, res) => {
 };
 
 module.exports = {
+  getTrackingByAwb,
   handleWebhook
 };
