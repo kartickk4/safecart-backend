@@ -1,4 +1,25 @@
-const User = require('../models/User');
+const path = require('path');
+const fs = require('fs');
+
+function loadMod(type, name) {
+  const candidates = [
+    path.resolve(__dirname, '..', type, name),
+    path.resolve(__dirname, type, name),
+    path.resolve(__dirname, name),
+    path.resolve(process.cwd(), 'src', type, name),
+    path.resolve(process.cwd(), type, name),
+    path.resolve(process.cwd(), name)
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c + '.js')) return require(c + '.js');
+    if (fs.existsSync(c)) return require(c);
+  }
+  try { return require(`../${type}/${name}`); } catch(e) {}
+  try { return require(`./${type}/${name}`); } catch(e) {}
+  return require(`./${name}`);
+}
+
+const User = loadMod('models', 'User');
 
 /**
  * @desc    Get current user profile details
@@ -45,7 +66,7 @@ const updateProfile = async (req, res) => {
     }
 
     const updatedUser = await user.save();
-    
+
     // Exclude password hash from response
     const userResponse = updatedUser.toObject();
     delete userResponse.passwordHash;

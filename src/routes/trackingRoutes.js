@@ -2,28 +2,28 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 
-function loadModule(target) {
+function loadMod(type, name) {
   const candidates = [
-    path.resolve(__dirname, '..', 'controllers', target),
-    path.resolve(__dirname, 'controllers', target),
-    path.resolve(__dirname, target),
-    path.resolve(process.cwd(), 'src', 'controllers', target),
-    path.resolve(process.cwd(), 'controllers', target),
-    path.resolve(process.cwd(), target)
+    path.resolve(__dirname, '..', type, name),
+    path.resolve(__dirname, type, name),
+    path.resolve(__dirname, name),
+    path.resolve(process.cwd(), 'src', type, name),
+    path.resolve(process.cwd(), type, name),
+    path.resolve(process.cwd(), name)
   ];
   for (const c of candidates) {
     if (fs.existsSync(c + '.js')) return require(c + '.js');
     if (fs.existsSync(c)) return require(c);
   }
-  try { return require(`../controllers/${target}`); } catch(e) {}
-  try { return require(`./controllers/${target}`); } catch(e) {}
-  return require(`./${target}`);
+  try { return require(`../${type}/${name}`); } catch(e) {}
+  return require(`./${name}`);
 }
 
-const trackingController = loadModule('trackingController');
+const { handleWebhook } = loadMod('controllers', 'trackingController');
 
 const router = express.Router();
-router.get('/:trackingNumber', trackingController.getTrackingDetails);
-router.post('/:trackingNumber/sync', trackingController.syncCarrierStatus);
+
+router.post('/webhook/carrier-tracking', handleWebhook);
+router.post('/webhook/shiprocket', handleWebhook);
 
 module.exports = router;
