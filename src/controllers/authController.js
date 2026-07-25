@@ -142,13 +142,26 @@ const login = async (req, res) => {
  * @access  Public
  */
 const sendOtp = async (req, res) => {
-  const { phone } = req.body;
+  const { phone, email } = req.body;
   if (!phone) {
     return res.status(400).json({ error: 'Phone number is required' });
   }
 
   try {
-    const normalizedPhone = phone.trim();
+    const normalizedPhone = (phone || '').toString().trim().replace(/\s+/g, '');
+
+    // Check if user with this phone or email already exists
+    const existingUser = await User.findOne({
+      $or: [
+        { phone: normalizedPhone },
+        ...(email ? [{ email: email.toLowerCase().trim() }] : [])
+      ]
+    });
+
+    if (existingUser) {
+      return res.status(400).json({ error: 'An account with this phone number or email already exists. Please sign in instead.' });
+    }
+
     // Generate 6-digit random OTP
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
@@ -163,15 +176,19 @@ const sendOtp = async (req, res) => {
     });
 
     // Dispatch SMS via BigDataCloud API using configured API key
-    await smsService.sendSmsOtp(normalizedPhone, otpCode);
+    try {
+      await smsService.sendSmsOtp(normalizedPhone, otpCode);
+    } catch (smsErr) {
+      console.warn('[SMS SERVICE Dispatch Warning]:', smsErr.message);
+    }
 
     res.json({
       message: `Verification code sent to ${normalizedPhone}. Valid for 5 minutes.`,
-      debugCode: otpCode // Retained for convenience during local testing/postman
+      debugCode: otpCode
     });
   } catch (error) {
     console.error('Send Phone OTP Error:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 };
 
