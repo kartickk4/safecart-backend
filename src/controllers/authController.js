@@ -383,13 +383,24 @@ const logout = async (req, res) => {
  * @access  Public
  */
 const forgotPassword = async (req, res) => {
-  const { email } = req.body;
-  if (!email) {
+  let { email } = req.body;
+  if (typeof email === 'object' && email !== null) {
+    email = email.email;
+  }
+
+  if (!email || typeof email !== 'string') {
     return res.status(400).json({ error: 'Email address is required' });
   }
 
   try {
     const normalizedEmail = email.toLowerCase().trim();
+
+    // Check if user account exists in DB
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(404).json({ error: 'No user account registered with this email address.' });
+    }
+
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
     // Delete existing OTPs
@@ -408,7 +419,7 @@ const forgotPassword = async (req, res) => {
     });
   } catch (error) {
     console.error('Forgot Password Error:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 };
 
@@ -418,28 +429,33 @@ const forgotPassword = async (req, res) => {
  * @access  Public
  */
 const resetPassword = async (req, res) => {
-  const { email, code, newPassword } = req.body;
+  let { email, code, newPassword } = req.body;
+  if (typeof email === 'object' && email !== null) {
+    code = email.code || code;
+    newPassword = email.newPassword || newPassword;
+    email = email.email;
+  }
+
   if (!email || !code || !newPassword) {
     return res.status(400).json({ error: 'Email, OTP code, and new password are required' });
   }
 
   try {
-    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedEmail = (email || '').toString().toLowerCase().trim();
+    const cleanCode = (code || '').toString().trim();
 
     // Check OTP
     const validOtp = await Otp.findOne({
       identifier: normalizedEmail,
-      otp: code.trim(),
+      otp: cleanCode,
       type: 'password_reset'
     });
 
-    if (!validOtp && code.trim() !== '489201') {
-      return res.status(400).json({ error: 'Invalid or expired password reset OTP' });
+    if (!validOtp) {
+      return res.status(400).json({ error: 'Invalid or expired password reset OTP code' });
     }
 
-    if (validOtp) {
-      await Otp.deleteOne({ _id: validOtp._id });
-    }
+    await Otp.deleteOne({ _id: validOtp._id });
 
     // Update User Password if User exists in DB
     const user = await User.findOne({ email: normalizedEmail });
@@ -455,7 +471,7 @@ const resetPassword = async (req, res) => {
     });
   } catch (error) {
     console.error('Reset Password Error:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    res.status(500).json({ error: error.message || 'Internal Server Error' });
   }
 };
 
