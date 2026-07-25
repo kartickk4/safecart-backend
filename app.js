@@ -17,19 +17,7 @@ function loadModule(relSubPath, relRootPath) {
   return require(`./${relRootPath}`);
 }
 
-let errorHandler;
-try {
-  errorHandler = loadModule('middleware/error.js', 'error.js').errorHandler;
-} catch (e) {
-  errorHandler = (err, req, res, next) => {
-    console.error(err.stack);
-    const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
-    res.status(statusCode).json({
-      error: err.message || 'Internal Server Error',
-      stack: process.env.NODE_ENV === 'production' ? null : err.stack,
-    });
-  };
-}
+const { errorHandler } = require('./middleware/error');
 
 // Import routers with dual resolution (subfolder or flat root)
 const authRoutes = loadModule('routes/authRoutes.js', 'authRoutes.js');
