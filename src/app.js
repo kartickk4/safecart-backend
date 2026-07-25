@@ -37,6 +37,7 @@ const profileRoutes = loadModule('routes/profileRoutes.js', 'profileRoutes.js');
 const shipmentRoutes = loadModule('routes/shipmentRoutes.js', 'shipmentRoutes.js');
 const trackingRoutes = loadModule('routes/trackingRoutes.js', 'trackingRoutes.js');
 const claimRoutes = loadModule('routes/claimRoutes.js', 'claimRoutes.js');
+const notificationRoutes = loadModule('routes/notificationRoutes.js', 'notificationRoutes.js');
 
 const app = express();
 
@@ -101,6 +102,7 @@ app.use('/api/v1/profile', profileRoutes);
 app.use('/api/v1/shipments', shipmentRoutes);
 app.use('/api/v1/tracking', trackingRoutes);
 app.use('/api/v1/claims', claimRoutes);
+app.use('/api/v1/notifications', notificationRoutes);
 
 app.use(errorHandler);
 
