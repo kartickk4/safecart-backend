@@ -16,10 +16,12 @@ function loadMod(type, name) {
     if (fs.existsSync(c)) return require(c);
   }
   try { return require(`../${type}/${name}`); } catch(e) {}
+  try { return require(`./${type}/${name}`); } catch(e) {}
   return require(`./${name}`);
 }
 
 const User = loadMod('models', 'User');
+const JWT_SECRET = process.env.JWT_SECRET || 'safecart_default_fallback_secret_key_2026';
 
 const protect = async (req, res, next) => {
   let token;
@@ -29,13 +31,9 @@ const protect = async (req, res, next) => {
     req.headers.authorization.startsWith('Bearer')
   ) {
     try {
-      // Get token from header
       token = req.headers.authorization.split(' ')[1];
+      const decoded = jwt.verify(token, JWT_SECRET);
 
-      // Verify token
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-      // Get user from the token, exclude password hash
       req.user = await User.findById(decoded.id).select('-passwordHash');
       
       if (!req.user) {
@@ -44,7 +42,7 @@ const protect = async (req, res, next) => {
 
       next();
     } catch (error) {
-      console.error('JWT verification error:', error);
+      console.error('JWT verification error:', error.message);
       return res.status(401).json({ error: 'Not authorized, token failed' });
     }
   }

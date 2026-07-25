@@ -26,12 +26,15 @@ const Otp = loadMod('models', 'Otp');
 const smsService = loadMod('services', 'smsService');
 const emailVerifierService = loadMod('services', 'emailVerifierService');
 
+const JWT_SECRET = process.env.JWT_SECRET || 'safecart_default_fallback_secret_key_2026';
+
 // Helper: Generate long-lived Access Token (30 days)
 const generateAccessToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, {
+  return jwt.sign({ id }, JWT_SECRET, {
     expiresIn: '30d',
   });
 };
+
 
 /**
  * @desc    Register a new user
