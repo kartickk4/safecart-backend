@@ -14,9 +14,10 @@ const OtpSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['phone', 'email'],
+    enum: ['phone', 'email', 'password_reset'],
     required: true
   },
+
   createdAt: {
     type: Date,
     default: Date.now,
