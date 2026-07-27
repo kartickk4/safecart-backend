@@ -475,6 +475,60 @@ const resetPassword = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Authenticate or Register via Google OAuth
+ * @route   POST /api/v1/auth/google
+ * @access  Public
+ */
+const googleAuth = async (req, res) => {
+  const { email, fullName, avatarUrl, googleId } = req.body;
+
+  try {
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required for Google Sign-In' });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+    let user = await User.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      const salt = await bcrypt.genSalt(10);
+      const dummyPassword = await bcrypt.hash(`google-auth-${Date.now()}-${Math.random()}`, salt);
+
+      user = await User.create({
+        email: normalizedEmail,
+        fullName: fullName || normalizedEmail.split('@')[0],
+        avatarUrl: avatarUrl || '',
+        googleId: googleId || '',
+        passwordHash: dummyPassword,
+        isEmailVerified: true
+      });
+    } else {
+      if (!user.googleId && googleId) user.googleId = googleId;
+      if (!user.avatarUrl && avatarUrl) user.avatarUrl = avatarUrl;
+      user.isEmailVerified = true;
+      await user.save();
+    }
+
+    const accessToken = generateAccessToken(user._id);
+
+    res.json({
+      accessToken,
+      user: {
+        id: user._id,
+        email: user.email,
+        phone: user.phone,
+        fullName: user.fullName,
+        avatarUrl: user.avatarUrl,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error('Google Auth Error:', error);
+    res.status(500).json({ error: error.message || 'Internal Server Error' });
+  }
+};
+
 module.exports = {
   signup,
   login,
@@ -484,6 +538,8 @@ module.exports = {
   verifyEmailOtp,
   forgotPassword,
   resetPassword,
+  googleAuth,
   logout
 };
+
 

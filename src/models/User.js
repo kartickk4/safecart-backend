@@ -14,8 +14,8 @@ const UserSchema = new mongoose.Schema({
   },
   phone: { 
     type: String, 
-    required: true, 
-    unique: true,
+    default: "",
+    sparse: true,
     trim: true
   },
   fullName: { 
@@ -26,6 +26,10 @@ const UserSchema = new mongoose.Schema({
   avatarUrl: { 
     type: String, 
     default: "" 
+  },
+  googleId: {
+    type: String,
+    default: ""
   },
   bankDetails: {
     accountHolderName: { type: String, default: "" },

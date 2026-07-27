@@ -29,6 +29,8 @@ router.post('/send-email-otp', authController.sendEmailOtp);
 router.post('/verify-email-otp', authController.verifyEmailOtp);
 router.post('/forgot-password', authController.forgotPassword);
 router.post('/reset-password', authController.resetPassword);
+router.post('/google', authController.googleAuth);
 router.post('/logout', authController.logout);
+
 
 module.exports = router;
