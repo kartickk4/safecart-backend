@@ -50,6 +50,29 @@ const ShipmentSchema = new mongoose.Schema({
     default: "" 
   },
 
+  // Reverse Logistics & Return Integration Fields
+  returnStatus: {
+    type: String,
+    enum: ['None', 'Requested', 'Approved', 'In Return Transit', 'Returned & Refunded', 'Rejected'],
+    default: 'None'
+  },
+  returnAwbCode: {
+    type: String,
+    default: ""
+  },
+  returnCarrierSlug: {
+    type: String,
+    default: ""
+  },
+  returnReason: {
+    type: String,
+    default: ""
+  },
+  returnShippingLabelUrl: {
+    type: String,
+    default: ""
+  },
+
   status: { 
     type: String, 
     enum: [
@@ -60,13 +83,18 @@ const ShipmentSchema = new mongoose.Schema({
       'Out for Delivery', 
       'Delivered', 
       'Released', 
-      'Locked'
+      'Locked',
+      'Cancelled',
+      'Undelivered',
+      'Return Requested',
+      'Return In Transit',
+      'Returned & Refunded'
     ], 
     default: 'Awaiting Payment' 
   },
   escrowStage: { 
     type: Number, 
-    enum: [1, 2, 3, 4, 5, 6, -1], 
+    enum: [1, 2, 3, 4, 5, 6, -1, -2, -3, -4, -5], 
     default: 1 
   }, 
   createdAt: { 

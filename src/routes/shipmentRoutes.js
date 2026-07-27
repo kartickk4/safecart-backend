@@ -24,7 +24,12 @@ const {
   getShipmentById, 
   createShipment, 
   fundShipment, 
-  releaseShipment 
+  releaseShipment,
+  cancelShipment,
+  markUndelivered,
+  requestReturn,
+  approveReturn,
+  confirmReturnReceived
 } = loadMod('controllers', 'shipmentController');
 const { protect } = loadMod('middleware', 'auth');
 
@@ -42,5 +47,20 @@ router.route('/:id/fund')
 
 router.route('/:id/release')
   .put(protect, releaseShipment);
+
+router.route('/:id/cancel')
+  .put(protect, cancelShipment);
+
+router.route('/:id/undelivered')
+  .put(protect, markUndelivered);
+
+router.route('/:id/return-request')
+  .put(protect, requestReturn);
+
+router.route('/:id/return-approve')
+  .put(protect, approveReturn);
+
+router.route('/:id/return-confirm')
+  .put(protect, confirmReturnReceived);
 
 module.exports = router;

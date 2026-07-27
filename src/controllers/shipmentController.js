@@ -317,10 +317,130 @@ const releaseShipment = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Cancel shipment & refund escrow
+ * @route   PUT /api/v1/shipments/:id/cancel
+ * @access  Private
+ */
+const cancelShipment = async (req, res) => {
+  try {
+    const id = req.params.id.toUpperCase();
+    const { reason } = req.body;
+    const shipment = await Shipment.findOne({ shipmentId: id });
+
+    if (!shipment) {
+      return res.status(404).json({ error: 'Shipment not found' });
+    }
+
+    const isSender = shipment.senderId.toString() === req.user._id.toString();
+    const isReceiver = shipment.receiverPhone === req.user.phone;
+
+    if (!isSender && !isReceiver && req.user.role !== 'Admin') {
+      return res.status(403).json({ error: 'Not authorized to cancel this shipment' });
+    }
+
+    const updatedShipment = await escrow.cancelEscrow(id, req.user._id, reason || 'User requested cancellation');
+    res.json(updatedShipment);
+  } catch (error) {
+    console.error('Cancel Shipment Error:', error.message);
+    res.status(400).json({ error: error.message });
+  }
+};
+
+/**
+ * @desc    Mark shipment as undelivered & refund escrow + interest to receiver
+ * @route   PUT /api/v1/shipments/:id/undelivered
+ * @access  Private
+ */
+const markUndelivered = async (req, res) => {
+  try {
+    const id = req.params.id.toUpperCase();
+    const { reason } = req.body;
+    const shipment = await Shipment.findOne({ shipmentId: id });
+
+    if (!shipment) {
+      return res.status(404).json({ error: 'Shipment not found' });
+    }
+
+    const isSender = shipment.senderId.toString() === req.user._id.toString();
+    const isReceiver = shipment.receiverPhone === req.user.phone;
+
+    if (!isSender && !isReceiver && req.user.role !== 'Admin') {
+      return res.status(403).json({ error: 'Not authorized to report undelivered status for this shipment' });
+    }
+
+    const result = await escrow.refundUndeliveredEscrow(id, reason || 'Carrier delivery failed or returned to origin');
+    res.json(result);
+  } catch (error) {
+    console.error('Mark Undelivered Error:', error.message);
+    res.status(400).json({ error: error.message });
+  }
+};
+
+/**
+ * @desc    Request return & generate Reverse AWB (REV-SPL-XXXX)
+ * @route   PUT /api/v1/shipments/:id/return-request
+ * @access  Private
+ */
+const requestReturn = async (req, res) => {
+  try {
+    const id = req.params.id.toUpperCase();
+    const { reason } = req.body;
+    const shipment = await Shipment.findOne({ shipmentId: id });
+
+    if (!shipment) {
+      return res.status(404).json({ error: 'Shipment not found' });
+    }
+
+    const updatedShipment = await escrow.requestReturnEscrow(id, req.user._id, reason || 'Receiver requested return');
+    res.json(updatedShipment);
+  } catch (error) {
+    console.error('Request Return Error:', error.message);
+    res.status(400).json({ error: error.message });
+  }
+};
+
+/**
+ * @desc    Supplier approves return & sets reverse courier in transit
+ * @route   PUT /api/v1/shipments/:id/return-approve
+ * @access  Private
+ */
+const approveReturn = async (req, res) => {
+  try {
+    const id = req.params.id.toUpperCase();
+    const updatedShipment = await escrow.approveReturnEscrow(id);
+    res.json(updatedShipment);
+  } catch (error) {
+    console.error('Approve Return Error:', error.message);
+    res.status(400).json({ error: error.message });
+  }
+};
+
+/**
+ * @desc    Confirm return arrival at supplier warehouse & refund receiver
+ * @route   PUT /api/v1/shipments/:id/return-confirm
+ * @access  Private
+ */
+const confirmReturnReceived = async (req, res) => {
+  try {
+    const id = req.params.id.toUpperCase();
+    const updatedShipment = await escrow.confirmReturnReceivedEscrow(id);
+    res.json(updatedShipment);
+  } catch (error) {
+    console.error('Confirm Return Received Error:', error.message);
+    res.status(400).json({ error: error.message });
+  }
+};
+
 module.exports = {
   getShipments,
   getShipmentById,
   createShipment,
   fundShipment,
-  releaseShipment
+  releaseShipment,
+  cancelShipment,
+  markUndelivered,
+  requestReturn,
+  approveReturn,
+  confirmReturnReceived
 };

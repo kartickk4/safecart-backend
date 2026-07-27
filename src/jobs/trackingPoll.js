@@ -63,7 +63,12 @@ const initTrackingJob = () => {
           // Sandbox mock prefix mapping
           const statusStr = String(trackData.status).toLowerCase();
           
-          if (statusStr.includes('delivered')) {
+          if (statusStr.includes('undelivered') || statusStr.includes('failed') || statusStr.includes('rto') || statusStr.includes('returned')) {
+            console.log(`[TRACKING JOB] Courier reported shipment ${shipment.shipmentId} undelivered. Refunding escrow + interest to receiver...`);
+            const escrow = require('../services/escrow');
+            await escrow.refundUndeliveredEscrow(shipment.shipmentId, 'Carrier reported delivery attempt failed / returned to origin');
+            continue;
+          } else if (statusStr.includes('delivered')) {
             newStatus = 'Delivered';
             newStage = 5;
           } else if (statusStr.includes('out for delivery')) {

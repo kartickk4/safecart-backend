@@ -14,9 +14,9 @@ const UserSchema = new mongoose.Schema({
   },
   phone: { 
     type: String, 
-    default: "",
     sparse: true,
-    trim: true
+    trim: true,
+    set: v => (!v || (typeof v === 'string' && v.trim() === '') ? undefined : v)
   },
   fullName: { 
     type: String, 
@@ -37,9 +37,13 @@ const UserSchema = new mongoose.Schema({
     ifscCode: { type: String, default: "" },
     bankName: { type: String, default: "" }
   },
+  walletBalance: {
+    type: Number,
+    default: 0
+  },
   role: { 
     type: String, 
-    enum: ['User', 'Admin'], 
+    enum: ['User', 'Supplier', 'Admin'], 
     default: 'User' 
   },
   isEmailVerified: {

@@ -481,7 +481,7 @@ const resetPassword = async (req, res) => {
  * @access  Public
  */
 const googleAuth = async (req, res) => {
-  const { email, fullName, avatarUrl, googleId } = req.body;
+  const { email, fullName, avatarUrl, googleId, role } = req.body;
 
   try {
     if (!email) {
@@ -490,8 +490,10 @@ const googleAuth = async (req, res) => {
 
     const normalizedEmail = email.toLowerCase().trim();
     let user = await User.findOne({ email: normalizedEmail });
+    let isNewUser = false;
 
     if (!user) {
+      isNewUser = true;
       const salt = await bcrypt.genSalt(10);
       const dummyPassword = await bcrypt.hash(`google-auth-${Date.now()}-${Math.random()}`, salt);
 
@@ -501,11 +503,13 @@ const googleAuth = async (req, res) => {
         avatarUrl: avatarUrl || '',
         googleId: googleId || '',
         passwordHash: dummyPassword,
+        role: role || 'User',
         isEmailVerified: true
       });
     } else {
       if (!user.googleId && googleId) user.googleId = googleId;
       if (!user.avatarUrl && avatarUrl) user.avatarUrl = avatarUrl;
+      if (role && ['User', 'Supplier', 'Admin'].includes(role)) user.role = role;
       user.isEmailVerified = true;
       await user.save();
     }
@@ -514,13 +518,15 @@ const googleAuth = async (req, res) => {
 
     res.json({
       accessToken,
+      isNewUser,
       user: {
         id: user._id,
         email: user.email,
         phone: user.phone,
         fullName: user.fullName,
         avatarUrl: user.avatarUrl,
-        role: user.role
+        role: user.role,
+        walletBalance: user.walletBalance || 0
       }
     });
   } catch (error) {

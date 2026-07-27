@@ -42,7 +42,7 @@ const getProfile = async (req, res) => {
  * @access  Private
  */
 const updateProfile = async (req, res) => {
-  const { fullName, avatarUrl, bankDetails } = req.body;
+  const { fullName, avatarUrl, bankDetails, role } = req.body;
 
   try {
     const user = await User.findById(req.user._id);
@@ -54,6 +54,7 @@ const updateProfile = async (req, res) => {
     // Update basic fields if provided
     if (fullName) user.fullName = fullName;
     if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
+    if (role && ['User', 'Supplier', 'Admin'].includes(role)) user.role = role;
 
     // Update bank details if provided
     if (bankDetails) {
