@@ -442,6 +442,8 @@ const confirmReturnReceived = async (req, res) => {
     console.error('Confirm Return Received Error:', error.message);
     res.status(400).json({ error: error.message });
   }
+};
+
 /**
  * @desc    Generate / Get Cashfree Receiver Payment Link
  * @route   POST /api/v1/shipments/:id/payment-link
