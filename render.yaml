@@ -17,3 +17,9 @@ services:
         sync: false
       - key: JWT_SECRET
         generateValue: true
+      - key: CASHFREE_SECRET_KEY
+        sync: false
+      - key: CASHFREE_APP_ID
+        sync: false
+      - key: CASHFREE_ENV
+        value: "TEST"
