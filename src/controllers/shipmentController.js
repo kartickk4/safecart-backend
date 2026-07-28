@@ -3,6 +3,7 @@ const CarrierJourney = require('../models/CarrierJourney');
 const User = require('../models/User');
 const carrierTracking = require('../services/carrierTracking');
 const escrow = require('../services/escrow');
+const cashfreeService = require('../services/cashfreeService');
 const { createNotification } = require('../services/notification');
 
 /**
@@ -98,6 +99,15 @@ const createShipment = async (req, res) => {
 
     const shipmentId = generateShipmentId();
 
+    // Create Cashfree Payment Link for receiver
+    const cfLink = await cashfreeService.createPaymentLink({
+      shipmentId,
+      amount,
+      receiverName,
+      receiverPhone,
+      description
+    });
+
     const shipment = new Shipment({
       shipmentId,
       senderId: req.user._id,
@@ -108,6 +118,8 @@ const createShipment = async (req, res) => {
       city: city || "",
       carrierSlug: carrierSlug || "",
       awbCode: awbCode || "",
+      paymentLink: cfLink.linkUrl,
+      cashfreeLinkId: cfLink.linkId,
       status: 'Awaiting Payment',
       escrowStage: 1
     });
@@ -430,6 +442,47 @@ const confirmReturnReceived = async (req, res) => {
     console.error('Confirm Return Received Error:', error.message);
     res.status(400).json({ error: error.message });
   }
+/**
+ * @desc    Generate / Get Cashfree Receiver Payment Link
+ * @route   POST /api/v1/shipments/:id/payment-link
+ * @access  Private
+ */
+const generatePaymentLink = async (req, res) => {
+  try {
+    const id = req.params.id.toUpperCase();
+    const shipment = await Shipment.findOne({ shipmentId: id });
+
+    if (!shipment) {
+      return res.status(404).json({ error: 'Shipment not found' });
+    }
+
+    if (!shipment.paymentLink) {
+      const cfLink = await cashfreeService.createPaymentLink({
+        shipmentId: shipment.shipmentId,
+        amount: shipment.amount,
+        receiverName: shipment.receiverName,
+        receiverPhone: shipment.receiverPhone,
+        description: shipment.description
+      });
+
+      shipment.paymentLink = cfLink.linkUrl;
+      shipment.cashfreeLinkId = cfLink.linkId;
+      await shipment.save();
+    }
+
+    res.json({
+      shipmentId: shipment.shipmentId,
+      amount: shipment.amount,
+      receiverName: shipment.receiverName,
+      receiverPhone: shipment.receiverPhone,
+      paymentLink: shipment.paymentLink,
+      cashfreeLinkId: shipment.cashfreeLinkId,
+      status: 'SUCCESS'
+    });
+  } catch (error) {
+    console.error('Generate Payment Link Error:', error);
+    res.status(500).json({ error: 'Failed to generate Cashfree payment link' });
+  }
 };
 
 module.exports = {
@@ -442,5 +495,6 @@ module.exports = {
   markUndelivered,
   requestReturn,
   approveReturn,
-  confirmReturnReceived
+  confirmReturnReceived,
+  generatePaymentLink
 };

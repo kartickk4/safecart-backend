@@ -49,6 +49,16 @@ const ShipmentSchema = new mongoose.Schema({
     type: String, 
     default: "" 
   },
+  
+  // Cashfree Payment Link Integration Fields
+  paymentLink: {
+    type: String,
+    default: ""
+  },
+  cashfreeLinkId: {
+    type: String,
+    default: ""
+  },
 
   // Reverse Logistics & Return Integration Fields
   returnStatus: {

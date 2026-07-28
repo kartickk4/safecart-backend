@@ -29,7 +29,8 @@ const {
   markUndelivered,
   requestReturn,
   approveReturn,
-  confirmReturnReceived
+  confirmReturnReceived,
+  generatePaymentLink
 } = loadMod('controllers', 'shipmentController');
 const { protect } = loadMod('middleware', 'auth');
 
@@ -41,6 +42,9 @@ router.route('/')
 
 router.route('/:id')
   .get(protect, getShipmentById);
+
+router.route('/:id/payment-link')
+  .post(protect, generatePaymentLink);
 
 router.route('/:id/fund')
   .post(protect, fundShipment);
