@@ -103,7 +103,11 @@ const corsOptions = {
       return callback(new Error('Invalid CORS configuration'));
     }
 
-    if (allowedOrigins.includes(origin) || origin.endsWith('.onrender.com')) {
+    if (
+      allowedOrigins.includes(origin) || 
+      origin.endsWith('.onrender.com') ||
+      origin.includes('securekaro.in')
+    ) {
       return callback(null, true);
     }
 
