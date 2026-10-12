@@ -1,7 +1,7 @@
-const mongoose = require('mongoose');
+﻿const mongoose = require('mongoose');
 
 async function testSrv() {
-  const uri = 'mongodb+srv://Kartick_das:kartick4897@5ycrpqe.mongodb.net/safecart?retryWrites=true&w=majority';
+  const uri = 'mongodb+srv://Kartick_das:kartick4897@5ycrpqe.mongodb.net/securekaro?retryWrites=true&w=majority';
   console.log('Testing SRV URI:', uri);
   try {
     const conn = await mongoose.connect(uri, {

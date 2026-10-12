@@ -19,13 +19,16 @@ function loadMod(type, name) {
   return require(`./${name}`);
 }
 
-const { fileClaim, getClaimByShipmentId } = loadMod('controllers', 'claimController');
+const { fileClaim, getClaimByShipmentId, getMyClaimsCount } = loadMod('controllers', 'claimController');
 const { protect } = loadMod('middleware', 'auth');
 
 const router = express.Router();
 
 router.route('/')
   .post(protect, fileClaim);
+
+router.route('/my-count')
+  .get(protect, getMyClaimsCount);
 
 router.route('/:shipmentId')
   .get(protect, getClaimByShipmentId);

@@ -20,7 +20,15 @@ function loadMod(type, name) {
   return require(`./${name}`);
 }
 
-const { getProfile, updateProfile } = loadMod('controllers', 'profileController');
+const { 
+  getProfile, 
+  updateProfile, 
+  upgradeProPlan, 
+  getReferralStats,
+  sendPhoneVerificationOtp,
+  verifyPhoneOtp,
+  applyReferralCode
+} = loadMod('controllers', 'profileController');
 const { protect } = loadMod('middleware', 'auth');
 
 const router = express.Router();
@@ -28,5 +36,20 @@ const router = express.Router();
 router.route('/')
   .get(protect, getProfile)
   .put(protect, updateProfile);
+
+router.route('/upgrade-pro')
+  .post(protect, upgradeProPlan);
+
+router.route('/referral-stats')
+  .get(protect, getReferralStats);
+
+router.route('/apply-referral')
+  .post(protect, applyReferralCode);
+
+router.route('/send-phone-otp')
+  .post(protect, sendPhoneVerificationOtp);
+
+router.route('/verify-phone-otp')
+  .post(protect, verifyPhoneOtp);
 
 module.exports = router;

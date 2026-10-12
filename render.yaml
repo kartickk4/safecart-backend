@@ -1,25 +1,34 @@
-services:
+﻿services:
   - type: web
-    name: safecart-backend
+    name: securekaro-backend
     env: node
     region: oregon
     plan: free
     buildCommand: npm install
     startCommand: npm start
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: 10000
-      - key: CARRIER_TRACKING_MOCK
-        value: "true"
       - key: MONGODB_URI
         sync: false
       - key: JWT_SECRET
-        generateValue: true
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
       - key: CASHFREE_SECRET_KEY
         sync: false
       - key: CASHFREE_APP_ID
         sync: false
       - key: CASHFREE_ENV
         value: "TEST"
+      - key: CARRIER_TRACKING_MOCK
+        value: "false"
+      - key: CARRIER_TRACKING_API_KEY
+        sync: false
+      - key: BIGDATACLOUD_API_KEY
+        sync: false
+      - key: EMAIL_VERIFIER_API_KEY
+        sync: false

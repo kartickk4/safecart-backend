@@ -4,6 +4,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
+const mongoose = require('mongoose');
 
 // Helper function to resolve module whether nested in subfolder or flat at root
 function loadModule(relSubPath, relRootPath) {
@@ -38,33 +39,95 @@ const shipmentRoutes = loadModule('routes/shipmentRoutes.js', 'shipmentRoutes.js
 const trackingRoutes = loadModule('routes/trackingRoutes.js', 'trackingRoutes.js');
 const claimRoutes = loadModule('routes/claimRoutes.js', 'claimRoutes.js');
 const notificationRoutes = loadModule('routes/notificationRoutes.js', 'notificationRoutes.js');
+const rewardRoutes = loadModule('routes/rewardRoutes.js', 'rewardRoutes.js');
+const walletRoutes = loadModule('routes/walletRoutes.js', 'walletRoutes.js');
+const { sanitizeInput } = loadModule('middleware/sanitize.js', 'sanitize.js');
+const agentRoutes = loadModule('routes/agentRoutes.js', 'agentRoutes.js');
+const adminRoutes = loadModule('routes/adminRoutes.js', 'adminRoutes.js');
 
 const app = express();
 
-// 1. Security Headers Middleware (Helmet)
-app.use(helmet());
+// 1. Security Headers Middleware (Helmet Hardening)
+const isProd = process.env.NODE_ENV === 'production';
 
-// 2. Strict CORS Security Policy (Restricted to Authorized Domains)
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      // SECURITY: 'unsafe-inline' removed — use nonces/hashes in production
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"], // unsafe-inline needed for Tailwind CSS in-browser
+      imgSrc: ["'self'", "data:", "https:", "https://i.ibb.co"],
+      connectSrc: [
+        "'self'",
+        "https:",
+        ...(isProd ? [] : ["http://localhost:*", "http://127.0.0.1:*"])
+      ],
+      fontSrc: ["'self'", "https://fonts.googleapis.com", "https://fonts.gstatic.com"],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: isProd ? [] : null
+    }
+  },
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: false,
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  dnsPrefetchControl: { allow: false },
+  frameguard: { action: "deny" },
+  hidePoweredBy: true,
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+  ieNoOpen: true,
+  noSniff: true,
+  originAgentCluster: true,
+  permittedCrossDomainPolicies: { permittedPolicies: "none" },
+  referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+  xssFilter: true
+}));
+
+// 2. Strict CORS Security Policy
+// SECURITY: LAN IP ranges are only allowed in development — never in production.
 const allowedOrigins = process.env.FRONTEND_URL 
-  ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
-  : ['http://localhost:3000', 'http://localhost:5173', 'https://safecart.app'];
+  ? process.env.FRONTEND_URL.split(',').map(url => url.trim()).filter(Boolean)
+  : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173'];
 
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+    // Allow server-to-server (no origin) only in dev
+    if (!origin) {
+      if (!isProd) return callback(null, true);
+      return callback(new Error('Origin required in production'));
+    }
+
+    // Always block wildcard (*) in origins list
+    if (allowedOrigins.includes('*')) {
+      console.error('[SECURITY] Wildcard (*) detected in FRONTEND_URL — blocking all requests.');
+      return callback(new Error('Invalid CORS configuration'));
+    }
+
+    if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
-    return callback(null, true); // Permissive for production deployment
+
+    // Allow localhost and LAN IPs in development only
+    if (!isProd) {
+      if (
+        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
+        /^https?:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$/.test(origin)
+      ) {
+        return callback(null, true);
+      }
+    }
+
+    return callback(new Error('Not allowed by CORS security policy'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  maxAge: 86400 // Cache preflight for 24h to reduce OPTIONS requests
 };
 
 app.use(cors(corsOptions));
 
-// 3. Rate Limiting Middleware
+// 3. Global Rate Limiting Middleware
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 200,
@@ -76,33 +139,119 @@ const globalLimiter = rateLimit({
 app.use('/api/', globalLimiter);
 
 // Standard Body Parser Middlewares
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Allow up to 15mb payload for parcel and defect photo uploads
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+
+// Apply global sanitization middleware to prevent NoSQL query injections
+app.use(sanitizeInput);
 
 // Basic Welcome & Healthcheck API
 app.get('/', (req, res) => {
   res.json({
-    message: 'Welcome to the Safecart Secure Escrow Backend API!',
+    message: 'Welcome to the SecureKaro Secure Escrow Backend API!',
     status: 'online',
     health: '/health'
   });
 });
 
 app.get('/health', (req, res) => {
+  const dbStatusMap = {
+    0: 'disconnected',
+    1: 'connected',
+    2: 'connecting',
+    3: 'disconnecting'
+  };
+  const dbState = mongoose.connection ? (dbStatusMap[mongoose.connection.readyState] || 'unknown') : 'uninitialized';
+  const isHealthy = dbState === 'connected';
+
+  // SECURITY: In production, return minimal info — no internal details exposed
+  const responseBody = {
+    status: isHealthy ? 'healthy' : 'degraded',
+    timestamp: new Date().toISOString()
+  };
+
+  if (!isProd) {
+    responseBody.database = dbState;
+    responseBody.uptime = Math.floor(process.uptime());
+    responseBody.service = 'securekaro-backend';
+  }
+
+  res.status(isHealthy ? 200 : 503).json(responseBody);
+});
+
+// Network information endpoint for mobile scanning over Wi-Fi
+const os = require('os');
+const getActiveLocalIp = () => {
+  const nets = os.networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name]) {
+      if (net.family === 'IPv4' && !net.internal && !net.address.startsWith('127.')) {
+        return net.address;
+      }
+    }
+  }
+  return '192.168.237.115';
+};
+
+// SECURITY: Network info endpoint disabled in production — internal IP disclosure
+app.get(['/api/v1/network-info', '/network-info'], (req, res) => {
+  if (isProd) {
+    return res.status(404).json({ error: 'Not found.' });
+  }
+  const localIp = getActiveLocalIp();
+  const backendPort = process.env.PORT || 5001;
   res.json({
-    status: 'healthy',
-    timestamp: new Date(),
-    service: 'safecart-backend'
+    localIp,
+    frontendPort: 3001,
+    backendPort,
+    frontendNetworkUrl: `http://${localIp}:3001`,
+    backendNetworkUrl: `http://${localIp}:${backendPort}/api/v1`
   });
 });
 
-// App Router Declarations
-app.use('/api/v1/auth', authRoutes);
+// Auth-specific strict rate limiter
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20, // SECURITY: Tightened from 50 → 20 to better prevent brute force
+  message: { error: 'Too many authentication attempts. Please try again after 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true // Only count failed attempts toward the limit
+});
+
+// AI Agent rate limiter — prevent abuse of LLM-backed endpoints
+const agentLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30, // 30 messages per minute per IP
+  message: { error: 'Too many agent requests. Please slow down.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// App Router Declarations (Standard v1 prefix)
+app.use('/api/v1/auth', authLimiter, authRoutes);
 app.use('/api/v1/profile', profileRoutes);
 app.use('/api/v1/shipments', shipmentRoutes);
 app.use('/api/v1/tracking', trackingRoutes);
 app.use('/api/v1/claims', claimRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
+app.use('/api/v1/rewards', rewardRoutes);
+app.use('/api/v1/wallet', walletRoutes);
+app.use('/api/v1/agent', agentLimiter, agentRoutes);
+app.use('/api/v1/admin', adminRoutes);
+
+// Backward-compatibility and direct-route aliases (prevents 404 if /api/v1 is omitted)
+app.use('/auth', authLimiter, authRoutes);
+app.use('/profile', profileRoutes);
+app.use('/shipments', shipmentRoutes);
+app.use('/tracking', trackingRoutes);
+app.use('/claims', claimRoutes);
+app.use('/notifications', notificationRoutes);
+app.use('/rewards', rewardRoutes);
+app.use('/wallet', walletRoutes);
+app.use('/agent', agentRoutes);
+app.use('/admin', adminRoutes);
 
 app.use(errorHandler);
 

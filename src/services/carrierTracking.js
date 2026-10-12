@@ -14,8 +14,8 @@ const bookShipment = async (shipment, senderUser) => {
     };
   }
 
-  // Generate simulated booking details
-  const carrierSlug = (process.env.DEFAULT_CARRIER || 'delhivery').toLowerCase();
+  // Generate simulated booking details using chosen carrier
+  const carrierSlug = (shipment.carrierSlug && shipment.carrierSlug !== 'add_later' ? shipment.carrierSlug : (process.env.DEFAULT_CARRIER || 'delhivery')).toLowerCase();
   const randomSuffix = Math.floor(1000000000 + Math.random() * 9000000000);
   const awbCode = `TC-${carrierSlug}-${randomSuffix}`;
   const shippingLabelUrl = 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf';

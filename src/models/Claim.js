@@ -50,4 +50,8 @@ const ClaimSchema = new mongoose.Schema({
   }
 });
 
+// Performance & Query Indexes
+ClaimSchema.index({ shipmentId: 1 });
+ClaimSchema.index({ filedBy: 1 });
+
 module.exports = mongoose.model('Claim', ClaimSchema);

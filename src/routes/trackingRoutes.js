@@ -20,12 +20,16 @@ function loadMod(type, name) {
   return require(`./${name}`);
 }
 
-const { getTrackingByAwb, handleWebhook } = loadMod('controllers', 'trackingController');
+const { getTrackingByAwb, handleWebhook, getPublicTracking } = loadMod('controllers', 'trackingController');
 
 const router = express.Router();
 
+
+router.post('/public', getPublicTracking);
+router.get('/public', getPublicTracking);
 router.get('/:awb', getTrackingByAwb);
 router.post('/webhook/carrier-tracking', handleWebhook);
 router.post('/webhook/shiprocket', handleWebhook);
+router.post('/webhook/:carrier', handleWebhook);
 
 module.exports = router;

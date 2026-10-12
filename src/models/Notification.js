@@ -20,8 +20,16 @@ const NotificationSchema = new mongoose.Schema({
   },
   type: { 
     type: String, 
-    enum: ['shipping', 'payment', 'confirmed', 'alert'], 
+    enum: ['shipping', 'payment', 'confirmed', 'alert', 'delivery', 'return'], 
     default: 'shipping' 
+  },
+  shipmentId: {
+    type: String,
+    default: ""
+  },
+  actionType: {
+    type: String,
+    default: ""
   },
   read: { 
     type: Boolean, 
@@ -32,5 +40,9 @@ const NotificationSchema = new mongoose.Schema({
     default: Date.now 
   }
 });
+
+// Performance Indexes
+NotificationSchema.index({ userId: 1, createdAt: -1 });
+NotificationSchema.index({ userId: 1, read: 1 });
 
 module.exports = mongoose.model('Notification', NotificationSchema);

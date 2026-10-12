@@ -6,6 +6,26 @@ const carrierTracking = require('../services/carrierTracking');
 const { createNotification } = require('../services/notification');
 
 /**
+ * Helper: Find receiver user by exact or normalized phone number
+ */
+const findReceiverUser = async (phone) => {
+  if (!phone) return null;
+  let receiver = await User.findOne({ phone });
+  if (!receiver) {
+    const sanitized = String(phone).replace(/\D/g, '').slice(-10);
+    if (sanitized) {
+      receiver = await User.findOne({
+        $or: [
+          { phone: sanitized },
+          { phone: `+91${sanitized}` }
+        ]
+      });
+    }
+  }
+  return receiver;
+};
+
+/**
  * Initializes the background Carrier Tracking poll job
  */
 const initTrackingJob = () => {
@@ -64,7 +84,7 @@ const initTrackingJob = () => {
           const statusStr = String(trackData.status).toLowerCase();
           
           if (statusStr.includes('undelivered') || statusStr.includes('failed') || statusStr.includes('rto') || statusStr.includes('returned')) {
-            console.log(`[TRACKING JOB] Courier reported shipment ${shipment.shipmentId} undelivered. Refunding escrow + interest to receiver...`);
+            console.log(`[TRACKING JOB] Courier reported shipment ${shipment.shipmentId} undelivered. Refunding escrow principal to receiver...`);
             const escrow = require('../services/escrow');
             await escrow.refundUndeliveredEscrow(shipment.shipmentId, 'Carrier reported delivery attempt failed / returned to origin');
             continue;
@@ -96,7 +116,7 @@ const initTrackingJob = () => {
             );
 
             // Send notification to receiver
-            const receiver = await User.findOne({ phone: shipment.receiverPhone });
+            const receiver = await findReceiverUser(shipment.receiverPhone);
             if (receiver) {
               await createNotification(
                 receiver._id,
@@ -106,14 +126,15 @@ const initTrackingJob = () => {
                 'shipping'
               );
 
-              if (newStage === 5) {
-                const amtFormatted = `₹${new Intl.NumberFormat('en-IN').format(shipment.amount)}`;
+              if (newStage === 5 || newStatus === 'Delivered') {
                 await createNotification(
                   receiver._id,
                   'inventory_2',
-                  `Action Required: Confirm Receipt — ${shipment.shipmentId}`,
-                  `The courier reports delivery. Please confirm receipt to release the escrow of ${amtFormatted}.`,
-                  'confirmed'
+                  `Parcel Delivered — Action Required: Confirm Parcel`,
+                  `Your parcel ${shipment.shipmentId} has been delivered. Please inspect and confirm the parcel.`,
+                  'confirmed',
+                  shipment.shipmentId,
+                  'CONFIRM_PARCEL'
                 );
               }
             }

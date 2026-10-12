@@ -19,10 +19,14 @@ function loadMod(type, name) {
   return require(`./${name}`);
 }
 
-const { getNotifications, markAsRead } = loadMod('controllers', 'notificationController');
+const { getNotifications, getUnreadCount, markAsRead } = loadMod('controllers', 'notificationController');
 const { protect } = loadMod('middleware', 'auth');
 
 const router = express.Router();
+
+// Must be before /:id/read to avoid route conflict
+router.route('/unread-count')
+  .get(protect, getUnreadCount);
 
 router.route('/')
   .get(protect, getNotifications);

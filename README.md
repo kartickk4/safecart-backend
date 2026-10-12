@@ -1,6 +1,6 @@
-# Safecart Escrow & Logistics Backend API
+﻿# SecureKaro Escrow & Logistics Backend API
 
-Express & MongoDB REST API server powering the Safecart Escrow and Logistics platform.
+Express & MongoDB REST API server powering the SecureKaro Escrow and Logistics platform.
 
 ## 🚀 API Endpoints
 

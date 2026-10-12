@@ -13,6 +13,17 @@ const generateClaimId = () => {
 };
 
 /**
+ * Helper: Tolerant phone match (supports +91, spaces, 10-digit)
+ */
+const isReceiverMatch = (userPhone, shipmentPhone) => {
+  if (!userPhone || !shipmentPhone) return false;
+  if (userPhone === shipmentPhone) return true;
+  const uDigits = userPhone.replace(/\D/g, '').slice(-10);
+  const sDigits = shipmentPhone.replace(/\D/g, '').slice(-10);
+  return Boolean(uDigits && sDigits && uDigits === sDigits);
+};
+
+/**
  * @desc    File a new dispute claim (locks escrow)
  * @route   POST /api/v1/claims
  * @access  Private
@@ -32,7 +43,7 @@ const fileClaim = async (req, res) => {
 
     // Verify caller is either sender or receiver
     const isSender = shipment.senderId.toString() === req.user._id.toString();
-    const isReceiver = shipment.receiverPhone === req.user.phone;
+    const isReceiver = isReceiverMatch(req.user.phone, shipment.receiverPhone);
 
     if (!isSender && !isReceiver) {
       return res.status(403).json({ error: 'Not authorized to file a claim on this shipment' });
@@ -99,7 +110,7 @@ const getClaimByShipmentId = async (req, res) => {
     }
 
     const isSender = shipment.senderId.toString() === req.user._id.toString();
-    const isReceiver = shipment.receiverPhone === req.user.phone;
+    const isReceiver = isReceiverMatch(req.user.phone, shipment.receiverPhone);
 
     if (!isSender && !isReceiver && req.user.role !== 'Admin') {
       return res.status(403).json({ error: 'Not authorized to view this claim' });
@@ -112,7 +123,24 @@ const getClaimByShipmentId = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Get count of active claims filed by current user
+ * @route   GET /api/v1/claims/my-count
+ * @access  Private
+ */
+const getMyClaimsCount = async (req, res) => {
+  try {
+    const count = await Claim.countDocuments({ filedBy: req.user._id, status: 'Under Review' });
+    res.json({ count });
+  } catch (error) {
+    console.error('Get Claims Count Error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+};
+
 module.exports = {
   fileClaim,
-  getClaimByShipmentId
+  getClaimByShipmentId,
+  getMyClaimsCount
 };
+

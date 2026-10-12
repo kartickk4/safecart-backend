@@ -1,4 +1,4 @@
-const http = require('http');
+﻿const http = require('http');
 
 function testOrigin(originHeader) {
   return new Promise((resolve) => {
@@ -33,8 +33,8 @@ async function runCorsAudit() {
   console.log('==================================================\n');
 
   // 1. Authorized Origin Test
-  const allowedRes = await testOrigin('https://safecart.app');
-  console.log('1. Authorized Origin (https://safecart.app):');
+  const allowedRes = await testOrigin('https://securekaro.app');
+  console.log('1. Authorized Origin (https://securekaro.app):');
   console.log(`   -> Status: ${allowedRes.status} | Access-Control-Allow-Origin: ${allowedRes.allowOriginHeader}`);
 
   // 2. Localhost Frontend Test

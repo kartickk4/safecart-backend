@@ -1,8 +1,8 @@
-{
+﻿{
   "info": {
     "_postman_id": "8b5f36e4-4d82-4bf1-a083-0a7a3b37e8c1",
-    "name": "Safecart API",
-    "description": "Postman collection for Safecart secure backend escrow API.",
+    "name": "SecureKaro API",
+    "description": "Postman collection for SecureKaro secure backend escrow API.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [

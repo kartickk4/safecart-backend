@@ -1,9 +1,9 @@
-const mongoose = require('mongoose');
+﻿const mongoose = require('mongoose');
 
 const uris = [
-  "mongodb://Kartick_das:kartick4897@ac-ciki0ky-shard-00-00.5ycrpqe.mongodb.net:27017,ac-ciki0ky-shard-00-01.5ycrpqe.mongodb.net:27017,ac-ciki0ky-shard-00-02.5ycrpqe.mongodb.net:27017/safecart?ssl=true&replicaSet=atlas-12ckb0-shard-0&authSource=admin&retryWrites=true&w=majority",
-  "mongodb+srv://Kartick_das:kartick4897@ac-ciki0ky.5ycrpqe.mongodb.net/safecart?retryWrites=true&w=majority",
-  "mongodb+srv://Kartick_das:kartick4897@cluster0.5ycrpqe.mongodb.net/safecart?retryWrites=true&w=majority"
+  "mongodb://Kartick_das:kartick4897@ac-ciki0ky-shard-00-00.5ycrpqe.mongodb.net:27017,ac-ciki0ky-shard-00-01.5ycrpqe.mongodb.net:27017,ac-ciki0ky-shard-00-02.5ycrpqe.mongodb.net:27017/securekaro?ssl=true&replicaSet=atlas-12ckb0-shard-0&authSource=admin&retryWrites=true&w=majority",
+  "mongodb+srv://Kartick_das:kartick4897@ac-ciki0ky.5ycrpqe.mongodb.net/securekaro?retryWrites=true&w=majority",
+  "mongodb+srv://Kartick_das:kartick4897@cluster0.5ycrpqe.mongodb.net/securekaro?retryWrites=true&w=majority"
 ];
 
 async function testAll() {

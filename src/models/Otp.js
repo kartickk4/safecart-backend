@@ -17,6 +17,11 @@ const OtpSchema = new mongoose.Schema({
     enum: ['phone', 'email', 'password_reset'],
     required: true
   },
+  role: {
+    type: String,
+    enum: ['User', 'Supplier', 'Receiver', 'Admin'],
+    default: 'Receiver'
+  },
 
   createdAt: {
     type: Date,
@@ -25,7 +30,7 @@ const OtpSchema = new mongoose.Schema({
   }
 });
 
-// Index for fast lookup by identifier + type
-OtpSchema.index({ identifier: 1, type: 1 });
+// Index for fast lookup by identifier + type + role
+OtpSchema.index({ identifier: 1, type: 1, role: 1 });
 
 module.exports = mongoose.model('Otp', OtpSchema);

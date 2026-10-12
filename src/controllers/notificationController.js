@@ -18,6 +18,21 @@ const getNotifications = async (req, res) => {
 };
 
 /**
+ * @desc    Get unread notification count
+ * @route   GET /api/v1/notifications/unread-count
+ * @access  Private
+ */
+const getUnreadCount = async (req, res) => {
+  try {
+    const count = await Notification.countDocuments({ userId: req.user._id, read: false });
+    res.json({ count });
+  } catch (error) {
+    console.error('Unread Count Error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+};
+
+/**
  * @desc    Mark notification as read
  * @route   PUT /api/v1/notifications/:id/read
  * @access  Private
@@ -41,5 +56,6 @@ const markAsRead = async (req, res) => {
 
 module.exports = {
   getNotifications,
+  getUnreadCount,
   markAsRead
 };

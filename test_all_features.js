@@ -1,4 +1,4 @@
-const axios = require('axios');
+﻿const axios = require('axios');
 
 const API = 'http://localhost:5001/api/v1';
 
@@ -10,7 +10,7 @@ async function testAll() {
     console.log('✅ Healthcheck:', h.data);
 
     // 2. Signup / Login
-    const testEmail = `testuser_${Date.now()}@safecart.in`;
+    const testEmail = `testuser_${Date.now()}@securekaro.in`;
     const testPassword = 'Password123!';
     const testPhone = `+9198${Math.floor(10000000 + Math.random() * 90000000)}`;
 

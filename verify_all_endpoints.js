@@ -3,7 +3,7 @@ const axios = require('axios');
 const API = 'http://localhost:5001/api/v1';
 
 async function runFullSystemAudit() {
-  console.log('============ SAFECART BACKEND & FRONTEND ENDPOINT VERIFICATION ============');
+  console.log('============ SECUREKARO BACKEND & FRONTEND ENDPOINT VERIFICATION ============');
   let token1, token2;
   let user1, user2;
   let shipment1, shipment2;
@@ -16,7 +16,7 @@ async function runFullSystemAudit() {
     // 2. Auth: Register User 1 (Sender)
     const phone1 = `+9198${Math.floor(10000000 + Math.random() * 90000000)}`;
     const signup1 = await axios.post(`${API}/auth/signup`, {
-      email: `sender_${Date.now()}@safecart.in`,
+      email: `sender_${Date.now()}@securekaro.in`,
       password: 'Password123!',
       phone: phone1,
       fullName: 'Vikram Sender',
@@ -29,7 +29,7 @@ async function runFullSystemAudit() {
     // 3. Auth: Register User 2 (Receiver)
     const phone2 = `+9197${Math.floor(10000000 + Math.random() * 90000000)}`;
     const signup2 = await axios.post(`${API}/auth/signup`, {
-      email: `receiver_${Date.now()}@safecart.in`,
+      email: `receiver_${Date.now()}@securekaro.in`,
       password: 'Password123!',
       phone: phone2,
       fullName: 'Anita Receiver',
@@ -70,6 +70,12 @@ async function runFullSystemAudit() {
         bankName: 'ICICI Bank'
       }
     }, headers2);
+
+    // 5b. Verify Sender Mobile Number via OTP
+    const otpReq1 = await axios.post(`${API}/profile/send-phone-otp`, { phone: phone1 }, headers1);
+    const code1 = otpReq1.data.debugOtp || '123456';
+    const otpVerify1 = await axios.post(`${API}/profile/verify-phone-otp`, { phone: phone1, otp: code1 }, headers1);
+    console.log('✅ 5b. Phone OTP Verification (Sender):', otpVerify1.data.message, 'isPhoneVerified:', otpVerify1.data.isPhoneVerified);
 
     // 6. Shipments: Create Stage 1/3 Shipment with Escrow Funding & Logistics AWB Generation
     const createShip1 = await axios.post(`${API}/shipments`, {

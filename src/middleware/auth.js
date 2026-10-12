@@ -21,9 +21,19 @@ function loadMod(type, name) {
 }
 
 const User = loadMod('models', 'User');
-const JWT_SECRET = process.env.JWT_SECRET || 'safecart_default_fallback_secret_key_2026';
+
+// SECURITY: JWT_SECRET MUST be provided via environment variable.
+// A missing or weak secret is a critical vulnerability.
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('CRITICAL SECURITY ERROR: JWT_SECRET environment variable is not set. Server will not authenticate requests.');
+}
 
 const protect = async (req, res, next) => {
+  if (!JWT_SECRET) {
+    return res.status(500).json({ error: 'Server misconfiguration: authentication service unavailable.' });
+  }
+
   let token;
 
   if (
@@ -35,28 +45,57 @@ const protect = async (req, res, next) => {
       const decoded = jwt.verify(token, JWT_SECRET);
 
       req.user = await User.findById(decoded.id).select('-passwordHash');
-      
+
       if (!req.user) {
         return res.status(401).json({ error: 'Not authorized, user not found' });
       }
 
-      next();
+      // Check if user is suspended
+      if (req.user.isSuspended) {
+        const allowedPaths = ['/profile', '/auth/me', '/auth/switch-role'];
+        const isAllowed = allowedPaths.some(p => req.originalUrl.includes(p));
+        if (!isAllowed) {
+          return res.status(403).json({
+            error: 'Your account has been suspended. Please contact support@securekaro.in.',
+            isSuspended: true,
+            suspendedAt: req.user.suspendedAt
+          });
+        }
+      }
+
+      return next();
     } catch (error) {
-      console.error('JWT verification error:', error.message);
-      return res.status(401).json({ error: 'Not authorized, token failed' });
+      // SECURITY: Do NOT log the token value itself
+      console.error('JWT verification error:', error.name);
+      if (error.name === 'TokenExpiredError') {
+        return res.status(401).json({ error: 'Session expired. Please log in again.' });
+      }
+      return res.status(401).json({ error: 'Not authorized, invalid token.' });
     }
   }
 
   if (!token) {
-    return res.status(401).json({ error: 'Not authorized, no token provided' });
+    return res.status(401).json({ error: 'Not authorized, no token provided.' });
   }
 };
 
 const admin = (req, res, next) => {
-  if (req.user && req.user.role === 'Admin') {
+  // SECURITY: Admin privilege must come ONLY from database role fields — never from a hardcoded email.
+  if (
+    req.user && (
+      req.user.role === 'Admin' ||
+      req.user.role === 'super_admin' ||
+      req.user.isAdmin === true ||
+      !!req.user.adminRole
+    )
+  ) {
+    req.user.isAdmin = true;
+    if (!req.user.adminRole) {
+      req.user.adminRole = 'super_admin';
+    }
     next();
   } else {
-    res.status(403).json({ error: 'Not authorized as an admin' });
+    res.status(403).json({ error: 'Access denied: Requires administrative privileges.' });
   }
 };
 
