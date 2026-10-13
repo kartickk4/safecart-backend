@@ -15,7 +15,7 @@ const getAuthToken = async () => {
     return null;
   }
 
-  // Return cached token if valid
+  // Return cached token if still valid
   if (cachedToken && tokenExpiresAt && Date.now() < tokenExpiresAt) {
     return cachedToken;
   }
@@ -28,7 +28,7 @@ const getAuthToken = async () => {
 
     if (res.data?.token) {
       cachedToken = res.data.token;
-      // Tokens are typically valid for 10 days; cache for 6 days
+      // Tokens valid for 10 days; cache for 6 days
       tokenExpiresAt = Date.now() + 6 * 24 * 60 * 60 * 1000;
       console.log('[SHIPROCKET] Authenticated successfully with account:', email);
       return cachedToken;
@@ -41,36 +41,301 @@ const getAuthToken = async () => {
 };
 
 /**
- * Get the active/primary pickup location nickname (e.g. 'Home')
+ * Ensures the seller's specific pickup address is registered in Shiprocket.
+ * Each seller on SecureKaro has their own pickup address across India.
+ *
+ * @param {object} senderUser - Mongoose User document for the seller
+ * @param {object} shipment - Mongoose Shipment document
+ * @returns {string} The pickup_location code to use for order creation
  */
-const getPrimaryPickupLocation = async () => {
+const ensurePickupLocation = async (senderUser, shipment) => {
   const token = await getAuthToken();
   if (!token) return 'Home';
 
   try {
-    const res = await axios.get('https://apiv2.shiprocket.in/v1/external/settings/company/pickup', {
+    // 1. Fetch currently registered pickup locations
+    const listRes = await axios.get('https://apiv2.shiprocket.in/v1/external/settings/company/pickup', {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 10000
     });
 
-    const addresses = res.data?.data?.shipping_address || [];
-    if (addresses.length > 0) {
-      const primary = addresses.find(a => a.is_primary_location === 1) || addresses[0];
-      return primary.pickup_location || 'Home';
-    }
-  } catch (err) {
-    console.warn('[SHIPROCKET PICKUP LOOKUP NOTICE]:', err.message);
-  }
+    const addresses = listRes.data?.data?.shipping_address || [];
 
-  return 'Home';
+    // Extract seller's pickup details
+    const sellerPincode = (
+      shipment.senderPincode || 
+      senderUser?.pickupAddress?.pincode || 
+      senderUser?.pincode || 
+      '700049'
+    ).toString().replace(/\D/g, '').slice(0, 6);
+
+    const sellerStreet = (
+      shipment.senderAddress || 
+      senderUser?.pickupAddress?.street || 
+      senderUser?.address || 
+      'Seller Warehouse'
+    ).trim();
+
+    const sellerCity = (
+      senderUser?.pickupAddress?.city || 
+      senderUser?.city || 
+      'Kolkata'
+    ).trim();
+
+    const sellerState = (
+      senderUser?.pickupAddress?.state || 
+      senderUser?.state || 
+      'West Bengal'
+    ).trim();
+
+    const sellerName = (
+      senderUser?.businessName || 
+      senderUser?.fullName || 
+      'SecureKaro Seller'
+    ).trim();
+
+    const sellerPhone = (
+      senderUser?.phone || 
+      '9999999999'
+    ).toString().replace(/\D/g, '').slice(-10);
+
+    const sellerEmail = (
+      senderUser?.email || 
+      `${sellerPhone}@securekaro.in`
+    ).trim();
+
+    // Generate a unique, deterministic nickname for this seller location
+    const sellerIdSnippet = String(senderUser?._id || 'DEFAULT').slice(-6).toUpperCase();
+    const targetNickname = `PKP_${sellerPincode}_${sellerIdSnippet}`;
+
+    // 2. Check if already registered
+    const existing = addresses.find(a => 
+      a.pickup_location === targetNickname || 
+      (a.pin_code === sellerPincode && a.phone === sellerPhone)
+    );
+
+    if (existing) {
+      console.log(`[SHIPROCKET PICKUP] Found existing pickup location for seller: ${existing.pickup_location}`);
+      return existing.pickup_location;
+    }
+
+    // 3. Register seller's new pickup location via Shiprocket API
+    console.log(`[SHIPROCKET PICKUP] Registering new seller pickup location: ${targetNickname} (${sellerStreet}, ${sellerPincode})`);
+    const addRes = await axios.post('https://apiv2.shiprocket.in/v1/external/settings/company/addpickup', {
+      pickup_location: targetNickname,
+      name: sellerName,
+      email: sellerEmail,
+      phone: sellerPhone,
+      address: sellerStreet,
+      address_2: '',
+      city: sellerCity,
+      state: sellerState,
+      country: 'India',
+      pin_code: sellerPincode
+    }, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 12000
+    });
+
+    const registeredCode = addRes.data?.address?.pickup_code || targetNickname;
+    console.log(`✅ [SHIPROCKET PICKUP] Seller pickup location created: ${registeredCode}`);
+    return registeredCode;
+
+  } catch (err) {
+    console.warn('[SHIPROCKET PICKUP REGISTRATION NOTICE]:', err.response?.data?.message || err.message);
+    // Fallback: return primary location if dynamic registration fails
+    try {
+      const listRes = await axios.get('https://apiv2.shiprocket.in/v1/external/settings/company/pickup', {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 8000
+      });
+      const addresses = listRes.data?.data?.shipping_address || [];
+      if (addresses.length > 0) {
+        return addresses[0].pickup_location || 'Home';
+      }
+    } catch (_) {}
+    return 'Home';
+  }
 };
 
 /**
- * Automatically create and push order to Shiprocket
+ * Match user-selected carrier slug to available Shiprocket courier companies
+ */
+const findMatchingCourier = (availableCouriers, targetCarrierSlug) => {
+  if (!availableCouriers || availableCouriers.length === 0) return null;
+
+  const slug = (targetCarrierSlug || 'auto').toLowerCase();
+
+  // If user selected specific courier partner, find closest matching active courier
+  const slugKeywords = {
+    bluedart: ['blue dart', 'bluedart'],
+    delhivery: ['delhivery'],
+    shadowfax: ['shadowfax'],
+    ekart: ['ekart'],
+    dtdc: ['dtdc'],
+    xpressbees: ['xpressbees', 'xpress bees'],
+    ecom: ['ecom express', 'ecom'],
+    smartr: ['smartr']
+  };
+
+  const keywords = slugKeywords[slug];
+  if (keywords) {
+    const match = availableCouriers.find(c => {
+      const name = (c.courier_name || '').toLowerCase();
+      return keywords.some(k => name.includes(k));
+    });
+    if (match) return match;
+  }
+
+  // If 'auto' or no keyword match found, pick the lowest rate available courier
+  const sorted = [...availableCouriers].sort((a, b) => (Number(a.rate) || 999) - (Number(b.rate) || 999));
+  return sorted[0];
+};
+
+/**
+ * Automatically assign courier AWB, schedule pickup, and generate label in Shiprocket.
+ * Zero manual steps required from seller or admin.
+ */
+const autoAssignCourierAndPickup = async ({
+  shipmentId,
+  srShipmentId,
+  chosenCarrierSlug,
+  pickupPincode,
+  deliveryPincode,
+  weightKg,
+  isCod
+}) => {
+  const token = await getAuthToken();
+  if (!token || !srShipmentId) return null;
+
+  try {
+    // 1. Fetch available courier serviceability
+    console.log(`[SHIPROCKET AUTO-DISPATCH] Checking couriers for ${pickupPincode} -> ${deliveryPincode}...`);
+    const servRes = await axios.get('https://apiv2.shiprocket.in/v1/external/courier/serviceability/', {
+      params: {
+        pickup_postcode: pickupPincode,
+        delivery_postcode: deliveryPincode,
+        weight: weightKg || 0.5,
+        cod: isCod ? 1 : 0
+      },
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 12000
+    });
+
+    const availableCouriers = servRes.data?.data?.available_courier_companies || [];
+    if (availableCouriers.length === 0) {
+      console.warn(`[SHIPROCKET AUTO-DISPATCH] No couriers serviceable for route ${pickupPincode} -> ${deliveryPincode}`);
+      return null;
+    }
+
+    // 2. Select chosen or cheapest courier
+    let selectedCourier = findMatchingCourier(availableCouriers, chosenCarrierSlug);
+    if (!selectedCourier) {
+      selectedCourier = availableCouriers[0];
+    }
+
+    console.log(`[SHIPROCKET AUTO-DISPATCH] Attempting courier assignment: ${selectedCourier.courier_name} (ID: ${selectedCourier.courier_company_id}, Rate: ₹${selectedCourier.rate})`);
+
+    // 3. Assign courier & generate live AWB
+    let assignRes = await axios.post('https://apiv2.shiprocket.in/v1/external/courier/assign/awb', {
+      shipment_id: srShipmentId,
+      courier_id: selectedCourier.courier_company_id
+    }, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 15000
+    });
+
+    let assignData = assignRes.data?.response?.data;
+    let realAwb = assignData?.awb_code;
+
+    // Fallback: If user's chosen courier failed assignment, try the next available courier
+    if (!realAwb && availableCouriers.length > 1) {
+      const fallbackCourier = availableCouriers.find(c => c.courier_company_id !== selectedCourier.courier_company_id);
+      if (fallbackCourier) {
+        console.log(`[SHIPROCKET AUTO-DISPATCH] Primary courier failed, trying fallback courier: ${fallbackCourier.courier_name}`);
+        try {
+          const fbRes = await axios.post('https://apiv2.shiprocket.in/v1/external/courier/assign/awb', {
+            shipment_id: srShipmentId,
+            courier_id: fallbackCourier.courier_company_id
+          }, {
+            headers: { Authorization: `Bearer ${token}` },
+            timeout: 15000
+          });
+          assignData = fbRes.data?.response?.data;
+          realAwb = assignData?.awb_code;
+          if (realAwb) selectedCourier = fallbackCourier;
+        } catch (fbErr) {
+          console.warn('[SHIPROCKET FALLBACK NOTICE]:', fbErr.message);
+        }
+      }
+    }
+
+    if (!realAwb) {
+      console.warn(`[SHIPROCKET AUTO-DISPATCH] AWB assignment pending for ${shipmentId}`);
+      return null;
+    }
+
+    console.log(`🎯 [SHIPROCKET AUTO-DISPATCH SUCCESS] Live AWB generated: ${realAwb} with ${selectedCourier.courier_name}`);
+
+    // 4. Request Pickup Dispatch Automatically
+    let pickupScheduled = false;
+    try {
+      const pickupRes = await axios.post('https://apiv2.shiprocket.in/v1/external/courier/generate/pickup', {
+        shipment_id: [srShipmentId]
+      }, {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 12000
+      });
+      if (pickupRes.data?.response || pickupRes.data?.status === 200) {
+        pickupScheduled = true;
+        console.log(`🚚 [SHIPROCKET PICKUP SCHEDULED] Executive dispatched for shipment ${srShipmentId}`);
+      }
+    } catch (pkErr) {
+      console.warn('[SHIPROCKET AUTO PICKUP NOTICE]:', pkErr.response?.data?.message || pkErr.message);
+    }
+
+    // 5. Generate Shipping Label PDF Automatically
+    let labelUrl = '';
+    try {
+      const labelRes = await axios.post('https://apiv2.shiprocket.in/v1/external/courier/generate/label', {
+        shipment_id: [srShipmentId]
+      }, {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 12000
+      });
+      labelUrl = labelRes.data?.label_url || labelRes.data?.response?.label_url || '';
+      if (labelUrl) {
+        console.log(`🏷️ [SHIPROCKET LABEL GENERATED] Printable label: ${labelUrl}`);
+      }
+    } catch (lblErr) {
+      console.warn('[SHIPROCKET LABEL GENERATION NOTICE]:', lblErr.response?.data?.message || lblErr.message);
+    }
+
+    return {
+      awbCode: realAwb,
+      courierName: selectedCourier.courier_name,
+      courierCompanyId: selectedCourier.courier_company_id,
+      courierRate: selectedCourier.rate,
+      pickupScheduled,
+      labelUrl
+    };
+
+  } catch (err) {
+    console.error(`❌ [SHIPROCKET AUTO-DISPATCH ERROR] for ${shipmentId}:`, err.response?.data || err.message);
+    return null;
+  }
+};
+
+/**
+ * End-to-end automated Shiprocket order booking:
+ * 1. Takes the actual seller's pickup address (dynamic multi-seller support).
+ * 2. Creates the Shiprocket order.
+ * 3. Automatically assigns the seller's chosen courier partner.
+ * 4. Generates live AWB, schedules pickup, and creates shipping label.
  *
  * @param {object} shipment - Mongoose Shipment document
  * @param {object} senderUser - Mongoose User document or sender object
- * @returns {object|null} Shiprocket order details { order_id, shipment_id, status }
+ * @returns {object|null} Shiprocket order and dispatch details
  */
 const createOrderInShiprocket = async (shipment, senderUser) => {
   const token = await getAuthToken();
@@ -80,7 +345,8 @@ const createOrderInShiprocket = async (shipment, senderUser) => {
   }
 
   try {
-    const pickupLocation = await getPrimaryPickupLocation();
+    // 1. Ensure seller's personal/business pickup location is registered
+    const pickupLocation = await ensurePickupLocation(senderUser, shipment);
 
     // Clean and validate receiver info
     const receiverName = (shipment.receiverName || 'Valued Customer').trim();
@@ -103,8 +369,9 @@ const createOrderInShiprocket = async (shipment, senderUser) => {
     const orderAmount = Number(shipment.amount) || 100;
     const itemName = (shipment.description || 'General Merchandise').trim();
     const weightKg = Number(shipment.parcelWeight) || 0.5;
+    const isCod = shipment.paymentMode === 'cod';
 
-    // Build the Shiprocket adhoc order creation payload
+    // 2. Build the Shiprocket order payload with seller's pickup location
     const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 16);
     const orderPayload = {
       order_id: shipment.shipmentId,
@@ -134,7 +401,7 @@ const createOrderInShiprocket = async (shipment, senderUser) => {
           hsn: 5407
         }
       ],
-      payment_method: shipment.paymentMode === 'cod' ? 'COD' : 'Prepaid',
+      payment_method: isCod ? 'COD' : 'Prepaid',
       shipping_charges: Number(shipment.deliveryCharge) || 0,
       giftwrap_charges: 0,
       transaction_charges: 0,
@@ -146,7 +413,7 @@ const createOrderInShiprocket = async (shipment, senderUser) => {
       weight: weightKg
     };
 
-    console.log(`[SHIPROCKET ORDER SYNC] Pushing order ${shipment.shipmentId} to Shiprocket...`);
+    console.log(`[SHIPROCKET ORDER SYNC] Creating order ${shipment.shipmentId} (Pickup: ${pickupLocation}, Delivery: ${receiverPincode})...`);
 
     const response = await axios.post('https://apiv2.shiprocket.in/v1/external/orders/create/adhoc', orderPayload, {
       headers: { Authorization: `Bearer ${token}` },
@@ -155,28 +422,60 @@ const createOrderInShiprocket = async (shipment, senderUser) => {
 
     const resData = response.data;
     if (resData && (resData.order_id || resData.status === 'NEW')) {
-      console.log(`✅ [SHIPROCKET ORDER SYNC SUCCESS] Order ${shipment.shipmentId} created in Shiprocket! SR Order ID: ${resData.order_id}, Shipment ID: ${resData.shipment_id}`);
+      const srOrderId = resData.order_id;
+      const srShipmentId = resData.shipment_id;
+      console.log(`✅ [SHIPROCKET ORDER CREATED] Order ${shipment.shipmentId} created! SR Order: ${srOrderId}, SR Shipment: ${srShipmentId}`);
 
-      // Save Shiprocket IDs on the shipment
-      shipment.shiprocketOrderId = resData.order_id || null;
-      shipment.shiprocketShipmentId = resData.shipment_id || null;
+      shipment.shiprocketOrderId = srOrderId || null;
+      shipment.shiprocketShipmentId = srShipmentId || null;
       shipment.pickupAggregator = 'Shiprocket Multi-Carrier API';
-      await shipment.save();
 
-      return resData;
+      // 3. AUTOMATIC ZERO-TOUCH DISPATCH: Assign courier, generate live AWB & schedule pickup
+      const senderPincode = (
+        shipment.senderPincode || 
+        senderUser?.pickupAddress?.pincode || 
+        senderUser?.pincode || 
+        '700049'
+      ).toString().replace(/\D/g, '').slice(0, 6);
+
+      const dispatchResult = await autoAssignCourierAndPickup({
+        shipmentId: shipment.shipmentId,
+        srShipmentId,
+        chosenCarrierSlug: shipment.carrierSlug || shipment.pickupCarrierSlug || 'auto',
+        pickupPincode: senderPincode,
+        deliveryPincode: receiverPincode,
+        weightKg,
+        isCod
+      });
+
+      if (dispatchResult && dispatchResult.awbCode) {
+        shipment.awbCode = dispatchResult.awbCode;
+        shipment.pickupCarrier = dispatchResult.courierName;
+        shipment.pickupRate = dispatchResult.courierRate || shipment.pickupRate;
+        if (dispatchResult.labelUrl) {
+          shipment.shippingLabelUrl = dispatchResult.labelUrl;
+        }
+        if (dispatchResult.pickupScheduled) {
+          shipment.pickupStatus = 'Scheduled';
+        }
+      }
+
+      await shipment.save();
+      return { ...resData, dispatch: dispatchResult };
     } else {
-      console.warn('[SHIPROCKET ORDER SYNC NOTICE]:', resData);
+      console.warn('[SHIPROCKET ORDER NOTICE]:', resData);
       return resData;
     }
   } catch (err) {
     const errorDetails = err.response?.data || err.message;
-    console.error(`❌ [SHIPROCKET ORDER SYNC FAILED] for ${shipment.shipmentId}:`, errorDetails);
+    console.error(`❌ [SHIPROCKET ORDER CREATION FAILED] for ${shipment.shipmentId}:`, errorDetails);
     return null;
   }
 };
 
 module.exports = {
   getAuthToken,
-  getPrimaryPickupLocation,
-  createOrderInShiprocket
+  ensurePickupLocation,
+  createOrderInShiprocket,
+  autoAssignCourierAndPickup
 };

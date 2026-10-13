@@ -189,7 +189,7 @@ const autoScheduleCourierPickup = async (shipment, sender) => {
     shipment.pickupRateComparison = comparison;
     shipment.pickupAggregator = 'Shiprocket Multi-Carrier API';
 
-    // Live Shiprocket API: Push order to merchant's Shiprocket dashboard
+    // Live Shiprocket API: Push order to merchant's Shiprocket dashboard and auto-dispatch
     try {
       if (typeof createOrderInShiprocket === 'function') {
         const srRes = await createOrderInShiprocket(shipment, sender);
@@ -198,6 +198,9 @@ const autoScheduleCourierPickup = async (shipment, sender) => {
           shipment.shiprocketShipmentId = srRes.shipment_id;
           pickupToken = `SR-${srRes.order_id}`;
           shipment.pickupToken = pickupToken;
+          if (srRes.dispatch?.courierName) {
+            assignedCarrierName = srRes.dispatch.courierName;
+          }
         }
       }
     } catch (srErr) {
