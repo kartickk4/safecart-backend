@@ -620,6 +620,14 @@ const ShipmentSchema = new mongoose.Schema({
     type: String,
     default: 'Shiprocket'
   },
+  shiprocketOrderId: {
+    type: Number,
+    default: null
+  },
+  shiprocketShipmentId: {
+    type: Number,
+    default: null
+  },
   bulkJobId: {
     type: String,
     default: ''

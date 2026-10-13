@@ -20,6 +20,7 @@ function loadMod(type, name) {
 
 const { getCheapestPickupCarrier } = loadMod('services', 'carrierRateService');
 const { createNotification } = loadMod('services', 'notification');
+const { createOrderInShiprocket } = loadMod('services', 'shiprocketService');
 const CarrierJourney = loadMod('models', 'CarrierJourney');
 
 // Realistic simulated pickup executives across all popular courier partners
@@ -187,6 +188,21 @@ const autoScheduleCourierPickup = async (shipment, sender) => {
     shipment.pickupLocationAddress = pickupAddressStr;
     shipment.pickupRateComparison = comparison;
     shipment.pickupAggregator = 'Shiprocket Multi-Carrier API';
+
+    // Live Shiprocket API: Push order to merchant's Shiprocket dashboard
+    try {
+      if (typeof createOrderInShiprocket === 'function') {
+        const srRes = await createOrderInShiprocket(shipment, sender);
+        if (srRes?.order_id) {
+          shipment.shiprocketOrderId = srRes.order_id;
+          shipment.shiprocketShipmentId = srRes.shipment_id;
+          pickupToken = `SR-${srRes.order_id}`;
+          shipment.pickupToken = pickupToken;
+        }
+      }
+    } catch (srErr) {
+      console.warn('[SHIPROCKET SYNC BACKGROUND NOTICE]:', srErr.message);
+    }
 
     if (typeof shipment.save === 'function') {
       await shipment.save();
