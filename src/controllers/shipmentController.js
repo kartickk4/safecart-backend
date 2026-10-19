@@ -33,12 +33,16 @@ const getLinkedUserIds = async (user) => {
     filters.push({ email: user.email.toLowerCase().trim() });
   }
   if (user.phone && user.phone.trim()) {
-    const digits = user.phone.replace(/\D/g, '');
+    const raw = user.phone.trim();
+    const digits = raw.replace(/\D/g, '');
     if (digits.length >= 10) {
-      filters.push({ phone: new RegExp(digits.slice(-10) + '$') });
+      const ten = digits.slice(-10);
+      filters.push({ phone: { $in: [ten, `+91${ten}`, `91${ten}`, `+91 ${ten}`, raw] } });
+    } else {
+      filters.push({ phone: raw });
     }
   }
-  const linked = await User.find({ $or: filters }, '_id');
+  const linked = await User.find({ $or: filters }, '_id').lean();
   return linked.map(u => u._id);
 };
 
@@ -109,25 +113,26 @@ const getShipments = async (req, res) => {
     let query = {};
 
     if (role === 'supplier') {
-      // Only shipments this user created as a sender
+      // Only shipments this user created as a sender (Indexed on senderId)
       query = { senderId: { $in: userIds } };
     } else if (role === 'receiver') {
       // Only shipments where this user is the receiver
-      const receiverConditions = [];
+      const receiverPhones = [];
       if (userPhone && userPhone.trim()) {
-        receiverConditions.push({ receiverPhone: userPhone });
-        const digits = userPhone.replace(/\D/g, '');
+        const raw = userPhone.trim();
+        const digits = raw.replace(/\D/g, '');
+        receiverPhones.push(raw);
         if (digits.length >= 10) {
-          receiverConditions.push({ receiverPhone: new RegExp(digits.slice(-10) + '$') });
+          const ten = digits.slice(-10);
+          receiverPhones.push(ten, `+91${ten}`, `91${ten}`, `+91 ${ten}`);
         }
       }
-      if (receiverConditions.length === 0) {
-        return res.json([]); // no phone → no receiver shipments
+      if (receiverPhones.length === 0) {
+        return res.json([]);
       }
-      // Exclude shipments they also created (self-shipments appear only in supplier view)
       query = {
         $and: [
-          { $or: receiverConditions },
+          { receiverPhone: { $in: receiverPhones } },
           { senderId: { $nin: userIds } }
         ]
       };
@@ -135,16 +140,21 @@ const getShipments = async (req, res) => {
       // No role filter — return all (sender OR receiver)
       const queryConditions = [{ senderId: { $in: userIds } }];
       if (userPhone && userPhone.trim()) {
-        queryConditions.push({ receiverPhone: userPhone });
-        const digits = userPhone.replace(/\D/g, '');
+        const raw = userPhone.trim();
+        const digits = raw.replace(/\D/g, '');
+        const receiverPhones = [raw];
         if (digits.length >= 10) {
-          queryConditions.push({ receiverPhone: new RegExp(digits.slice(-10) + '$') });
+          const ten = digits.slice(-10);
+          receiverPhones.push(ten, `+91${ten}`, `91${ten}`, `+91 ${ten}`);
         }
+        queryConditions.push({ receiverPhone: { $in: receiverPhones } });
       }
       query = { $or: queryConditions };
     }
 
-    const shipments = await Shipment.find(query).sort({ createdAt: -1 });
+    const shipments = await Shipment.find(query)
+      .sort({ createdAt: -1 })
+      .lean();
     res.json(shipments);
   } catch (error) {
     console.error('Get Shipments Error:', error);
