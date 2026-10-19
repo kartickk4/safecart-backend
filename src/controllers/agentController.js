@@ -1337,8 +1337,18 @@ const handleChat = async (req, res) => {
           });
           await shipment.save();
 
-          // Auto-schedule Delhivery / Shiprocket pickup slot (cheapest courier)
-          const pickupResult = await autoScheduleCourierPickup(shipment, user);
+          // For COD orders: Auto-schedule Delhivery / Shiprocket pickup slot immediately
+          // For Prepaid orders: Courier pickup will be booked automatically once buyer completes payment
+          let pickupResult = null;
+          if (isCod) {
+            pickupResult = await autoScheduleCourierPickup(shipment, user);
+          } else {
+            pickupResult = {
+              carrier: sel.name,
+              pickupSlot: 'Auto-scheduled upon buyer payment',
+              rate: sel.price
+            };
+          }
 
           // For prepaid: send payment link to buyer via WhatsApp (SMS restricted per policy)
           if (isPrepaidOrder && cfLink.linkUrl) {
@@ -1356,10 +1366,10 @@ const handleChat = async (req, res) => {
           await createNotification(
             userId,
             'smart_toy',
-            `🤖 Agent Booked Shipment — ${shipmentId} (${isCod ? 'COD' : 'Prepaid'})`,
-            `AI Agent booked shipment for ${data.receiverName} (${data.receiverPhone}). ` +
-            `Carrier: ${pickupResult.carrier || sel.name}. Auto-pickup slot: ${pickupResult.pickupSlot}. ` +
-            (isCod ? `COD Fees ₹${totalCodFees} adjusted from wallet.` : `Payment link sent via WhatsApp & SMS.`),
+            `🤖 Agent Registered Order — ${shipmentId} (${isCod ? 'COD' : 'Prepaid'})`,
+            `AI Agent registered order for ${data.receiverName} (${data.receiverPhone}). ` +
+            `Carrier: ${pickupResult.carrier || sel.name}. ` +
+            (isCod ? `Pickup slot: ${pickupResult.pickupSlot}. COD Fees ₹${totalCodFees} adjusted from wallet.` : `Payment link sent to buyer. Courier will be booked upon payment.`),
             'shipping'
           );
 

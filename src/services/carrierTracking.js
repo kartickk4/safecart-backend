@@ -4,9 +4,11 @@ const axios = require('axios');
  * Books a shipment (Simulated since TrackCourier.io is tracking-only).
  * Returns AWB tracking code, carrier slug, and shipping label.
  */
-const bookShipment = async (shipment, senderUser) => {
-  // If the request already has tracking details specified (e.g. for testing live APIs)
-  if (shipment.carrierSlug && shipment.awbCode) {
+const bookShipment = async (shipment, senderUser, overrideCarrierSlug) => {
+  const chosenCarrier = (overrideCarrierSlug || shipment.carrierSlug || process.env.DEFAULT_CARRIER || 'delhivery').toLowerCase();
+
+  // If the request already has tracking details specified and no carrier override was requested
+  if (!overrideCarrierSlug && shipment.carrierSlug && shipment.awbCode) {
     return {
       carrierSlug: shipment.carrierSlug.toLowerCase(),
       awbCode: shipment.awbCode,
@@ -14,13 +16,13 @@ const bookShipment = async (shipment, senderUser) => {
     };
   }
 
-  // Generate simulated booking details using chosen carrier
-  const carrierSlug = (shipment.carrierSlug && shipment.carrierSlug !== 'add_later' ? shipment.carrierSlug : (process.env.DEFAULT_CARRIER || 'delhivery')).toLowerCase();
+  // Generate simulated booking details using chosen carrier (e.g. bluedart, delhivery)
+  const carrierSlug = chosenCarrier;
   const randomSuffix = Math.floor(1000000000 + Math.random() * 9000000000);
   const awbCode = `TC-${carrierSlug}-${randomSuffix}`;
   const shippingLabelUrl = 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf';
 
-  console.log(`[CARRIER TRACKING] Simulated booking for shipment ${shipment.shipmentId}. Assigned Courier: ${carrierSlug}, AWB: ${awbCode}`);
+  console.log(`[CARRIER TRACKING] Carrier Booked for shipment ${shipment.shipmentId}: ${carrierSlug.toUpperCase()}, AWB: ${awbCode}`);
 
   return {
     carrierSlug,

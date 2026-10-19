@@ -38,6 +38,27 @@ const SystemConfigSchema = new mongoose.Schema({
     type: Number,
     default: 50
   },
+  sellerCashbackMin: {
+    type: Number,
+    default: 2, // ₹2 minimum seller cashback per completed shipment
+    min: 0
+  },
+  sellerCashbackMax: {
+    type: Number,
+    default: 3, // ₹3 maximum seller cashback per completed shipment
+    min: 0
+  },
+  buyerCashbackRate: {
+    type: Number,
+    default: 2.0, // 2% buyer prepayment cashback
+    min: 0,
+    max: 10
+  },
+  buyerCashbackMaxCap: {
+    type: Number,
+    default: 10, // Max ₹10 cap for buyer rewards
+    min: 0
+  },
   photoReviewFee: {
     type: Number,
     default: 2,

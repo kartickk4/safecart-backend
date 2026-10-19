@@ -55,11 +55,20 @@ const {
   publicQrSendOtp,
   publicQrConfirm,
   exportUserShipments,
-  quoteCodFees
+  quoteCodFees,
+  publicPayShipment,
+  paymentWebhookHandler
 } = loadMod('controllers', 'shipmentController');
 const { protect } = loadMod('middleware', 'auth');
 
 const router = express.Router();
+
+// ── Public Payment & Gateway Webhooks (no login required) ───────────────────
+router.route('/public/pay/:id')
+  .post(publicPayShipment);
+
+router.route('/webhook/payment')
+  .post(paymentWebhookHandler);
 
 router.route('/')
   .get(protect, getShipments)

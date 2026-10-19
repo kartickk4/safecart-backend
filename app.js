@@ -6,15 +6,18 @@ const path = require('path');
 const fs = require('fs');
 const mongoose = require('mongoose');
 
-// Helper function to resolve module whether nested in subfolder or flat at root
+// Helper function to resolve module whether nested in subfolder, in src, or flat at root
 function loadModule(relSubPath, relRootPath) {
   const p1 = path.resolve(__dirname, relSubPath);
+  const pSrc = path.resolve(__dirname, 'src', relSubPath);
   const p2 = path.resolve(__dirname, relRootPath);
   const p3 = path.resolve(__dirname, '..', relRootPath);
   if (fs.existsSync(p1)) return require(p1);
+  if (fs.existsSync(pSrc)) return require(pSrc);
   if (fs.existsSync(p2)) return require(p2);
   if (fs.existsSync(p3)) return require(p3);
   try { return require(`./${relSubPath}`); } catch(e) {}
+  try { return require(`./src/${relSubPath}`); } catch(e) {}
   return require(`./${relRootPath}`);
 }
 

@@ -91,7 +91,7 @@ const PREFIX_MAP = {
  * @param {object} sender   - Mongoose User document or sender object
  * @returns {object} { pickupToken, pickupSlot, carrier, rate, executive, comparison, apiProvider }
  */
-const autoScheduleCourierPickup = async (shipment, sender) => {
+const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug) => {
   try {
     const senderPincode = shipment.senderPincode || 
                           sender?.pincode || 
@@ -104,9 +104,21 @@ const autoScheduleCourierPickup = async (shipment, sender) => {
     // 1. Compare rates across all popular courier partners via Shiprocket Multi-Carrier API
     const { cheapest, comparison, savingsAmount } = getCheapestPickupCarrier(senderPincode, receiverPincode, weightKg);
 
-    const assignedCarrierSlug = cheapest?.slug || 'delhivery';
-    const assignedCarrierName = cheapest?.name || 'Delhivery Express';
-    const assignedRate = cheapest?.price || 40;
+    // Honor preferredCarrierSlug selected by buyer / caller, else check shipment.carrierSlug, else auto cheapest
+    const targetCarrierSlug = (
+      preferredCarrierSlug || 
+      (shipment.carrierSlug && shipment.carrierSlug !== 'auto' && shipment.carrierSlug !== 'add_later' ? shipment.carrierSlug : null) || 
+      cheapest?.slug || 
+      'delhivery'
+    ).toLowerCase();
+
+    const matchedCarrier = comparison?.find(c => c.slug === targetCarrierSlug);
+    const assignedCarrierSlug = targetCarrierSlug;
+    const assignedCarrierName = matchedCarrier?.name || 
+      (targetCarrierSlug === 'bluedart' ? 'Blue Dart Express' : 
+       targetCarrierSlug === 'delhivery' ? 'Delhivery Express' : 
+       (targetCarrierSlug.charAt(0).toUpperCase() + targetCarrierSlug.slice(1)));
+    const assignedRate = matchedCarrier?.price || (targetCarrierSlug === 'bluedart' ? 65 : 40);
 
     // 2. Compute the optimal pickup time slot based on current time
     const now = new Date();

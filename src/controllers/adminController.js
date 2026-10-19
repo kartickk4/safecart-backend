@@ -2464,7 +2464,13 @@ const updateSystemConfig = async (req, res) => {
       undeliveredPenaltyReceiver,
       undeliveredReliefSupplier,
       mockCarrierEnabled,
-      maintenanceMode
+      maintenanceMode,
+      cashbackEnabled,
+      sellerCashbackRate,
+      sellerCashbackMin,
+      sellerCashbackMax,
+      buyerCashbackRate,
+      buyerCashbackMaxCap
     } = req.body;
 
     let config = await SystemConfig.findOne({ configKey: 'GLOBAL_CONFIG' });
@@ -2480,6 +2486,11 @@ const updateSystemConfig = async (req, res) => {
     if (undeliveredReliefSupplier !== undefined) config.undeliveredReliefSupplier = Number(undeliveredReliefSupplier);
     if (mockCarrierEnabled !== undefined) config.mockCarrierEnabled = Boolean(mockCarrierEnabled);
     if (maintenanceMode !== undefined) config.maintenanceMode = Boolean(maintenanceMode);
+    if (cashbackEnabled !== undefined) config.cashbackEnabled = Boolean(cashbackEnabled);
+    if (sellerCashbackMin !== undefined) config.sellerCashbackMin = Number(sellerCashbackMin);
+    if (sellerCashbackMax !== undefined) config.sellerCashbackMax = Number(sellerCashbackMax);
+    if (buyerCashbackRate !== undefined) config.buyerCashbackRate = Number(buyerCashbackRate);
+    if (buyerCashbackMaxCap !== undefined) config.buyerCashbackMaxCap = Number(buyerCashbackMaxCap);
 
     config.updatedBy = req.user?.email || 'admin';
     config.updatedAt = new Date();

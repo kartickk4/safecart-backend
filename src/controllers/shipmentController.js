@@ -409,8 +409,9 @@ const createShipment = async (req, res) => {
       parcelWidth: parseFloat(bodyWidth) || 10,
       parcelHeight: parseFloat(bodyHeight) || 5,
       carrierSlug: assignedCarrierSlug,
-      awbCode: assignedAwbCode,
-      shippingLabelUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+      awbCode: shouldSkipPaymentLink ? assignedAwbCode : null,
+      shippingLabelUrl: shouldSkipPaymentLink ? 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf' : '',
+      pickupStatus: shouldSkipPaymentLink ? 'Scheduled' : 'Pending Buyer Payment',
       paymentLink: cfLink.linkUrl,
       cashfreeLinkId: cfLink.linkId,
       returnAllowed: isReturnAllowed,
@@ -448,46 +449,18 @@ const createShipment = async (req, res) => {
 
     await shipment.save();
 
-    // Auto-schedule Delhivery / Shiprocket courier pickup slot (whichever has cheapest delivery charge)
-    const pickupSchedule = await autoScheduleCourierPickup(shipment, sender);
+    let pickupSchedule = null;
 
-    // Initialize CarrierJourney tracking document immediately with auto-assigned courier
     let originLocation = "Primary Location";
     if (city) {
       if (city.includes('->')) originLocation = city.split('->')[0].trim();
       else if (city.includes('→')) originLocation = city.split('→')[0].trim();
     }
-    let initialJourney = await CarrierJourney.findOne({ shipmentId });
-    if (!initialJourney) {
-      const rateDetail = selectedCarrierRate ? ` at ₹${selectedCarrierRate} (cheapest available)` : '';
-      initialJourney = new CarrierJourney({
-        shipmentId,
-        awbCode: assignedAwbCode,
-        courierName: assignedCarrierName || assignedCarrierSlug.toUpperCase(),
-        milestones: [
-          {
-            status: "Pending Pickup",
-            location: originLocation,
-            detail: `Order booked (${isCod ? 'COD' : isPrepaidOrder ? 'Prepaid' : 'Escrow'}) with ${assignedCarrierName || assignedCarrierSlug.toUpperCase()}${rateDetail}. AWB ${assignedAwbCode} auto-assigned.`,
-            time: new Date()
-          }
-        ]
-      });
-      await initialJourney.save();
-    }
 
-    // Create notifications for sender
-    await createNotification(
-      req.user._id,
-      'add_box',
-      `Shipment Created — ${shipmentId}`,
-      `Shipment (${isCod ? 'COD' : isPrepaidOrder ? 'Prepaid' : 'Escrow'}) created for ${receiverName}. Cheapest carrier auto-selected: ${assignedCarrierName || assignedCarrierSlug.toUpperCase()}${selectedCarrierRate ? ' @ ₹' + selectedCarrierRate : ''} (AWB: ${assignedAwbCode}).`,
-      'shipping'
-    );
-
-    // If COD, Prepaid, or fundEscrow is selected, proceed immediately to carrier booking
     if (shouldSkipPaymentLink) {
-      // Book with Carrier Tracking Service (Stage 3)
+      // FOR COD & PAID OFFLINE:
+      // Seller pays freight/fees upfront; book courier and auto-schedule pickup immediately
+      pickupSchedule = await autoScheduleCourierPickup(shipment, sender);
       const logisticsData = await carrierTracking.bookShipment(shipment, sender);
 
       shipment.carrierSlug = logisticsData.carrierSlug || shipment.carrierSlug;
@@ -501,53 +474,33 @@ const createShipment = async (req, res) => {
       }
       await shipment.save();
 
-      // Update CarrierJourney tracking document
-      let origin = "Primary Location";
-      let dest = "Receiver Location";
-      if (city) {
-        if (city.includes('->')) {
-          const p = city.split('->');
-          origin = p[0].trim();
-          dest = p[1].trim();
-        } else if (city.includes('→')) {
-          const p = city.split('→');
-          origin = p[0].trim();
-          dest = p[1].trim();
-        }
-      }
-
-      let journey = await CarrierJourney.findOne({ shipmentId });
-      if (!journey) {
-        journey = new CarrierJourney({
+      let initialJourney = await CarrierJourney.findOne({ shipmentId });
+      if (!initialJourney) {
+        const rateDetail = selectedCarrierRate ? ` at ₹${selectedCarrierRate} (cheapest available)` : '';
+        initialJourney = new CarrierJourney({
           shipmentId,
-          awbCode: logisticsData.awbCode,
-          courierName: logisticsData.carrierSlug ? logisticsData.carrierSlug.toUpperCase() : "Carrier Partner",
+          awbCode: shipment.awbCode,
+          courierName: assignedCarrierName || assignedCarrierSlug.toUpperCase(),
           milestones: [
             {
               status: "Pending Pickup",
-              location: origin,
-              detail: `Order processed with carrier ${logisticsData.carrierSlug || 'Partner'}.`,
+              location: originLocation,
+              detail: `Order booked (${isCod ? 'COD' : 'Paid Offline'}) with ${assignedCarrierName || assignedCarrierSlug.toUpperCase()}${rateDetail}. AWB ${shipment.awbCode} auto-assigned. Courier pickup scheduled.`,
               time: new Date()
             }
           ]
         });
-        await journey.save();
-      } else {
-        journey.awbCode = logisticsData.awbCode || journey.awbCode;
-        journey.courierName = logisticsData.carrierSlug ? logisticsData.carrierSlug.toUpperCase() : journey.courierName;
-        await journey.save();
+        await initialJourney.save();
       }
 
-      // Notify parties
       await createNotification(
         req.user._id,
         'payments',
-        `Booking Confirmed — ${shipmentId}`,
-        `Order confirmed (${isCod ? 'Cash on Delivery' : 'Prepaid'}). AWB ${shipment.awbCode} generated and scheduled for pickup.`,
+        `Shipment Booked — ${shipmentId}`,
+        `Shipment (${isCod ? 'Cash on Delivery' : 'Paid Offline'}) booked for ${receiverName}. Courier: ${assignedCarrierName || assignedCarrierSlug.toUpperCase()} (AWB: ${shipment.awbCode}).`,
         'shipping'
       );
 
-      // Notify receiver if registered
       const receiver = await findReceiverUser(receiverPhone);
       if (receiver) {
         await createNotification(
@@ -558,15 +511,35 @@ const createShipment = async (req, res) => {
           'shipping'
         );
       }
-
-      if (isPrepaidOrder) {
-        // Prepayment cashback reward
-        const reward = await grantPrepaymentCashback(shipmentId, receiverPhone);
-        if (reward && reward.amount) {
-          shipment.receiverCashbackAmount = reward.amount;
-          await shipment.save();
-        }
+    } else {
+      // FOR PREPAID ONLINE ORDERS:
+      // Platform takes in all shipment details, generates secure buyer payment link.
+      // Courier pickup and shipping label are automatically booked ONLY AFTER payment is received from the buyer.
+      let initialJourney = await CarrierJourney.findOne({ shipmentId });
+      if (!initialJourney) {
+        initialJourney = new CarrierJourney({
+          shipmentId,
+          awbCode: 'PENDING_PAYMENT',
+          courierName: assignedCarrierName || assignedCarrierSlug.toUpperCase(),
+          milestones: [
+            {
+              status: "Awaiting Payment",
+              location: originLocation,
+              detail: `Order details registered. Secure payment link generated for buyer (₹${amount}). Courier pickup and AWB will be automatically booked once buyer payment is received.`,
+              time: new Date()
+            }
+          ]
+        });
+        await initialJourney.save();
       }
+
+      await createNotification(
+        req.user._id,
+        'add_box',
+        `Order Registered — ${shipmentId}`,
+        `Order details saved for ${receiverName}. Payment link generated. Courier pickup will be booked automatically after the buyer completes payment.`,
+        'shipping'
+      );
     }
 
     // COD Fee notification to supplier
@@ -727,112 +700,216 @@ const fundShipment = async (req, res) => {
       return res.status(403).json({ error: 'Not authorized to fund this shipment' });
     }
 
-    if (shipment.escrowStage !== 1) {
+    if (shipment.escrowStage !== 1 && shipment.receiverPaymentDone) {
       return res.status(400).json({ error: 'Shipment has already been funded or processed' });
     }
 
     if (carrierSlug) shipment.carrierSlug = carrierSlug;
     if (awbCode) shipment.awbCode = awbCode;
 
-    const sender = await User.findById(shipment.senderId);
+    const updatedShipment = await executeOrderPaymentAndCourierBooking(shipment, req.body);
+    res.json(updatedShipment);
+  } catch (error) {
+    console.error('Fund Escrow Error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+};
 
-    // Update status to Pending Pickup & Stage 3
-    shipment.status = 'Pending Pickup';
-    shipment.escrowStage = 3;
-    shipment.receiverPaymentDone = true;
-    shipment.receiverPaidAt = new Date();
+/**
+ * @desc    Core engine: Creates courier shipment, books pickup, generates AWB & label
+ *          after payment is received from the buyer.
+ */
+const executeOrderPaymentAndCourierBooking = async (shipment, paymentDetails = {}) => {
+  if (!shipment) return null;
 
-    // Trigger carrier tracking booking simulation or pass-through
-    const logisticsData = await carrierTracking.bookShipment(shipment, sender);
+  // If already paid and booked, return existing shipment
+  if (shipment.status !== 'Awaiting Payment' && shipment.escrowStage >= 3 && shipment.receiverPaymentDone) {
+    return shipment;
+  }
 
-    shipment.carrierSlug = logisticsData.carrierSlug;
-    shipment.awbCode = logisticsData.awbCode;
-    shipment.shippingLabelUrl = logisticsData.shippingLabelUrl;
-    if (shipment.awbCode) {
-      shipment.trackingSubmitted = true;
-      shipment.trackingSubmittedAt = shipment.trackingSubmittedAt || new Date();
-      shipment.confirmationWindowExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-      shipment.confirmationWindowClosed = false;
-    }
-    await shipment.save();
+  const sender = await User.findById(shipment.senderId);
 
-    // Initialize Carrier Journey
-    let origin = "Primary Location";
-    let dest = "Receiver Location";
-    if (shipment.city) {
-      if (shipment.city.includes('->')) {
-        const p = shipment.city.split('->');
-        origin = p[0].trim();
-        dest = p[1].trim();
-      } else if (shipment.city.includes('→')) {
-        const p = shipment.city.split('→');
-        origin = p[0].trim();
-        dest = p[1].trim();
-      }
-    }
+  // Selected courier partner (from buyer checkout selection or seller preference)
+  const chosenCarrierSlug = (paymentDetails.carrierSlug || shipment.carrierSlug || process.env.DEFAULT_CARRIER || 'delhivery').toLowerCase();
+  shipment.carrierSlug = chosenCarrierSlug;
 
-    // Upsert CarrierJourney — don't blindly create a new doc; one may already
-    // exist from createShipment's auto-booking step. Doing new().save() would
-    // throw a duplicate-key error on the unique shipmentId index.
-    let journey = await CarrierJourney.findOne({ shipmentId: id });
-    if (!journey) {
-      journey = new CarrierJourney({
-        shipmentId: id,
-        awbCode: logisticsData.awbCode,
-        courierName: logisticsData.carrierSlug ? logisticsData.carrierSlug.toUpperCase() : "Carrier Partner",
-        milestones: [
-          {
-            status: "Pending Pickup",
-            location: origin,
-            detail: `Order processed with carrier ${logisticsData.carrierSlug || 'Partner'}.`,
-            time: new Date()
-          }
-        ]
-      });
-    } else {
-      // Update existing journey with the finalized AWB and carrier
-      journey.awbCode = logisticsData.awbCode || journey.awbCode;
-      journey.courierName = logisticsData.carrierSlug ? logisticsData.carrierSlug.toUpperCase() : journey.courierName;
-      journey.milestones.push({
-        status: "Pending Pickup",
-        location: origin,
-        detail: `Escrow funded. Order confirmed with carrier ${logisticsData.carrierSlug || 'Partner'}.`,
-        time: new Date()
-      });
-    }
-    await journey.save();
+  // Update status: payment is now verified
+  shipment.status = 'Pending Pickup';
+  shipment.escrowStage = 3;
+  shipment.receiverPaymentDone = true;
+  shipment.receiverPaidAt = new Date();
+  if (paymentDetails.transactionRef) {
+    shipment.paymentTransactionRef = paymentDetails.transactionRef;
+  }
 
-    // Create notification
+  // 1. Auto-schedule courier pickup slot using the courier company the buyer selected
+  const pickupSchedule = await autoScheduleCourierPickup(shipment, sender, chosenCarrierSlug);
+
+  // 2. Trigger carrier booking to generate real AWB and shipping label for the chosen carrier
+  const logisticsData = await carrierTracking.bookShipment(shipment, sender, chosenCarrierSlug);
+
+  shipment.carrierSlug = logisticsData.carrierSlug || pickupSchedule?.carrierSlug || chosenCarrierSlug;
+  shipment.awbCode = logisticsData.awbCode || pickupSchedule?.pickupToken || shipment.awbCode;
+  shipment.shippingLabelUrl = logisticsData.shippingLabelUrl || shipment.shippingLabelUrl || 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf';
+  shipment.pickupCarrier = pickupSchedule?.carrier || (chosenCarrierSlug === 'bluedart' ? 'Blue Dart Express' : (chosenCarrierSlug === 'delhivery' ? 'Delhivery Express' : (chosenCarrierSlug.charAt(0).toUpperCase() + chosenCarrierSlug.slice(1))));
+
+  if (shipment.awbCode) {
+    shipment.trackingSubmitted = true;
+    shipment.trackingSubmittedAt = new Date();
+    shipment.confirmationWindowExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    shipment.confirmationWindowClosed = false;
+  }
+  await shipment.save();
+
+  // 3. Upsert Carrier Journey milestone
+  let origin = "Primary Location";
+  if (shipment.city) {
+    if (shipment.city.includes('->')) origin = shipment.city.split('->')[0].trim();
+    else if (shipment.city.includes('→')) origin = shipment.city.split('→')[0].trim();
+  }
+
+  const courierTitle = shipment.pickupCarrier || (chosenCarrierSlug === 'bluedart' ? 'Blue Dart Express' : 'Delhivery Express');
+  const milestoneDetail = `Buyer payment of ₹${shipment.amount} received. Carrier Booked: ${courierTitle} (AWB: ${shipment.awbCode}). Pickup slot: ${shipment.pickupSlot || 'Scheduled'}.`;
+
+  let journey = await CarrierJourney.findOne({ shipmentId: shipment.shipmentId });
+  if (!journey) {
+    journey = new CarrierJourney({
+      shipmentId: shipment.shipmentId,
+      awbCode: shipment.awbCode,
+      courierName: courierTitle,
+      milestones: [
+        {
+          status: "Pending Pickup",
+          location: origin,
+          detail: milestoneDetail,
+          time: new Date()
+        }
+      ]
+    });
+  } else {
+    journey.awbCode = shipment.awbCode || journey.awbCode;
+    journey.courierName = courierTitle;
+    journey.milestones.push({
+      status: "Pending Pickup",
+      location: origin,
+      detail: milestoneDetail,
+      time: new Date()
+    });
+  }
+  await journey.save();
+
+  // 4. Create notification for seller
+  await createNotification(
+    shipment.senderId,
+    'payments',
+    `Payment Received — Carrier Booked: ${courierTitle} (${shipment.shipmentId})`,
+    `Buyer has completed payment of ₹${shipment.amount}. Courier shipment created with ${courierTitle} (AWB: ${shipment.awbCode}). Carrier Booked: ${courierTitle}. Pickup scheduled. Please print shipping label.`,
+    'shipping'
+  );
+
+  // 5. Create notification for receiver if registered
+  const receiver = await findReceiverUser(shipment.receiverPhone);
+  if (receiver) {
     await createNotification(
-      shipment.senderId,
-      'payments',
-      `Payment Secured — ${id}`,
-      `Escrow funded. AWB ${logisticsData.awbCode} issued.`,
-      'payment'
+      receiver._id,
+      'inventory_2',
+      `Payment Successful — Carrier Booked: ${courierTitle}`,
+      `Your payment of ₹${shipment.amount} is confirmed. Courier shipment created with your selected carrier: ${courierTitle} (AWB: ${shipment.awbCode}).`,
+      'shipping'
     );
+  }
 
-    const receiver = await findReceiverUser(shipment.receiverPhone);
-    if (receiver) {
-      await createNotification(
-        receiver._id,
-        'inventory_2',
-        `Escrow Funded: ${id}`,
-        `A secure parcel from ${sender.fullName} has been funded (₹${shipment.amount}).`,
-        'payment'
-      );
-    }
-
-    // Grant buyer/receiver cash reward (₹1 - ₹10 cashback on prepayment into escrow)
+  // 6. Grant buyer/receiver cash reward (₹1 - ₹10 cashback on prepayment)
+  try {
     const reward = await grantPrepaymentCashback(shipment.shipmentId, shipment.receiverPhone);
     if (reward && reward.amount) {
       shipment.receiverCashbackAmount = reward.amount;
       await shipment.save();
     }
+  } catch (err) {
+    console.warn('[CASHBACK NOTICE]:', err.message);
+  }
 
-    res.json(shipment);
+  return shipment;
+};
+
+/**
+ * @desc    Public payment completion (when buyer pays via public payment link or simulated checkout)
+ * @route   POST /api/v1/shipments/public/pay/:id
+ * @access  Public
+ */
+const publicPayShipment = async (req, res) => {
+  try {
+    const id = req.params.id.toUpperCase();
+    const shipment = await Shipment.findOne({ shipmentId: id });
+
+    if (!shipment) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    if (shipment.receiverPaymentDone && shipment.escrowStage >= 3) {
+      return res.json({ 
+        message: 'Payment already completed for this order',
+        shipment 
+      });
+    }
+
+    const updatedShipment = await executeOrderPaymentAndCourierBooking(shipment, {
+      transactionRef: req.body.transactionRef || `PAY_${Date.now()}`,
+      gateway: req.body.gateway || 'integrated_gateway',
+      carrierSlug: req.body.carrierSlug
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Payment verified and courier shipment booked successfully',
+      shipment: updatedShipment
+    });
   } catch (error) {
-    console.error('Fund Escrow Error:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error('Public Pay Error:', error);
+    res.status(500).json({ error: 'Failed to process payment and book courier shipment' });
+  }
+};
+
+/**
+ * @desc    Payment gateway webhook (Cashfree / PhonePe / Easebuzz)
+ * @route   POST /api/v1/shipments/webhook/payment
+ * @access  Public
+ */
+const paymentWebhookHandler = async (req, res) => {
+  try {
+    const event = req.body;
+    console.log('[Shipment Payment Webhook] Received payment event:', event);
+
+    const targetRef = event?.data?.order?.order_id || 
+                      event?.data?.payment_link_id || 
+                      event?.order_id || 
+                      event?.link_id ||
+                      event?.txnid;
+
+    if (targetRef) {
+      const cleanRef = String(targetRef).toUpperCase();
+      const shipment = await Shipment.findOne({
+        $or: [
+          { shipmentId: cleanRef },
+          { cashfreeLinkId: targetRef },
+          { shipmentId: cleanRef.replace(/^SPL_/, '').replace(/^ORD_/, '') }
+        ]
+      });
+
+      if (shipment && !shipment.receiverPaymentDone) {
+        await executeOrderPaymentAndCourierBooking(shipment, {
+          transactionRef: event?.data?.payment?.cf_payment_id || event?.payment_id || `WH_${Date.now()}`,
+          gateway: 'gateway_webhook'
+        });
+        console.log(`[Shipment Payment Webhook] Successfully booked courier for ${shipment.shipmentId}`);
+      }
+    }
+
+    res.status(200).json({ status: 'OK' });
+  } catch (error) {
+    console.error('[Shipment Payment Webhook] Error:', error);
+    res.status(200).json({ status: 'OK' });
   }
 };
 
@@ -2778,6 +2855,9 @@ module.exports = {
   publicQrSendOtp,
   publicQrConfirm,
   exportUserShipments,
-  quoteCodFees
+  quoteCodFees,
+  executeOrderPaymentAndCourierBooking,
+  publicPayShipment,
+  paymentWebhookHandler
 };
 

@@ -121,6 +121,14 @@ const releaseEscrow = async (shipmentId, receiverId) => {
     } catch (e) {}
   }
 
+  // ── Grant Seller Shipping Cashback (2.5%) ─────────────────────────────────
+  try {
+    const { grantSellerCashback } = require('./rewardService');
+    await grantSellerCashback(shipment.shipmentId);
+  } catch (cbErr) {
+    console.warn('[Release Escrow] Non-blocking seller cashback notice:', cbErr.message);
+  }
+
   // ── Cashfree Fast Escrow Payout (IMPS / UPI) ──────────────────────────────
   // IMPS ensures 30–60 min settlement (24/7) vs 1–2 day NEFT batch processing
   let payoutResult = null;
