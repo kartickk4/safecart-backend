@@ -1,8 +1,8 @@
-﻿services:
+services:
   - type: web
     name: securekaro-backend
     env: node
-    region: oregon
+    region: singapore
     plan: free
     buildCommand: npm install
     startCommand: npm start
