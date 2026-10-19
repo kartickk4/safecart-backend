@@ -1,33 +1,52 @@
 const axios = require('axios');
 
 /**
- * Validates phone number and logs SMS OTP dispatch via BigDataCloud API.
- * @param {string} phone - Target phone number in E.164 format (e.g. +919748556086)
- * @param {string} otpCode - 6-digit OTP code
+ * Sends a real OTP SMS to any Indian phone number via Fast2SMS Non-DLT OTP Route.
+ * No DLT registration required. Delivers to Airtel, Jio, Vi, BSNL instantly.
+ * @param {string} phone - Target phone number (any format — we extract last 10 digits)
+ * @param {string} otpCode - 6-digit OTP code to send
  */
 const sendSmsOtp = async (phone, otpCode) => {
-  const apiKey = process.env.BIGDATACLOUD_API_KEY || 'bdc_be41737c00904098a15e22c6c3614b39';
-  const cleanPhone = (phone || '').toString().trim().replace(/\s+/g, '');
-  const message = `Your SecureKaro verification code is: ${otpCode}. Valid for 5 minutes.`;
+  const fast2smsKey = process.env.FAST2SMS_API_KEY;
+  const cleanPhone = (phone || '').toString().replace(/\D/g, '').slice(-10);
 
-  console.log(`[SMS SERVICE] Dispatching OTP ${otpCode} to ${cleanPhone}`);
+  console.log(`[SMS OTP] Sending OTP ${otpCode} to +91${cleanPhone}`);
+
+  // Fallback: if no API key configured, log OTP so developers can test locally
+  if (!fast2smsKey) {
+    console.warn(`[SMS OTP FALLBACK] No FAST2SMS_API_KEY set. OTP for +91${cleanPhone}: ${otpCode}`);
+    return { success: true, mode: 'fallback_no_key', otpCode };
+  }
+
+  if (cleanPhone.length !== 10) {
+    console.warn(`[SMS OTP] Invalid phone number: ${phone}`);
+    return { success: false, mode: 'invalid_phone', otpCode };
+  }
 
   try {
-    // Official BigDataCloud Phone Validation API endpoint & parameter structure
-    const response = await axios.get('https://api.bigdatacloud.net/data/phone-number-validate', {
+    const response = await axios.get('https://www.fast2sms.com/dev/bulkV2', {
       params: {
-        key: apiKey,
-        number: cleanPhone.startsWith('+') ? cleanPhone : `+91${cleanPhone}`,
-        countryCode: 'IN'
+        authorization: fast2smsKey,
+        variables_values: otpCode,
+        route: 'otp',
+        numbers: cleanPhone
       },
-      timeout: 8000
+      timeout: 10000
     });
 
-    console.log(`[SMS SERVICE] BigDataCloud API success for ${cleanPhone}:`, response.data.e164Format || response.data.location);
-    return { success: true, data: response.data, otpCode };
+    console.log(`[SMS OTP] Fast2SMS response for +91${cleanPhone}:`, response.data?.message || response.data);
+    return {
+      success: true,
+      mode: 'fast2sms',
+      phone: cleanPhone,
+      otpCode,
+      requestId: response.data?.request_id
+    };
   } catch (error) {
-    console.warn(`[SMS SERVICE Note] BigDataCloud fallback:`, error.response?.data?.description || error.message);
-    return { success: true, mode: 'fallback', otpCode };
+    const errMsg = error.response?.data?.message || error.message;
+    console.warn(`[SMS OTP] Fast2SMS delivery error for +91${cleanPhone}:`, errMsg);
+    // Still return the OTP so the auth flow does not break if SMS fails
+    return { success: false, mode: 'fast2sms_error', otpCode, error: errMsg };
   }
 };
 
