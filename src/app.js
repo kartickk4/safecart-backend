@@ -44,6 +44,7 @@ const walletRoutes = loadModule('routes/walletRoutes.js', 'walletRoutes.js');
 const { sanitizeInput } = loadModule('middleware/sanitize.js', 'sanitize.js');
 const agentRoutes = loadModule('routes/agentRoutes.js', 'agentRoutes.js');
 const adminRoutes = loadModule('routes/adminRoutes.js', 'adminRoutes.js');
+const whatsappRoutes = loadModule('routes/whatsappRoutes.js', 'whatsappRoutes.js');
 
 const app = express();
 
@@ -244,6 +245,7 @@ app.use('/api/v1/rewards', rewardRoutes);
 app.use('/api/v1/wallet', walletRoutes);
 app.use('/api/v1/agent', agentLimiter, agentRoutes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/whatsapp', whatsappRoutes);
 
 // Backward-compatibility and direct-route aliases (prevents 404 if /api/v1 is omitted)
 app.use('/auth', authLimiter, authRoutes);
