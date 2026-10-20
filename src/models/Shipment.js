@@ -137,6 +137,29 @@ const ShipmentSchema = new mongoose.Schema({
     default: ""
   },
 
+  // Reverse Shipping Fee Accounting (Seller Pays Policy)
+  returnShippingChargeDeducted: {
+    type: Number,
+    default: 0
+  },
+  returnShippingChargePaidBy: {
+    type: String,
+    enum: ['seller', 'buyer', 'platform', 'none'],
+    default: 'seller'
+  },
+  returnShippingChargeStatus: {
+    type: String,
+    enum: ['Pending', 'Deducted', 'Waived', 'Settled'],
+    default: 'Pending'
+  },
+  returnShippingChargeDeductedFrom: {
+    type: String,
+    default: 'seller_wallet'
+  },
+  returnShippingChargeDeductedAt: {
+    type: Date
+  },
+
   // Seller Return Configuration & Policy
   returnAllowed: {
     type: Boolean,

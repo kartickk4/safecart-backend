@@ -738,7 +738,7 @@ const approveReturnEscrow = async (shipmentId, courierData = {}, supplierId = nu
 
   // Auto-find cheapest courier across all partners if not explicitly specified
   if (!carrierSlug || carrierSlug === 'auto') {
-    const rateResult = getCheapestPickupCarrier(fromPincode, toPincode, weightKg, dims);
+    const rateResult = getCheapestPickupCarrier(fromPincode, toPincode, weightKg, dims, true);
     const cheapest = rateResult.cheapest;
     carrierSlug = cheapest.slug;
     carrierName = cheapest.name;
@@ -748,6 +748,10 @@ const approveReturnEscrow = async (shipmentId, courierData = {}, supplierId = nu
     isAutoBooked = true;
   } else {
     carrierName = courierData.carrierName || (carrierSlug ? carrierSlug.toUpperCase() + ' Express' : 'Delhivery Express');
+    const { getCarrierRates } = require('./carrierRateService');
+    const allQuotes = getCarrierRates(fromPincode, toPincode, weightKg, dims, true);
+    const matched = allQuotes.find(q => q.slug === carrierSlug);
+    shippingRate = matched ? matched.price : (courierData.shippingRate || 55);
   }
 
   if (!trackingId) {
@@ -772,6 +776,9 @@ const approveReturnEscrow = async (shipmentId, courierData = {}, supplierId = nu
   shipment.returnPickupWindow = pickupWindow;
   shipment.returnAutoBooked = isAutoBooked;
   shipment.returnCarrierComparison = comparison;
+  shipment.returnShippingChargePaidBy = 'seller';
+  shipment.returnShippingChargeStatus = 'Pending';
+  shipment.returnShippingChargeDeducted = shippingRate;
   shipment.returnStatus = 'In Return Transit';
   shipment.status = 'Return In Transit';
   shipment.returnApprovedAt = new Date();
@@ -802,9 +809,9 @@ const approveReturnEscrow = async (shipmentId, courierData = {}, supplierId = nu
   let journey = await CarrierJourney.findOne({ shipmentId: shipment.shipmentId });
   if (journey) {
     journey.milestones.push({
-      status: 'Reverse Courier Auto-Booked (Cheapest Rate Selected)',
+      status: 'Reverse Courier Auto-Booked (Doorstep QC & Pickup)',
       location: `${shipment.city || 'Buyer City'} Pickup Hub`,
-      detail: `Reverse courier automatically booked with ${carrierName} at lowest delivery rate ₹${shippingRate || 38}${savingsAmount ? ` (Saved ₹${savingsAmount} via multi-carrier comparison)` : ''}. Reverse AWB: ${trackingId}. Scheduled Pickup Window: ${pickupWindow}.`,
+      detail: `Reverse courier automatically booked with ${carrierName} at lowest reverse rate ₹${shippingRate || 55}${savingsAmount ? ` (Saved ₹${savingsAmount} via multi-carrier comparison)` : ''}. Reverse AWB: ${trackingId}. Scheduled Pickup Window: ${pickupWindow}. Reverse shipping fee will be charged to the seller on return receipt.`,
       time: new Date()
     });
     await journey.save();
@@ -823,13 +830,13 @@ const approveReturnEscrow = async (shipmentId, courierData = {}, supplierId = nu
     );
   }
 
-  // 2. Notify Supplier confirming auto-booking & cost savings
+  // 2. Notify Supplier confirming auto-booking & cost
   if (shipment.senderId) {
     await createNotification(
       shipment.senderId,
       'check_circle',
       `Reverse Courier Auto-Booked — ${shipment.shipmentId}`,
-      `Reverse courier ${carrierName} auto-booked at lowest delivery rate (₹${shippingRate || 38}${savingsAmount ? `, saved ₹${savingsAmount}` : ''}). Tracking ID: ${trackingId}. Scheduled pickup: ${pickupWindow}.`,
+      `Reverse courier ${carrierName} auto-booked at lowest reverse shipping rate (₹${shippingRate || 55}${savingsAmount ? `, saved ₹${savingsAmount}` : ''}). Tracking ID: ${trackingId}. Scheduled pickup: ${pickupWindow}. Note: As per platform policy, the reverse shipping fee of ₹${shippingRate || 55} is charged to your seller account upon return delivery confirmation.`,
       'confirmed',
       shipment.shipmentId,
       'RETURN_ORDERS'
@@ -1034,11 +1041,81 @@ const confirmReturnReceivedEscrow = async (shipmentId) => {
     }
   }
 
+  // ── Reverse Shipping Fee Deduction (Seller Pays Policy) ───────────────────
+  // In Indian e-commerce (Amazon, Meesho, etc.), reverse courier freight is charged
+  // to the seller upon return receipt and debited from the seller's wallet/settlement.
+  const revCourierFreight = Number(shipment.returnShippingRate) > 0 
+    ? Number(shipment.returnShippingRate) 
+    : 55;
+
+  shipment.returnShippingChargeDeducted = revCourierFreight;
+  shipment.returnShippingChargePaidBy = 'seller';
+  shipment.returnShippingChargeStatus = 'Deducted';
+  shipment.returnShippingChargeDeductedFrom = 'seller_wallet';
+  shipment.returnShippingChargeDeductedAt = new Date();
+  await shipment.save();
+
+  if (supplier) {
+    const balBefore = Number(supplier.walletBalance) || 0;
+    const balAfter = parseFloat((balBefore - revCourierFreight).toFixed(2));
+    supplier.walletBalance = balAfter;
+    await supplier.save();
+
+    try {
+      const { recordTransaction } = require('./walletService');
+      await recordTransaction({
+        userId: supplier._id,
+        type: 'debit',
+        amount: revCourierFreight,
+        source: 'freight_deduction',
+        description: `Reverse courier shipping fee deducted for returned shipment ${shipment.shipmentId} (${shipment.returnCarrierName || 'Courier'} - AWB: ${shipment.returnAwbCode || 'N/A'})`,
+        balanceBefore: balBefore,
+        balanceAfter: balAfter,
+        metadata: {
+          shipmentId: shipment.shipmentId,
+          returnAwbCode: shipment.returnAwbCode,
+          carrier: shipment.returnCarrierName,
+          feeType: 'reverse_shipping_fee'
+        }
+      });
+    } catch (txErr) {
+      console.warn('[confirmReturnReceivedEscrow] Wallet debit log warning:', txErr.message);
+    }
+
+    const formattedRevFreight = `₹${revCourierFreight}`;
+    await createNotification(
+      supplier._id,
+      'wallet',
+      `Return Processed: Reverse Shipping Deducted — ${shipment.shipmentId}`,
+      `Returned package ${shipment.shipmentId} arrived at your warehouse. Escrow refund of ${formattedPrincipal} processed to buyer. Reverse courier shipping fee of ${formattedRevFreight} (${shipment.returnCarrierName || 'Courier'} - AWB: ${shipment.returnAwbCode || 'N/A'}) has been charged and deducted from your seller wallet.`,
+      'confirmed',
+      shipment.shipmentId,
+      'RETURN_ORDERS'
+    );
+  }
+
+  // Add CarrierJourney milestone
+  try {
+    const CarrierJourney = require('../models/CarrierJourney');
+    let journey = await CarrierJourney.findOne({ shipmentId: shipment.shipmentId });
+    if (journey) {
+      journey.milestones.push({
+        status: 'Return Received & Settled',
+        location: `${shipment.city ? shipment.city.split('->')[0].trim() : 'Supplier'} Warehouse`,
+        detail: `Returned package inspected and received at supplier warehouse. Escrow principal (${formattedPrincipal}) refunded to buyer. Reverse shipping fee (₹${revCourierFreight}) charged to seller.`,
+        time: new Date()
+      });
+      await journey.save();
+    }
+  } catch (jErr) {}
+
   return {
     shipment,
     refundSummary: {
       daysHeld,
-      receiverPrincipalRefund: shipment.amount
+      receiverPrincipalRefund: shipment.amount,
+      reverseShippingChargedToSeller: revCourierFreight,
+      sellerWalletBalance: supplier ? supplier.walletBalance : undefined
     }
   };
 };
@@ -1589,14 +1666,15 @@ const approveReplacement = async (shipmentId, supplierId, courierData = {}) => {
       shipment.receiverPincode || '110001',   // pickup from buyer
       shipment.senderPincode   || '700001',   // deliver old item back to supplier
       shipment.parcelWeight    || 0.5,
-      dims
+      dims,
+      true
     );
     revSlug = revRate.cheapest.slug;
     revName = revRate.cheapest.name;
-    revPickupRate = revRate.cheapest.price || 38;
+    revPickupRate = revRate.cheapest.price || 55;
   } else {
     revName = revName || 'Delhivery Express';
-    revPickupRate = 45;
+    revPickupRate = 58;
   }
 
   if (!revAwb) {
@@ -1859,6 +1937,11 @@ const confirmReplacementDelivery = async (shipmentId, receiverId) => {
   shipment.courierChargeDeducted      = courierFreight + revCourierFreight;
   shipment.courierChargeDeductedFrom  = 'escrow_settlement';
   shipment.courierChargeStatus        = 'Deducted';
+  shipment.returnShippingChargeDeducted = revCourierFreight;
+  shipment.returnShippingChargePaidBy = 'seller';
+  shipment.returnShippingChargeStatus = 'Deducted';
+  shipment.returnShippingChargeDeductedFrom = 'escrow_settlement';
+  shipment.returnShippingChargeDeductedAt = new Date();
   shipment.netSellerPayout            = netPayout;
   shipment.principalDisbursedToSupplier = netPayout;
   shipment.serviceFeeDeducted         = serviceFee;

@@ -8,7 +8,7 @@ const { createNotification } = require('../services/notification');
 const { grantPrepaymentCashback, grantDeliveryConfirmCashback } = require('../services/rewardService');
 const smsService = require('../services/smsService');
 const whatsappService = require('../services/whatsappService');
-const { getCarrierRates } = require('../services/carrierRateService');
+const { getCarrierRates, getCarrierRatesAsync } = require('../services/carrierRateService');
 const { autoScheduleCourierPickup } = require('../services/pickupService');
 const { calculateServiceFee, calculateSellerPayout } = require('../utils/feeConfig');
 const crypto = require('crypto');
@@ -267,9 +267,10 @@ const createShipment = async (req, res) => {
     let selectedCarrierRate = null;
     let allCarrierQuotes = [];
 
+    const checkIsCod = (paymentMode || '').toLowerCase() === 'cod';
     if (senderPincodeForRate && receiverPincodeForRate) {
-      // Both pincodes present — run rate comparison with volumetric weight
-      allCarrierQuotes = getCarrierRates(senderPincodeForRate, receiverPincodeForRate, weightKgForRate, dimensionsForRate);
+      // Both pincodes present — run rate comparison with volumetric weight & live Shiprocket rates
+      allCarrierQuotes = await getCarrierRatesAsync(senderPincodeForRate, receiverPincodeForRate, weightKgForRate, dimensionsForRate, false, checkIsCod);
     }
 
     // If caller explicitly passed a carrier, honour it; otherwise auto-select cheapest
@@ -641,7 +642,7 @@ const quoteCodFees = async (req, res) => {
     let carrierQuotes = [];
 
     if (fromPincode && toPincode) {
-      carrierQuotes = getCarrierRates(fromPincode, toPincode, weightKg, dimensionsForRate);
+      carrierQuotes = await getCarrierRatesAsync(fromPincode, toPincode, weightKg, dimensionsForRate, false, true);
       if (carrierQuotes && carrierQuotes.length > 0) {
         if (carrierSlug && carrierSlug !== 'auto' && carrierSlug !== 'add_later') {
           const matched = carrierQuotes.find(q => q.slug === carrierSlug.toLowerCase());
@@ -1303,7 +1304,7 @@ const approveReturn = async (req, res) => {
       pickupWindow: updatedShipment.returnPickupWindow,
       trackingId: updatedShipment.returnAwbCode,
       message: updatedShipment.returnAutoBooked
-        ? `Return approved! Reverse courier automatically booked with ${updatedShipment.returnCarrierName} at lowest rate (₹${updatedShipment.returnShippingRate || 38}). Scheduled pickup: ${updatedShipment.returnPickupWindow}. Buyer notified.`
+        ? `Return approved! Reverse courier automatically booked with ${updatedShipment.returnCarrierName} at lowest reverse rate (₹${updatedShipment.returnShippingRate || 55}). Reverse courier fee will be charged to seller account upon return delivery confirmation. Scheduled pickup: ${updatedShipment.returnPickupWindow}. Buyer notified.`
         : `Return approved and reverse courier ${updatedShipment.returnCarrierName || 'partner'} assigned successfully. Receiver notified.`
     });
   } catch (error) {

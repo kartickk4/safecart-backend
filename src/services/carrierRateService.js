@@ -1,9 +1,4 @@
-/**
- * carrierRateService.js
- * Zone-based carrier pricing matrix for India.
- * Provides real-time carrier comparisons by source/destination pincode + weight.
- * Plug real ShipRocket/Delhivery API keys here when going live.
- */
+const axios = require('axios');
 
 // Pincode-to-zone mapping (first 3 digits of 6-digit pincode)
 const METRO_PREFIXES = new Set([
@@ -47,19 +42,46 @@ function getPincodeInfo(pincode) {
   };
 }
 
-// Base rates per 500g slab (in INR) across all popular courier partners
-// accessible through the Shiprocket Multi-Carrier Aggregator API & Delhivery Direct
-// Structure: { [fromZone-toZone]: { carrierSlug: baseRate } }
+// In-memory token cache for Shiprocket API
+let shiprocketToken = null;
+let shiprocketTokenExpiresAt = 0;
+
+async function getShiprocketToken() {
+  if (shiprocketToken && Date.now() < shiprocketTokenExpiresAt) {
+    return shiprocketToken;
+  }
+  const email = process.env.SHIPROCKET_EMAIL;
+  const password = process.env.SHIPROCKET_PASSWORD;
+  if (!email || !password) return null;
+
+  try {
+    const authRes = await axios.post('https://apiv2.shiprocket.in/v1/external/auth/login', {
+      email,
+      password
+    }, { timeout: 8000 });
+    if (authRes.data?.token) {
+      shiprocketToken = authRes.data.token;
+      shiprocketTokenExpiresAt = Date.now() + 24 * 60 * 60 * 1000; // cache for 24 hours
+      return shiprocketToken;
+    }
+  } catch (err) {
+    console.warn('[Shiprocket Auth Error]:', err.response?.data?.message || err.message);
+  }
+  return null;
+}
+
+// Base rates per 500g slab (in INR including 18% GST + Fuel Surcharge)
+// Aligned with live Shiprocket starter rates
 const RATE_MATRIX = {
-  'metro-metro':   { shadowfax: 38, rapido: 39, xpressbees: 39, delhivery: 40, ekart: 42, ecom_express: 44, dtdc: 48, indiapost: 50, bluedart: 68 },
-  'metro-tier2':   { delhivery: 49, rapido: 51, xpressbees: 52, shadowfax: 54, ekart: 56, ecom_express: 58, dtdc: 62, indiapost: 65, bluedart: 82 },
-  'metro-tier3':   { delhivery: 65, ekart: 68, rapido: 69, xpressbees: 70, shadowfax: 72, ecom_express: 74, dtdc: 78, indiapost: 80, bluedart: 105 },
-  'tier2-metro':   { delhivery: 50, rapido: 51, xpressbees: 52, shadowfax: 53, ekart: 56, ecom_express: 58, dtdc: 62, indiapost: 65, bluedart: 85 },
-  'tier2-tier2':   { delhivery: 56, rapido: 57, xpressbees: 58, ekart: 60, shadowfax: 62, ecom_express: 64, dtdc: 68, indiapost: 70, bluedart: 90 },
-  'tier2-tier3':   { delhivery: 70, ekart: 72, rapido: 73, xpressbees: 74, ecom_express: 76, shadowfax: 78, dtdc: 82, indiapost: 85, bluedart: 110 },
-  'tier3-metro':   { delhivery: 64, ekart: 66, rapido: 67, xpressbees: 68, shadowfax: 70, ecom_express: 72, dtdc: 76, indiapost: 80, bluedart: 105 },
-  'tier3-tier2':   { delhivery: 72, ekart: 74, rapido: 75, xpressbees: 76, shadowfax: 78, ecom_express: 80, dtdc: 82, indiapost: 85, bluedart: 112 },
-  'tier3-tier3':   { delhivery: 78, rapido: 80, ekart: 82, xpressbees: 84, shadowfax: 85, ecom_express: 86, dtdc: 90, indiapost: 92, bluedart: 125 },
+  'metro-metro':   { xpressbees: 49.72, delhivery: 55.72, shadowfax: 55.72, ekart: 55.72, rapido: 50.00, ecom_express: 58.50, dtdc: 77.32, indiapost: 65.00, bluedart: 98.28 },
+  'metro-tier2':   { xpressbees: 58.00, delhivery: 64.50, shadowfax: 64.50, ekart: 66.00, rapido: 62.00, ecom_express: 68.00, dtdc: 82.50, indiapost: 72.00, bluedart: 108.50 },
+  'metro-tier3':   { xpressbees: 76.50, delhivery: 79.50, shadowfax: 82.00, ekart: 82.00, rapido: 78.00, ecom_express: 84.00, dtdc: 94.00, indiapost: 88.00, bluedart: 125.00 },
+  'tier2-metro':   { xpressbees: 58.00, delhivery: 64.50, shadowfax: 64.50, ekart: 66.00, rapido: 62.00, ecom_express: 68.00, dtdc: 82.50, indiapost: 72.00, bluedart: 108.50 },
+  'tier2-tier2':   { xpressbees: 65.00, delhivery: 72.00, shadowfax: 74.00, ekart: 75.00, rapido: 70.00, ecom_express: 78.00, dtdc: 88.00, indiapost: 78.00, bluedart: 118.00 },
+  'tier2-tier3':   { xpressbees: 82.00, delhivery: 86.00, shadowfax: 88.00, ekart: 88.00, rapido: 84.00, ecom_express: 92.00, dtdc: 98.00, indiapost: 92.00, bluedart: 135.00 },
+  'tier3-metro':   { xpressbees: 76.50, delhivery: 79.50, shadowfax: 82.00, ekart: 82.00, rapido: 78.00, ecom_express: 84.00, dtdc: 94.00, indiapost: 88.00, bluedart: 125.00 },
+  'tier3-tier2':   { xpressbees: 82.00, delhivery: 86.00, shadowfax: 88.00, ekart: 88.00, rapido: 84.00, ecom_express: 92.00, dtdc: 98.00, indiapost: 92.00, bluedart: 135.00 },
+  'tier3-tier3':   { xpressbees: 92.00, delhivery: 95.00, shadowfax: 98.00, ekart: 98.00, rapido: 94.00, ecom_express: 102.00, dtdc: 110.00, indiapost: 100.00, bluedart: 145.00 },
 };
 
 const CARRIER_NAMES = {
@@ -101,14 +123,16 @@ const CARRIER_ETAs = {
 /**
  * Get carrier price quotes for a shipment across all popular partners.
  * Simulates calling Shiprocket Serviceability API & Delhivery Rate API.
+ * Supports forward delivery and reverse pickup logistics (with QC & doorstep surcharge).
  *
- * @param {string} fromPincode - Sender pincode
- * @param {string} toPincode - Receiver pincode
+ * @param {string} fromPincode - Sender pincode (or buyer pincode for reverse pickup)
+ * @param {string} toPincode - Receiver pincode (or seller warehouse pincode for reverse return)
  * @param {number} weightKg - Weight in kg
  * @param {object|null} dimensions - Optional { length, width, height } in cm
+ * @param {boolean} isReverse - Whether this is a reverse pickup shipment
  * @returns {Array} Sorted carrier quotes (lowest first)
  */
-const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = null) => {
+const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = null, isReverse = false) => {
   const fromZone = getZone(fromPincode);
   const toZone = getZone(toPincode);
   const zoneKey = `${fromZone}-${toZone}`;
@@ -131,15 +155,29 @@ const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = nu
   // Weight slabs: base rate is per 500g, rounded up
   const weightSlabs = Math.max(1, Math.ceil(effectiveWeight / 0.5));
 
-  const quotes = Object.entries(rates).map(([slug, baseRate]) => ({
-    slug,
-    name:       CARRIER_NAMES[slug] || slug,
-    price:      Math.round(baseRate * weightSlabs),
-    eta:        etas[slug] || '3-5 days',
-    rating:     CARRIER_RATINGS[slug] || 4.5,
-    apiSource:  'Shiprocket Multi-Carrier API',
-    zone:       zoneKey
-  }));
+  // Reverse logistics surcharge: courier partners (Delhivery, Shadowfax, Shiprocket)
+  // charge higher rates (+₹18 per slab, min ₹55) for doorstep reverse pickup & QC verification
+  const REVERSE_SURCHARGE_PER_SLAB = isReverse ? 18 : 0;
+
+  const quotes = Object.entries(rates).map(([slug, baseRate]) => {
+    const rawForwardPrice = Math.round(baseRate * weightSlabs);
+    const surcharge = REVERSE_SURCHARGE_PER_SLAB * weightSlabs;
+    const finalPrice = isReverse ? Math.max(55, rawForwardPrice + surcharge) : rawForwardPrice;
+
+    return {
+      slug,
+      name:       CARRIER_NAMES[slug] || slug,
+      price:      finalPrice,
+      forwardBasePrice: rawForwardPrice,
+      reverseSurcharge: surcharge,
+      isReverse,
+      eta:        etas[slug] || '3-5 days',
+      rating:     CARRIER_RATINGS[slug] || 4.5,
+      apiSource:  'Shiprocket Multi-Carrier API',
+      zone:       zoneKey,
+      serviceType: isReverse ? 'Reverse Logistics & Doorstep QC' : 'Forward Express Delivery'
+    };
+  });
 
   // Sort by price (cheapest first)
   quotes.sort((a, b) => a.price - b.price);
@@ -148,6 +186,95 @@ const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = nu
   if (quotes.length > 0) quotes[0].isLowest = true;
 
   return quotes;
+};
+
+function mapCarrierNameToSlug(name) {
+  const n = (name || '').toLowerCase();
+  if (n.includes('delhivery')) return 'delhivery';
+  if (n.includes('shadowfax')) return 'shadowfax';
+  if (n.includes('xpressbees')) return 'xpressbees';
+  if (n.includes('ekart')) return 'ekart';
+  if (n.includes('ecom')) return 'ecom_express';
+  if (n.includes('dtdc')) return 'dtdc';
+  if (n.includes('blue dart') || n.includes('bluedart')) return 'bluedart';
+  if (n.includes('rapido')) return 'rapido';
+  if (n.includes('post')) return 'indiapost';
+  return (name || '').toLowerCase().replace(/[^a-z0-9]/g, '_');
+}
+
+/**
+ * Fetch live rates directly from Shiprocket Serviceability API
+ */
+async function fetchLiveShiprocketRates(fromPincode, toPincode, weightKg = 0.5, dimensions = null, isCod = false) {
+  try {
+    const token = await getShiprocketToken();
+    if (!token) return null;
+
+    const params = {
+      pickup_postcode: String(fromPincode).trim(),
+      delivery_postcode: String(toPincode).trim(),
+      weight: String(weightKg || 0.5),
+      cod: isCod ? '1' : '0'
+    };
+    if (dimensions && dimensions.length && dimensions.width && dimensions.height) {
+      params.length = String(dimensions.length);
+      params.breadth = String(dimensions.width);
+      params.height = String(dimensions.height);
+    }
+
+    const res = await axios.get('https://apiv2.shiprocket.in/v1/external/courier/serviceability/', {
+      params,
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 8000
+    });
+
+    const couriers = res.data?.data?.available_courier_companies;
+    if (!Array.isArray(couriers) || couriers.length === 0) return null;
+
+    const quotes = couriers.map(c => {
+      const slug = mapCarrierNameToSlug(c.courier_name);
+      const rate = parseFloat(c.rate) || 0;
+      const codCharge = parseFloat(c.cod_charges) || 0;
+      const roundedPrice = Math.round(rate);
+
+      return {
+        slug,
+        courierCompanyId: c.courier_company_id,
+        name: c.courier_name,
+        price: roundedPrice,
+        exactRate: rate,
+        codCharge: Math.round(codCharge),
+        isCod,
+        eta: c.etd ? `Delivery by ${c.etd}` : (c.estimated_delivery_days ? `In ${c.estimated_delivery_days} Days` : '2 Days'),
+        rating: parseFloat(c.rating) || 4.5,
+        mode: c.is_surface ? 'Surface' : 'Air',
+        apiSource: 'Shiprocket Live API',
+        zone: `${getZone(fromPincode)}-${getZone(toPincode)}`,
+        serviceType: `${c.is_surface ? 'Surface' : 'Air'} Express (Live Shiprocket Rate)`
+      };
+    });
+
+    // Sort cheapest first
+    quotes.sort((a, b) => a.price - b.price);
+    if (quotes.length > 0) quotes[0].isLowest = true;
+    return quotes;
+  } catch (err) {
+    console.warn('[Shiprocket Live Rates Error]:', err.response?.data?.message || err.message);
+    return null;
+  }
+}
+
+/**
+ * Async carrier rate query: queries live Shiprocket API first, falling back to local matrix
+ */
+const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dimensions = null, isReverse = false, isCod = false) => {
+  if (!isReverse) {
+    const liveQuotes = await fetchLiveShiprocketRates(fromPincode, toPincode, weightKg, dimensions, isCod);
+    if (liveQuotes && liveQuotes.length > 0) {
+      return liveQuotes;
+    }
+  }
+  return getCarrierRates(fromPincode, toPincode, weightKg, dimensions, isReverse);
 };
 
 /**
@@ -159,10 +286,11 @@ const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = nu
  * @param {string} toPincode   - Receiver destination pincode
  * @param {number} weightKg    - Parcel weight in kg
  * @param {object|null} dimensions - Optional { length, width, height } in cm
- * @returns {object} { cheapest, comparison, allQuotes, apiProvider, totalCouriersCompared, savingsAmount }
+ * @param {boolean} isReverse  - Whether this is a reverse pickup shipment
+ * @returns {object} { cheapest, comparison, allQuotes, isReverse, apiProvider, totalCouriersCompared, savingsAmount }
  */
-const getCheapestPickupCarrier = (fromPincode, toPincode, weightKg = 0.5, dimensions = null) => {
-  const allQuotes = getCarrierRates(fromPincode, toPincode, weightKg, dimensions);
+const getCheapestPickupCarrier = (fromPincode, toPincode, weightKg = 0.5, dimensions = null, isReverse = false) => {
+  const allQuotes = getCarrierRates(fromPincode, toPincode, weightKg, dimensions, isReverse);
   const cheapest = allQuotes[0];
   const highest = allQuotes[allQuotes.length - 1];
   const savingsAmount = highest.price - cheapest.price;
@@ -171,10 +299,18 @@ const getCheapestPickupCarrier = (fromPincode, toPincode, weightKg = 0.5, dimens
     cheapest,
     comparison: allQuotes, // All popular courier partners compared via Shiprocket API
     allQuotes,
+    isReverse,
     apiProvider: 'Shiprocket Multi-Carrier Logistics Engine',
     totalCouriersCompared: allQuotes.length,
     savingsAmount
   };
 };
 
-module.exports = { getCarrierRates, getPincodeInfo, getZone, getCheapestPickupCarrier };
+module.exports = {
+  getCarrierRates,
+  getCarrierRatesAsync,
+  fetchLiveShiprocketRates,
+  getPincodeInfo,
+  getZone,
+  getCheapestPickupCarrier
+};

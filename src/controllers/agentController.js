@@ -10,7 +10,7 @@ const AgentSession = require('../models/AgentSession');
 const BulkJob = require('../models/BulkJob');
 const Shipment = require('../models/Shipment');
 const User = require('../models/User');
-const { getCarrierRates, getPincodeInfo } = require('../services/carrierRateService');
+const { getCarrierRates, getCarrierRatesAsync, getPincodeInfo } = require('../services/carrierRateService');
 const { autoScheduleCourierPickup } = require('../services/pickupService');
 const { sendPaymentLinkWhatsApp, sendBookingConfirmationWhatsApp } = require('../services/whatsappService');
 const cashfreeService = require('../services/cashfreeService');
@@ -1967,12 +1967,13 @@ const downloadBulkReport = async (req, res) => {
 
 const getCarrierRatesHandler = async (req, res) => {
   try {
-    const { fromPincode, toPincode, weightKg, length, width, height, dimensions } = req.body;
+    const { fromPincode, toPincode, weightKg, length, width, height, dimensions, paymentMode, cod } = req.body;
     if (!fromPincode || !toPincode) {
       return res.status(400).json({ error: 'fromPincode and toPincode are required.' });
     }
+    const isCod = cod === 1 || cod === '1' || paymentMode === 'cod';
     const dims = dimensions || (length && width && height ? { length, width, height } : null);
-    const quotes = getCarrierRates(fromPincode, toPincode, parseFloat(weightKg) || 0.5, dims);
+    const quotes = await getCarrierRatesAsync(fromPincode, toPincode, parseFloat(weightKg) || 0.5, dims, false, isCod);
     res.json({ quotes, fromZone: getPincodeInfo(fromPincode), toZone: getPincodeInfo(toPincode) });
   } catch (err) {
     res.status(500).json({ error: err.message });
