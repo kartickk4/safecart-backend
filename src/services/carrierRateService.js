@@ -175,10 +175,11 @@ const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = nu
 
     // Secure Shipment insurance fee
     const secureCharge = (!isReverse && isSecureShipment) ? 54.00 : 0;
+    const whatsappCharge = (!isReverse) ? 5.00 : 0;
 
     const finalPrice = parseFloat((isReverse 
       ? Math.max(55, rawForwardPrice + surcharge)
-      : (rawForwardPrice + codCharge + secureCharge)
+      : (rawForwardPrice + codCharge + secureCharge + whatsappCharge)
     ).toFixed(2));
 
     return {
@@ -188,6 +189,7 @@ const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = nu
       exactRate:  finalPrice,
       freightCharge: rawForwardPrice,
       codCharge:  codCharge,
+      whatsappCharge: whatsappCharge,
       secureShipmentCharge: secureCharge,
       isSecureShipment,
       forwardBasePrice: rawForwardPrice,
@@ -266,8 +268,9 @@ async function fetchLiveShiprocketRates(fromPincode, toPincode, weightKg = 0.5, 
       const baseRate = parseFloat(c.rate) || 0;
       const codCharge = parseFloat(c.cod_charges) || 0;
       const freightCharge = parseFloat(c.freight_charge) || parseFloat((baseRate - codCharge).toFixed(2));
+      const whatsappCharge = parseFloat(c.whatsapp_charges) || 5.00;
       const secureCharge = isSecureShipment ? 54.00 : 0;
-      const finalRate = parseFloat((baseRate + secureCharge).toFixed(2));
+      const finalRate = parseFloat((baseRate + secureCharge + whatsappCharge).toFixed(2));
 
       return {
         slug: uniqueSlug,
@@ -278,6 +281,7 @@ async function fetchLiveShiprocketRates(fromPincode, toPincode, weightKg = 0.5, 
         exactRate: finalRate,
         freightCharge: parseFloat(freightCharge.toFixed(2)),
         codCharge: parseFloat(codCharge.toFixed(2)),
+        whatsappCharge: whatsappCharge,
         secureShipmentCharge: secureCharge,
         isSecureShipment,
         isCod,
