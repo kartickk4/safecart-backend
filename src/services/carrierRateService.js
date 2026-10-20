@@ -132,7 +132,7 @@ const CARRIER_ETAs = {
  * @param {boolean} isReverse - Whether this is a reverse pickup shipment
  * @returns {Array} Sorted carrier quotes (lowest first)
  */
-const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = null, isReverse = false) => {
+const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = null, isReverse = false, isCod = false) => {
   const fromZone = getZone(fromPincode);
   const toZone = getZone(toPincode);
   const zoneKey = `${fromZone}-${toZone}`;
@@ -160,22 +160,30 @@ const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = nu
   const REVERSE_SURCHARGE_PER_SLAB = isReverse ? 18 : 0;
 
   const quotes = Object.entries(rates).map(([slug, baseRate]) => {
-    const rawForwardPrice = Math.round(baseRate * weightSlabs);
-    const surcharge = REVERSE_SURCHARGE_PER_SLAB * weightSlabs;
-    const finalPrice = isReverse ? Math.max(55, rawForwardPrice + surcharge) : rawForwardPrice;
+    const rawForwardPrice = parseFloat((baseRate * weightSlabs).toFixed(2));
+    const surcharge = isReverse ? parseFloat((REVERSE_SURCHARGE_PER_SLAB * weightSlabs).toFixed(2)) : 0;
+    const codCharge = isCod ? (slug.includes('xpressbees') ? 48.00 : 52.00) : 0;
+    const finalPrice = parseFloat((isReverse 
+      ? Math.max(55, rawForwardPrice + surcharge)
+      : (rawForwardPrice + codCharge)
+    ).toFixed(2));
 
     return {
       slug,
       name:       CARRIER_NAMES[slug] || slug,
       price:      finalPrice,
+      exactRate:  finalPrice,
+      freightCharge: rawForwardPrice,
+      codCharge:  codCharge,
       forwardBasePrice: rawForwardPrice,
       reverseSurcharge: surcharge,
       isReverse,
+      isCod,
       eta:        etas[slug] || '3-5 days',
       rating:     CARRIER_RATINGS[slug] || 4.5,
-      apiSource:  'Shiprocket Multi-Carrier API',
+      apiSource:  'Shiprocket Rate Engine',
       zone:       zoneKey,
-      serviceType: isReverse ? 'Reverse Logistics & Doorstep QC' : 'Forward Express Delivery'
+      serviceType: isReverse ? 'Reverse Logistics & Doorstep QC' : (isCod ? 'Cash on Delivery (COD)' : 'Prepaid Express Delivery')
     };
   });
 
@@ -232,18 +240,21 @@ async function fetchLiveShiprocketRates(fromPincode, toPincode, weightKg = 0.5, 
     if (!Array.isArray(couriers) || couriers.length === 0) return null;
 
     const quotes = couriers.map(c => {
-      const slug = mapCarrierNameToSlug(c.courier_name);
+      const baseSlug = mapCarrierNameToSlug(c.courier_name);
+      const uniqueSlug = `${baseSlug}_${c.courier_company_id || (c.is_surface ? 'surface' : 'air')}`;
       const rate = parseFloat(c.rate) || 0;
       const codCharge = parseFloat(c.cod_charges) || 0;
-      const roundedPrice = Math.round(rate);
+      const freightCharge = parseFloat(c.freight_charge) || parseFloat((rate - codCharge).toFixed(2));
 
       return {
-        slug,
+        slug: uniqueSlug,
+        baseSlug,
         courierCompanyId: c.courier_company_id,
         name: c.courier_name,
-        price: roundedPrice,
-        exactRate: rate,
-        codCharge: Math.round(codCharge),
+        price: parseFloat(rate.toFixed(2)),
+        exactRate: parseFloat(rate.toFixed(2)),
+        freightCharge: parseFloat(freightCharge.toFixed(2)),
+        codCharge: parseFloat(codCharge.toFixed(2)),
         isCod,
         eta: c.etd ? `Delivery by ${c.etd}` : (c.estimated_delivery_days ? `In ${c.estimated_delivery_days} Days` : '2 Days'),
         rating: parseFloat(c.rating) || 4.5,
@@ -274,7 +285,7 @@ const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dime
       return liveQuotes;
     }
   }
-  return getCarrierRates(fromPincode, toPincode, weightKg, dimensions, isReverse);
+  return getCarrierRates(fromPincode, toPincode, weightKg, dimensions, isReverse, isCod);
 };
 
 /**
