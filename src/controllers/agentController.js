@@ -1967,13 +1967,18 @@ const downloadBulkReport = async (req, res) => {
 
 const getCarrierRatesHandler = async (req, res) => {
   try {
-    const { fromPincode, toPincode, weightKg, length, width, height, dimensions, paymentMode, cod } = req.body;
+    const { 
+      fromPincode, toPincode, weightKg, length, width, height, dimensions, 
+      paymentMode, cod, declaredValue, amount, isSecureShipment, secureShipment 
+    } = req.body;
     if (!fromPincode || !toPincode) {
       return res.status(400).json({ error: 'fromPincode and toPincode are required.' });
     }
     const isCod = cod === 1 || cod === '1' || paymentMode === 'cod';
+    const decVal = parseFloat(declaredValue || amount) || 0;
+    const isSecure = isSecureShipment === true || isSecureShipment === 'true' || secureShipment === true || secureShipment === 'true' || isSecureShipment === 1;
     const dims = dimensions || (length && width && height ? { length, width, height } : null);
-    const quotes = await getCarrierRatesAsync(fromPincode, toPincode, parseFloat(weightKg) || 0.5, dims, false, isCod);
+    const quotes = await getCarrierRatesAsync(fromPincode, toPincode, parseFloat(weightKg) || 0.5, dims, false, isCod, decVal, isSecure);
     res.json({ quotes, fromZone: getPincodeInfo(fromPincode), toZone: getPincodeInfo(toPincode) });
   } catch (err) {
     res.status(500).json({ error: err.message });

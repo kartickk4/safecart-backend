@@ -132,7 +132,7 @@ const CARRIER_ETAs = {
  * @param {boolean} isReverse - Whether this is a reverse pickup shipment
  * @returns {Array} Sorted carrier quotes (lowest first)
  */
-const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = null, isReverse = false, isCod = false) => {
+const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = null, isReverse = false, isCod = false, declaredValue = 0, isSecureShipment = true) => {
   const fromZone = getZone(fromPincode);
   const toZone = getZone(toPincode);
   const zoneKey = `${fromZone}-${toZone}`;
@@ -162,10 +162,23 @@ const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = nu
   const quotes = Object.entries(rates).map(([slug, baseRate]) => {
     const rawForwardPrice = parseFloat((baseRate * weightSlabs).toFixed(2));
     const surcharge = isReverse ? parseFloat((REVERSE_SURCHARGE_PER_SLAB * weightSlabs).toFixed(2)) : 0;
-    const codCharge = isCod ? 54.00 : 0;
+    
+    // COD Handling fee dynamically aligned with Shiprocket rate card for declared amount
+    let codCharge = 0;
+    if (isCod) {
+      const val = parseFloat(declaredValue) || 3000;
+      if (slug.includes('delhivery')) codCharge = val >= 3000 ? 99.00 : 54.00;
+      else if (slug.includes('xpressbees')) codCharge = val >= 3000 ? 75.00 : 48.00;
+      else if (slug.includes('shadowfax')) codCharge = val >= 3000 ? 63.60 : 52.00;
+      else codCharge = Math.max(54.00, parseFloat((val * 0.03).toFixed(2)));
+    }
+
+    // Secure Shipment insurance fee
+    const secureCharge = (!isReverse && isSecureShipment) ? 54.00 : 0;
+
     const finalPrice = parseFloat((isReverse 
       ? Math.max(55, rawForwardPrice + surcharge)
-      : (rawForwardPrice + codCharge)
+      : (rawForwardPrice + codCharge + secureCharge)
     ).toFixed(2));
 
     return {
@@ -175,6 +188,8 @@ const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = nu
       exactRate:  finalPrice,
       freightCharge: rawForwardPrice,
       codCharge:  codCharge,
+      secureShipmentCharge: secureCharge,
+      isSecureShipment,
       forwardBasePrice: rawForwardPrice,
       reverseSurcharge: surcharge,
       isReverse,
@@ -213,7 +228,7 @@ function mapCarrierNameToSlug(name) {
 /**
  * Fetch live rates directly from Shiprocket Serviceability API
  */
-async function fetchLiveShiprocketRates(fromPincode, toPincode, weightKg = 0.5, dimensions = null, isCod = false) {
+async function fetchLiveShiprocketRates(fromPincode, toPincode, weightKg = 0.5, dimensions = null, isCod = false, declaredValue = 0, isSecureShipment = true) {
   try {
     const token = await getShiprocketToken();
     if (!token) return null;
@@ -224,6 +239,12 @@ async function fetchLiveShiprocketRates(fromPincode, toPincode, weightKg = 0.5, 
       weight: String(weightKg || 0.5),
       cod: isCod ? '1' : '0'
     };
+    if (declaredValue && parseFloat(declaredValue) > 0) {
+      params.declared_value = String(declaredValue);
+    }
+    if (isSecureShipment) {
+      params.is_secureshipment = '1';
+    }
     if (dimensions && dimensions.length && dimensions.width && dimensions.height) {
       params.length = String(dimensions.length);
       params.breadth = String(dimensions.width);
@@ -242,19 +263,23 @@ async function fetchLiveShiprocketRates(fromPincode, toPincode, weightKg = 0.5, 
     const quotes = couriers.map(c => {
       const baseSlug = mapCarrierNameToSlug(c.courier_name);
       const uniqueSlug = `${baseSlug}_${c.courier_company_id || (c.is_surface ? 'surface' : 'air')}`;
-      const rate = parseFloat(c.rate) || 0;
+      const baseRate = parseFloat(c.rate) || 0;
       const codCharge = parseFloat(c.cod_charges) || 0;
-      const freightCharge = parseFloat(c.freight_charge) || parseFloat((rate - codCharge).toFixed(2));
+      const freightCharge = parseFloat(c.freight_charge) || parseFloat((baseRate - codCharge).toFixed(2));
+      const secureCharge = isSecureShipment ? 54.00 : 0;
+      const finalRate = parseFloat((baseRate + secureCharge).toFixed(2));
 
       return {
         slug: uniqueSlug,
         baseSlug,
         courierCompanyId: c.courier_company_id,
         name: c.courier_name,
-        price: parseFloat(rate.toFixed(2)),
-        exactRate: parseFloat(rate.toFixed(2)),
+        price: finalRate,
+        exactRate: finalRate,
         freightCharge: parseFloat(freightCharge.toFixed(2)),
         codCharge: parseFloat(codCharge.toFixed(2)),
+        secureShipmentCharge: secureCharge,
+        isSecureShipment,
         isCod,
         eta: c.etd ? `Delivery by ${c.etd}` : (c.estimated_delivery_days ? `In ${c.estimated_delivery_days} Days` : '2 Days'),
         rating: parseFloat(c.rating) || 4.5,
@@ -278,14 +303,14 @@ async function fetchLiveShiprocketRates(fromPincode, toPincode, weightKg = 0.5, 
 /**
  * Async carrier rate query: queries live Shiprocket API first, falling back to local matrix
  */
-const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dimensions = null, isReverse = false, isCod = false) => {
+const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dimensions = null, isReverse = false, isCod = false, declaredValue = 0, isSecureShipment = true) => {
   if (!isReverse) {
-    const liveQuotes = await fetchLiveShiprocketRates(fromPincode, toPincode, weightKg, dimensions, isCod);
+    const liveQuotes = await fetchLiveShiprocketRates(fromPincode, toPincode, weightKg, dimensions, isCod, declaredValue, isSecureShipment);
     if (liveQuotes && liveQuotes.length > 0) {
       return liveQuotes;
     }
   }
-  return getCarrierRates(fromPincode, toPincode, weightKg, dimensions, isReverse, isCod);
+  return getCarrierRates(fromPincode, toPincode, weightKg, dimensions, isReverse, isCod, declaredValue, isSecureShipment);
 };
 
 /**
