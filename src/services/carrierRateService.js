@@ -162,7 +162,7 @@ const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = nu
   const quotes = Object.entries(rates).map(([slug, baseRate]) => {
     const rawForwardPrice = parseFloat((baseRate * weightSlabs).toFixed(2));
     const surcharge = isReverse ? parseFloat((REVERSE_SURCHARGE_PER_SLAB * weightSlabs).toFixed(2)) : 0;
-    const codCharge = isCod ? (slug.includes('xpressbees') ? 48.00 : 52.00) : 0;
+    const codCharge = isCod ? 54.00 : 0;
     const finalPrice = parseFloat((isReverse 
       ? Math.max(55, rawForwardPrice + surcharge)
       : (rawForwardPrice + codCharge)
