@@ -5,7 +5,7 @@ const carrierTracking = require('../services/carrierTracking');
 const escrow = require('../services/escrow');
 const cashfreeService = require('../services/cashfreeService');
 const { createNotification } = require('../services/notification');
-const { grantPrepaymentCashback, grantDeliveryConfirmCashback } = require('../services/rewardService');
+const { grantDeliveryConfirmCashback, grantPrepaymentCashback } = require('../services/rewardService');
 const smsService = require('../services/smsService');
 const whatsappService = require('../services/whatsappService');
 const { getCarrierRates, getCarrierRatesAsync } = require('../services/carrierRateService');
@@ -830,15 +830,15 @@ const executeOrderPaymentAndCourierBooking = async (shipment, paymentDetails = {
     );
   }
 
-  // 6. Grant buyer/receiver cash reward (₹1 - ₹10 cashback on prepayment)
+  // 6. Grant Payment Link Prepayment Cashback (Fixed ₹5 per Option B)
   try {
-    const reward = await grantPrepaymentCashback(shipment.shipmentId, shipment.receiverPhone);
-    if (reward && reward.amount) {
-      shipment.receiverCashbackAmount = reward.amount;
-      await shipment.save();
+    const cashbackResult = await grantPrepaymentCashback(shipment.shipmentId, shipment.receiverPhone);
+    if (cashbackResult?.success) {
+      console.log(`[PAYMENT LINK] Prepayment cashback ₹${cashbackResult.amount} granted to buyer ${shipment.receiverPhone}`);
+      shipment.prepaymentCashback = cashbackResult;
     }
-  } catch (err) {
-    console.warn('[CASHBACK NOTICE]:', err.message);
+  } catch (cbErr) {
+    console.warn('[PAYMENT LINK] Prepayment cashback grant note (non-blocking):', cbErr.message);
   }
 
   return shipment;
@@ -874,7 +874,8 @@ const publicPayShipment = async (req, res) => {
     res.status(200).json({
       success: true,
       message: 'Payment verified and courier shipment booked successfully',
-      shipment: updatedShipment
+      shipment: updatedShipment,
+      cashback: updatedShipment?.prepaymentCashback || null
     });
   } catch (error) {
     console.error('Public Pay Error:', error);

@@ -30,6 +30,16 @@ const SystemConfigSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  cashbackMarketingBonusMin: {
+    type: Number,
+    default: 1, // ₹1 min promotional cashback
+    min: 1
+  },
+  cashbackMarketingBonusMax: {
+    type: Number,
+    default: 10, // ₹10 max promotional cashback
+    min: 1
+  },
   cashbackMarketingBonusAmount: {
     type: Number,
     default: 10
@@ -40,12 +50,22 @@ const SystemConfigSchema = new mongoose.Schema({
   },
   sellerCashbackMin: {
     type: Number,
-    default: 2, // ₹2 minimum seller cashback per completed shipment
+    default: 3, // ₹3 minimum seller cashback per completed shipment
     min: 0
   },
   sellerCashbackMax: {
     type: Number,
-    default: 3, // ₹3 maximum seller cashback per completed shipment
+    default: 6, // ₹6 maximum seller cashback per completed shipment
+    min: 0
+  },
+  paymentLinkCashbackAmount: {
+    type: Number,
+    default: 5, // Flat ₹5 for paying via Payment Link
+    min: 0
+  },
+  deliveryConfirmCashbackAmount: {
+    type: Number,
+    default: 2, // Flat ₹2 for buyers on confirming delivery
     min: 0
   },
   buyerCashbackRate: {

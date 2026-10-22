@@ -5,36 +5,36 @@ const { createNotification } = require('./notification');
 const cashfreeService = require('./cashfreeService');
 
 /**
- * Calculates delivery confirmation cashback amount:
- * - 85% probability: ₹3 or ₹4 (standard)
- * - 15% probability: ₹5 or ₹6 (lucky bonus)
- * - Marketing Bonus: uses config amount if campaign is active
+/**
+ * Calculates delivery confirmation cashback amount for buyers:
+ * - Standard: Flat ₹2 across all payment methods (COD, Prepaid, Payment Link)
+ * - Promotional Campaign: ₹1 to ₹10 when marketing bonus campaign is active
  */
 const generateDeliveryCashback = async () => {
   try {
     const config = await SystemConfig.findOne({ configKey: 'GLOBAL_CONFIG' });
-    if (config?.cashbackMarketingBonusActive && config?.cashbackMarketingBonusAmount > 0) {
+    if (config?.cashbackMarketingBonusActive) {
+      const min = Number(config?.cashbackMarketingBonusMin) || 1;
+      const max = Number(config?.cashbackMarketingBonusMax) || 10;
+      const promoAmount = Math.floor(Math.random() * (max - min + 1)) + min;
       return {
-        amount: Number(config.cashbackMarketingBonusAmount),
-        tier: 'marketing_bonus'
+        amount: promoAmount,
+        tier: 'marketing_bonus',
+        isBonus: true
+      };
+    }
+    if (config?.deliveryConfirmCashbackAmount && Number(config.deliveryConfirmCashbackAmount) > 0) {
+      return {
+        amount: Number(config.deliveryConfirmCashbackAmount),
+        tier: 'standard'
       };
     }
   } catch (err) {
     console.warn('[Reward Service] Config lookup fallback:', err.message);
   }
 
-  const rand = Math.random() * 100;
-  if (rand < 85) {
-    // 85% chance: ₹3 or ₹4 (standard delivery reward)
-    const standardPool = [3, 4];
-    const amount = standardPool[Math.floor(Math.random() * standardPool.length)];
-    return { amount, tier: 'standard' };
-  } else {
-    // 15% chance: ₹5 or ₹6 (lucky bonus)
-    const luckyPool = [5, 6];
-    const amount = luckyPool[Math.floor(Math.random() * luckyPool.length)];
-    return { amount, tier: 'lucky' };
-  }
+  // Flat ₹2 for buyer on delivery confirmation (default)
+  return { amount: 2, tier: 'standard' };
 };
 
 /**
@@ -89,9 +89,9 @@ const grantSellerCashback = async (shipmentId) => {
       return null;
     }
 
-    // Configurable flat amount in rupees (default: ₹2 to ₹3)
-    let minAmt = 2;
-    let maxAmt = 3;
+    // Configurable flat amount in rupees for sellers (default: ₹3 to ₹6)
+    let minAmt = 3;
+    let maxAmt = 6;
     try {
       const config = await SystemConfig.findOne({ configKey: 'GLOBAL_CONFIG' });
       if (config?.sellerCashbackMin !== undefined) minAmt = Number(config.sellerCashbackMin);
@@ -100,14 +100,14 @@ const grantSellerCashback = async (shipmentId) => {
       console.warn('[Reward Service] Config lookup fallback for seller cashback amount:', cErr.message);
     }
 
-    // Determine cashback amount in rupees (e.g. ₹2 or ₹3)
+    // Determine cashback amount in rupees (e.g. ₹3 to ₹6)
     const pool = [];
     for (let a = Math.round(minAmt); a <= Math.round(maxAmt); a++) {
       pool.push(a);
     }
     const cashbackAmount = pool.length > 0 
       ? pool[Math.floor(Math.random() * pool.length)] 
-      : 3;
+      : 4;
 
     // Credit seller cashback balance
     seller.cashbackBalance = parseFloat(((seller.cashbackBalance || 0) + cashbackAmount).toFixed(2));
@@ -147,13 +147,41 @@ const grantSellerCashback = async (shipmentId) => {
 };
 
 /**
- * Grants buyer/receiver prepayment cashback (2% capped at ₹10) for a parcel prepayment.
- * Awarded to the Receiver (buyer) upon paying for the order into escrow.
+ * Grants buyer instant cashback (Fixed ₹5 per Option B) when paying for a shipment via Payment Link.
+ * Incentivizes buyers to prepay online, converting risky COD into guaranteed escrow prepaid orders.
  */
-const grantPrepaymentCashback = async (shipmentId, receiverIdentifier) => {
+const grantPrepaymentCashback = async (shipmentId, receiverIdentifier, options = {}) => {
   try {
-    if (!receiverIdentifier) return null;
+    if (!receiverIdentifier || !shipmentId) return null;
 
+    const Shipment = require('../models/Shipment');
+    const shipment = await Shipment.findOne({ shipmentId: shipmentId.toUpperCase() });
+
+    if (!shipment) {
+      console.warn(`[Reward Service] Shipment ${shipmentId} not found for prepayment cashback.`);
+      return null;
+    }
+
+    // Check if prepayment cashback already awarded
+    const existingReward = await Reward.findOne({
+      shipmentId: shipment.shipmentId,
+      category: 'PREPAYMENT_REWARD'
+    });
+
+    if (existingReward) {
+      console.log(`[Reward Service] Prepayment cashback already awarded for ${shipment.shipmentId}`);
+      const receiver = await User.findById(existingReward.userId);
+      return {
+        success: true,
+        alreadyAwarded: true,
+        amount: existingReward.amount,
+        totalCashbackBalance: receiver?.cashbackBalance || existingReward.amount,
+        minWithdrawal: 50,
+        neededForWithdrawal: Math.max(0, 50 - (receiver?.cashbackBalance || 0))
+      };
+    }
+
+    // Resolve or provision receiver account
     let receiver = null;
     if (typeof receiverIdentifier === 'object' && receiverIdentifier._id) {
       receiver = await User.findById(receiverIdentifier._id);
@@ -168,40 +196,42 @@ const grantPrepaymentCashback = async (shipmentId, receiverIdentifier) => {
           { phone: `+91${sanitizedPhone}` }
         ]
       });
+
+      if (!receiver && sanitizedPhone.length === 10) {
+        try {
+          const guestName = shipment.receiverName || `Buyer ${sanitizedPhone.slice(-4)}`;
+          receiver = new User({
+            phone: sanitizedPhone,
+            fullName: guestName,
+            email: `buyer_${sanitizedPhone}_${Date.now()}@securekaro.in`,
+            passwordHash: 'GUEST_OTP_VERIFIED',
+            role: 'Receiver',
+            cashbackBalance: 0,
+            totalCashbackEarned: 0
+          });
+          await receiver.save();
+          console.log(`[Reward Service] Provisioned guest receiver profile for payment link buyer: ${sanitizedPhone}`);
+        } catch (uErr) {
+          console.warn('[Reward Service] Guest receiver note:', uErr.message);
+          receiver = await User.findOne({ phone: sanitizedPhone });
+        }
+      }
     }
 
     if (!receiver) {
-      console.log(`[Reward Service] Receiver ${receiverIdentifier} not found.`);
+      console.warn(`[Reward Service] Receiver ${receiverIdentifier} could not be resolved for prepayment cashback.`);
       return null;
     }
 
-    // Prevent duplicate rewards for the same shipment ID
-    const existingReward = await Reward.findOne({
-      userId: receiver._id,
-      shipmentId,
-      type: 'CASHBACK_EARNED'
-    });
-
-    if (existingReward) {
-      console.log(`[Reward Service] Cashback already awarded for shipment ${shipmentId}`);
-      return existingReward;
-    }
-
-    // Calculate buyer cashback: 2% of parcel amount, capped at ₹10 (minimum ₹1)
-    let cashbackAmount = 4;
+    // Fixed ₹5 for paying via Payment Link (Option B)
+    let cashbackAmount = 5;
     try {
-      const Shipment = require('../models/Shipment');
-      const shipment = await Shipment.findOne({ shipmentId });
-      const orderAmount = Number(shipment?.amount) || 200;
-
       const config = await SystemConfig.findOne({ configKey: 'GLOBAL_CONFIG' });
-      const buyerRate = config?.buyerCashbackRate !== undefined ? Number(config.buyerCashbackRate) : 2.0;
-      const maxCap = config?.buyerCashbackMaxCap !== undefined ? Number(config.buyerCashbackMaxCap) : 10;
-
-      const calculated = Math.round((orderAmount * buyerRate) / 100);
-      cashbackAmount = Math.max(1, Math.min(maxCap, calculated || 3));
+      if (config?.paymentLinkCashbackAmount && Number(config.paymentLinkCashbackAmount) > 0) {
+        cashbackAmount = Number(config.paymentLinkCashbackAmount);
+      }
     } catch (cErr) {
-      cashbackAmount = generateWeightedCashback();
+      // Fallback to default ₹5
     }
 
     receiver.cashbackBalance = parseFloat(((receiver.cashbackBalance || 0) + cashbackAmount).toFixed(2));
@@ -210,28 +240,43 @@ const grantPrepaymentCashback = async (shipmentId, receiverIdentifier) => {
 
     const reward = new Reward({
       userId: receiver._id,
-      shipmentId,
+      shipmentId: shipment.shipmentId,
       type: 'CASHBACK_EARNED',
       category: 'PREPAYMENT_REWARD',
       role: receiver.role || 'Receiver',
       amount: cashbackAmount,
       status: 'CREDITED',
-      description: `Instant Buyer Payment Cashback (2% promo up to ₹10) for Parcel #${shipmentId}`
+      description: `🎉 ₹${cashbackAmount} Instant Cashback for paying via Payment Link on #${shipment.shipmentId}`
     });
     await reward.save();
 
-    await createNotification(
-      receiver._id,
-      'card_giftcard',
-      `🎉 ₹${cashbackAmount} Payment Cashback Earned!`,
-      `You received an instant buyer reward of ₹${cashbackAmount} for paying into escrow for parcel ${shipmentId}. Your total cashback balance is now ₹${receiver.cashbackBalance}.`,
-      'payment'
-    );
+    try {
+      await createNotification(
+        receiver._id,
+        'card_giftcard',
+        `🎉 ₹${cashbackAmount} Payment Link Cashback Credited!`,
+        `You earned ₹${cashbackAmount} instant cashback for completing payment online via Payment Link for parcel ${shipment.shipmentId}. Your SecureKaro wallet balance is now ₹${receiver.cashbackBalance}.`,
+        'payment'
+      );
+    } catch (notifErr) {
+      console.warn('[Reward Service] Notification error:', notifErr.message);
+    }
 
-    console.log(`[Reward Service] Granted ₹${cashbackAmount} cashback to buyer ${receiver.fullName} for ${shipmentId}`);
-    return reward;
+    console.log(`[Reward Service] Granted ₹${cashbackAmount} payment link cashback to ${receiver.fullName || receiver.phone}`);
+
+    const minWithdrawal = 50;
+    const neededForWithdrawal = Math.max(0, parseFloat((minWithdrawal - receiver.cashbackBalance).toFixed(2)));
+
+    return {
+      success: true,
+      amount: cashbackAmount,
+      totalCashbackBalance: receiver.cashbackBalance,
+      minWithdrawal,
+      neededForWithdrawal,
+      message: `🎉 ₹${cashbackAmount} instant cashback added to your SecureKaro Wallet for paying online!`
+    };
   } catch (error) {
-    console.error('[Reward Service] Error granting buyer cashback:', error);
+    console.error('[Reward Service] Error granting prepayment cashback:', error);
     return null;
   }
 };
@@ -407,10 +452,10 @@ const computeSupplierWallet = async (userId) => {
     const isTrackingSubmitted = s.trackingSubmitted || (s.awbCode && s.awbCode.trim() !== '');
 
     if (isPaymentDone && isTrackingSubmitted) {
-      // ₹2 to ₹3 seller cashback calculation in rupees
+      // ₹3 to ₹6 seller cashback calculation in rupees
       const cbAmt = s.supplierCashbackPaid > 0 
         ? s.supplierCashbackPaid 
-        : 3; // flat ₹3 (in ₹2 – ₹3 range)
+        : 4; // flat ₹4 (in ₹3 – ₹6 range)
 
       const baseDate = s.trackingSubmittedAt || s.receiverPaidAt || s.createdAt || new Date();
       const expiresAt = s.confirmationWindowExpiresAt || new Date(new Date(baseDate).getTime() + 24 * 60 * 60 * 1000);
@@ -432,7 +477,7 @@ const computeSupplierWallet = async (userId) => {
           shipmentId: s.shipmentId,
           parcelAmount: s.amount || 0,
           cashbackAmount: cbAmt,
-          cashbackRate: '₹2 – ₹3',
+          cashbackRate: '₹3 – ₹6',
           totalAmount: (s.amount || 0) + cbAmt,
           awbCode: s.awbCode,
           carrierSlug: s.carrierSlug || 'delhivery',
