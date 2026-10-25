@@ -52,6 +52,15 @@ const forgotPasswordSchema = z.object({
   message: 'Either email or phone is required to reset password'
 });
 
+// Schema for password reset
+const resetPasswordSchema = z.object({
+  identifier: z.string().trim().min(3, 'Email or phone identifier required'),
+  code: z.string().trim().min(4, 'Valid OTP required').optional(),
+  otp: z.string().trim().min(4, 'Valid OTP required').optional(),
+  newPassword: z.string().min(6, 'New password must be at least 6 characters long'),
+  role: z.enum(['Supplier', 'Receiver']).optional().default('Receiver')
+});
+
 module.exports = {
   signupSchema,
   loginSchema,
