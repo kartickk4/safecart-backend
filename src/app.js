@@ -1,10 +1,14 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const { RedisStore } = require('rate-limit-redis');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const mongoose = require('mongoose');
+const { redisClient } = require('./config/redis');
 
 // Helper function to resolve module whether nested in subfolder or flat at root
 function loadModule(relSubPath, relRootPath) {
@@ -45,8 +49,25 @@ const { sanitizeInput } = loadModule('middleware/sanitize.js', 'sanitize.js');
 const agentRoutes = loadModule('routes/agentRoutes.js', 'agentRoutes.js');
 const adminRoutes = loadModule('routes/adminRoutes.js', 'adminRoutes.js');
 const whatsappRoutes = loadModule('routes/whatsappRoutes.js', 'whatsappRoutes.js');
+const youpiRoutes = loadModule('routes/youpiRoutes.js', 'youpiRoutes.js');
+const { enforcePrivacyHeaders } = loadModule('middleware/cacheMiddleware.js', 'middleware/cacheMiddleware.js');
 
 const app = express();
+
+// 0. Request Correlation ID Middleware (X-Request-ID)
+app.use((req, res, next) => {
+  const incomingId = req.headers['x-request-id'];
+  const requestId = (typeof incomingId === 'string' && incomingId.trim().length > 0)
+    ? incomingId.trim()
+    : (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex'));
+  
+  req.id = requestId;
+  res.setHeader('X-Request-ID', requestId);
+  next();
+});
+
+// Apply Privacy & Anti-Cache Headers across sensitive routes
+app.use(enforcePrivacyHeaders);
 
 // 1. Security Headers Middleware (Helmet Hardening)
 const isProd = process.env.NODE_ENV === 'production';
@@ -66,7 +87,7 @@ app.use(helmet({
       ],
       fontSrc: ["'self'", "https://fonts.googleapis.com", "https://fonts.gstatic.com"],
       objectSrc: ["'none'"],
-      upgradeInsecureRequests: isProd ? [] : null
+      ...(isProd ? { 'upgrade-insecure-requests': [] } : {})
     }
   },
   crossOriginEmbedderPolicy: false,
@@ -126,26 +147,57 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Request-ID'],
+  exposedHeaders: ['X-Request-ID'],
   maxAge: 86400 // Cache preflight for 24h to reduce OPTIONS requests
 };
 
 app.use(cors(corsOptions));
 
 // 3. Global Rate Limiting Middleware
+const isLoadTestRequest = (req) => {
+  // Strictly prevent rate-limit bypasses in production
+  if (process.env.NODE_ENV === 'production') return false;
+  return process.env.NODE_ENV === 'test' || 
+         process.env.LOAD_TEST_MODE === 'true' || 
+         (req.headers['x-load-test-token'] && req.headers['x-load-test-token'] === (process.env.LOAD_TEST_TOKEN || 'securekaro_load_test_sandbox'));
+};
+
+const createRedisLimiterStore = (prefix) => {
+  if (redisClient) {
+    try {
+      return new RedisStore({
+        sendCommand: (...args) => redisClient.call(...args),
+        prefix: `rl:${prefix}:`
+      });
+    } catch (e) {
+      console.warn(`[RATE LIMITER] RedisStore fallback to memory for ${prefix}:`, e.message);
+    }
+  }
+  return undefined;
+};
+
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 200,
   message: { error: 'Too many requests, please try again later.' },
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  store: createRedisLimiterStore('global'),
+  skip: isLoadTestRequest
 });
 
 app.use('/api/', globalLimiter);
 
 // Standard Body Parser Middlewares
 // Allow up to 15mb payload for parcel and defect photo uploads
-app.use(express.json({ limit: '15mb' }));
+app.use(express.json({ 
+  limit: '15mb',
+  verify: (req, res, buf) => {
+    // Preserve raw body buffer for HMAC-SHA256 webhook signatures (YouPI-PG etc)
+    req.rawBody = buf;
+  }
+}));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 // Apply global sanitization middleware to prevent NoSQL query injections
@@ -215,23 +267,27 @@ app.get(['/api/v1/network-info', '/network-info'], (req, res) => {
   });
 });
 
-// Auth-specific strict rate limiter
+// Auth-specific strict rate limiter backed by central Redis
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20, // SECURITY: Tightened from 50 → 20 to better prevent brute force
+  max: 20, // SECURITY: Tightened to 20 attempts per 15 mins to defeat distributed brute-force
   message: { error: 'Too many authentication attempts. Please try again after 15 minutes.' },
   standardHeaders: true,
   legacyHeaders: false,
-  skipSuccessfulRequests: true // Only count failed attempts toward the limit
+  store: createRedisLimiterStore('auth'),
+  skipSuccessfulRequests: true, // Only count failed attempts toward the limit
+  skip: isLoadTestRequest
 });
 
-// AI Agent rate limiter — prevent abuse of LLM-backed endpoints
+// AI Agent rate limiter backed by central Redis — prevent abuse of LLM-backed endpoints
 const agentLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 30, // 30 messages per minute per IP
   message: { error: 'Too many agent requests. Please slow down.' },
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  store: createRedisLimiterStore('agent'),
+  skip: isLoadTestRequest
 });
 
 // App Router Declarations (Standard v1 prefix)
@@ -246,6 +302,7 @@ app.use('/api/v1/wallet', walletRoutes);
 app.use('/api/v1/agent', agentLimiter, agentRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/whatsapp', whatsappRoutes);
+app.use('/api/v1/youpi', youpiRoutes);
 
 // Backward-compatibility and direct-route aliases (prevents 404 if /api/v1 is omitted)
 app.use('/auth', authLimiter, authRoutes);
@@ -258,6 +315,7 @@ app.use('/rewards', rewardRoutes);
 app.use('/wallet', walletRoutes);
 app.use('/agent', agentRoutes);
 app.use('/admin', adminRoutes);
+app.use('/youpi', youpiRoutes);
 
 app.use(errorHandler);
 

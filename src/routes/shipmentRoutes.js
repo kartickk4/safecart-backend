@@ -59,16 +59,45 @@ const {
   publicPayShipment,
   paymentWebhookHandler
 } = loadMod('controllers', 'shipmentController');
+const { createPaymentSessionForShipment } = loadMod('controllers', 'youpiWebhookController');
+const { getSupportedCouriersList, getPincodeInfo } = loadMod('services', 'carrierRateService');
 const { protect } = loadMod('middleware', 'auth');
 
 const router = express.Router();
+
+// ── Public Courier Directory & Serviceability (Cached 24h, zero PII) ────────
+router.get('/couriers', async (req, res) => {
+  try {
+    const couriers = await getSupportedCouriersList();
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.json({ success: true, count: couriers.length, couriers });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to retrieve courier services', details: err.message });
+  }
+});
+
+router.get('/serviceability/pincode/:pincode', async (req, res) => {
+  try {
+    const info = getPincodeInfo(req.params.pincode);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.json({ success: true, serviceability: info });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to check serviceability', details: err.message });
+  }
+});
 
 // ── Public Payment & Gateway Webhooks (no login required) ───────────────────
 router.route('/public/pay/:id')
   .post(publicPayShipment);
 
+router.route('/public/youpi-link/:id')
+  .post(createPaymentSessionForShipment);
+
 router.route('/webhook/payment')
   .post(paymentWebhookHandler);
+
+router.route('/:id/generate-youpi-link')
+  .post(protect, createPaymentSessionForShipment);
 
 router.route('/')
   .get(protect, getShipments)
@@ -172,10 +201,10 @@ router.route('/:id/simulate-delivered')
   .put(protect, simulateDelivered);
 
 router.route('/:id/photo-review-pay')
-  .post(optInPhotoReview);
+  .post(protect, optInPhotoReview);
 
 router.route('/:id/photo-review-refuse')
-  .post(refusePhotoReview);
+  .post(protect, refusePhotoReview);
 
 router.route('/:id/parcel-photo')
   .put(protect, uploadParcelPhoto);

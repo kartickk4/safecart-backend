@@ -1,0 +1,272 @@
+openapi: 3.0.3
+info:
+  title: SecureKaro Escrow & Logistics API
+  description: Comprehensive API documentation for automated security testing (Strix / OWASP ZAP) and developer integrations.
+  version: 1.0.0
+servers:
+  - url: http://localhost:5001
+    description: Local Development & Staging Testing Server
+  - url: https://securekaro.in
+    description: Production Server
+
+paths:
+  /health:
+    get:
+      summary: Health Check
+      responses:
+        '200':
+          description: Service is healthy
+
+  /api/v1/auth/signup:
+    post:
+      summary: Register new Supplier or Receiver
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, phone, fullName]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 6 }
+                phone: { type: string, minLength: 10 }
+                fullName: { type: string }
+                role: { type: string, enum: [Supplier, Receiver] }
+      responses:
+        '201':
+          description: Account created successfully
+
+  /api/v1/auth/login:
+    post:
+      summary: User Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+                role: { type: string, enum: [Supplier, Receiver, Admin] }
+      responses:
+        '200':
+          description: Returns accessToken
+
+  /api/v1/auth/send-email-otp:
+    post:
+      summary: Send OTP to email via Resend
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+                role: { type: string, enum: [Supplier, Receiver] }
+      responses:
+        '200':
+          description: OTP dispatched
+
+  /api/v1/auth/verify-email-otp:
+    post:
+      summary: Verify Email OTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email: { type: string, format: email }
+                code: { type: string, minLength: 6, maxLength: 6 }
+                role: { type: string, enum: [Supplier, Receiver] }
+      responses:
+        '200':
+          description: Email verified
+
+  /api/v1/auth/forgot-password:
+    post:
+      summary: Forgot Password OTP Dispatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string, format: email }
+                phone: { type: string }
+                role: { type: string, enum: [Supplier, Receiver] }
+      responses:
+        '200':
+          description: Reset OTP dispatched
+
+  /api/v1/auth/reset-password:
+    post:
+      summary: Reset Password with OTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, otp, newPassword]
+              properties:
+                identifier: { type: string }
+                otp: { type: string }
+                newPassword: { type: string, minLength: 6 }
+                role: { type: string, enum: [Supplier, Receiver] }
+      responses:
+        '200':
+          description: Password reset complete
+
+  /api/v1/shipments:
+    get:
+      summary: List user shipments
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of shipments
+        '401':
+          description: Unauthorized
+    post:
+      summary: Create new escrow shipment
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [receiverName, receiverPhone, receiverAddress, amount]
+              properties:
+                receiverName: { type: string }
+                receiverPhone: { type: string }
+                receiverAddress: { type: string }
+                amount: { type: number }
+                city: { type: string }
+                carrierSlug: { type: string }
+      responses:
+        '201':
+          description: Shipment created
+
+  /api/v1/shipments/{id}:
+    get:
+      summary: Get shipment details by ID (Protected against IDOR)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Shipment details
+        '403':
+          description: Forbidden - Not sender/receiver
+
+  /api/v1/shipments/{id}/parcel-photo:
+    put:
+      summary: Upload parcel verification photo (Supplier Only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [parcelPhotoUrl]
+              properties:
+                parcelPhotoUrl: { type: string }
+      responses:
+        '200':
+          description: Photo uploaded successfully
+        '403':
+          description: Forbidden - Only supplier can upload
+
+  /api/v1/shipments/{id}/photo-review-pay:
+    post:
+      summary: Opt-in photo review (Protected against IDOR)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Photo review opted in
+        '401':
+          description: Unauthorized
+
+  /api/v1/shipments/{id}/confirm-delivery:
+    put:
+      summary: Buyer confirms delivery & releases escrow
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Escrow released to seller
+
+  /api/v1/wallet/balance:
+    get:
+      summary: Get user wallet balance
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Wallet balance returned
+
+  /api/v1/admin/users:
+    get:
+      summary: Admin User Management
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of users
+        '403':
+          description: Forbidden - Admin credentials required
+
+  /api/v1/admin/shipments:
+    get:
+      summary: Admin Shipment Management
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Master shipment registry
+        '403':
+          description: Forbidden - Admin credentials required
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

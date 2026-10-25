@@ -41,13 +41,60 @@ const initTrackingJob = () => {
     console.log('[TRACKING JOB] Executing active shipment status poll...');
     
     try {
-      // Find all shipments currently in transit (Stage 4)
+      // Find shipments currently in transit (Stage 4) with field projection
       const transitShipments = await Shipment.find({
         escrowStage: 4,
         awbCode: { $ne: "" }
-      });
+      })
+        .select('shipmentId awbCode carrierSlug status escrowStage senderId receiverPhone amount')
+        .limit(250);
 
       console.log(`[TRACKING JOB] Found ${transitShipments.length} active shipments in transit.`);
+      if (transitShipments.length === 0) return;
+
+      // Batch 1: Pre-fetch all CarrierJourney documents in a single query (Eliminates N+1)
+      const awbCodes = transitShipments.map(s => s.awbCode).filter(Boolean);
+      const existingJourneys = await CarrierJourney.find({ awbCode: { $in: awbCodes } });
+      const journeyMap = new Map();
+      for (const j of existingJourneys) {
+        journeyMap.set(j.awbCode, j);
+      }
+
+      // Batch 2: Pre-fetch all receiver Users in a single query (Eliminates 2N User queries)
+      const phoneSet = new Set();
+      for (const s of transitShipments) {
+        if (s.receiverPhone) {
+          const raw = String(s.receiverPhone).trim();
+          phoneSet.add(raw);
+          const digits = raw.replace(/\D/g, '');
+          if (digits.length >= 10) {
+            const ten = digits.slice(-10);
+            phoneSet.add(ten);
+            phoneSet.add(`+91${ten}`);
+            phoneSet.add(`91${ten}`);
+            phoneSet.add(`+91 ${ten}`);
+          }
+        }
+      }
+      const receiverUsers = phoneSet.size > 0
+        ? await User.find({ phone: { $in: Array.from(phoneSet) } }).select('_id phone').lean()
+        : [];
+      const userPhoneMap = new Map();
+      for (const u of receiverUsers) {
+        if (u.phone) {
+          userPhoneMap.set(u.phone, u);
+          const ten = u.phone.replace(/\D/g, '').slice(-10);
+          if (ten) userPhoneMap.set(ten, u);
+        }
+      }
+
+      const getReceiverFromMap = (phone) => {
+        if (!phone) return null;
+        const raw = String(phone).trim();
+        if (userPhoneMap.has(raw)) return userPhoneMap.get(raw);
+        const ten = raw.replace(/\D/g, '').slice(-10);
+        return ten && userPhoneMap.has(ten) ? userPhoneMap.get(ten) : null;
+      };
 
       for (const shipment of transitShipments) {
         try {
@@ -55,8 +102,8 @@ const initTrackingJob = () => {
           const trackData = await carrierTracking.getTrackingDetails(carrierSlug, shipment.awbCode);
           if (!trackData) continue;
 
-          // Update CarrierJourney milestones
-          let journey = await CarrierJourney.findOne({ awbCode: shipment.awbCode });
+          // Retrieve journey from batched map or instantiate if absent
+          let journey = journeyMap.get(shipment.awbCode);
           if (!journey) {
             journey = new CarrierJourney({
               shipmentId: shipment.shipmentId,
@@ -64,6 +111,7 @@ const initTrackingJob = () => {
               courierName: carrierSlug.toUpperCase(),
               milestones: []
             });
+            journeyMap.set(shipment.awbCode, journey);
           }
 
           if (trackData.activities && trackData.activities.length > 0) {
@@ -106,38 +154,44 @@ const initTrackingJob = () => {
 
             console.log(`[TRACKING JOB] Shipment ${shipment.shipmentId} updated to state: ${newStatus}`);
 
-            // Send notification to sender
-            await createNotification(
-              shipment.senderId,
-              'local_shipping',
-              `Tracking update: ${newStatus} — ${shipment.shipmentId}`,
-              `Your package has updated to: ${newStatus}.`,
-              'shipping'
-            );
-
-            // Send notification to receiver
-            const receiver = await findReceiverUser(shipment.receiverPhone);
-            if (receiver) {
-              await createNotification(
-                receiver._id,
+            const receiver = getReceiverFromMap(shipment.receiverPhone);
+            const notificationPromises = [
+              createNotification(
+                shipment.senderId,
                 'local_shipping',
                 `Tracking update: ${newStatus} — ${shipment.shipmentId}`,
                 `Your package has updated to: ${newStatus}.`,
                 'shipping'
+              )
+            ];
+
+            if (receiver) {
+              notificationPromises.push(
+                createNotification(
+                  receiver._id,
+                  'local_shipping',
+                  `Tracking update: ${newStatus} — ${shipment.shipmentId}`,
+                  `Your package has updated to: ${newStatus}.`,
+                  'shipping'
+                )
               );
 
               if (newStage === 5 || newStatus === 'Delivered') {
-                await createNotification(
-                  receiver._id,
-                  'inventory_2',
-                  `Parcel Delivered — Action Required: Confirm Parcel`,
-                  `Your parcel ${shipment.shipmentId} has been delivered. Please inspect and confirm the parcel.`,
-                  'confirmed',
-                  shipment.shipmentId,
-                  'CONFIRM_PARCEL'
+                notificationPromises.push(
+                  createNotification(
+                    receiver._id,
+                    'inventory_2',
+                    `Parcel Delivered — Action Required: Confirm Parcel`,
+                    `Your parcel ${shipment.shipmentId} has been delivered. Please inspect and confirm the parcel.`,
+                    'confirmed',
+                    shipment.shipmentId,
+                    'CONFIRM_PARCEL'
+                  )
                 );
               }
             }
+
+            await Promise.allSettled(notificationPromises);
           }
         } catch (shipmentErr) {
           console.error(`[TRACKING JOB] Error polling shipment ${shipment.shipmentId}:`, shipmentErr.message);

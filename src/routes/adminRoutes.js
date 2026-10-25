@@ -82,6 +82,10 @@ router.get('/system/config', adminController.getSystemConfig);
 router.put('/system/config', adminController.updateSystemConfig);
 router.get('/system/bulk-jobs', adminController.getBulkJobs);
 
+// Cache Observability & Maintenance
+router.get('/cache/metrics', adminController.getCacheMetricsHandler);
+router.post('/cache/clear', adminController.clearCacheHandler);
+
 // Broadcast & Communication
 router.post('/broadcast', adminController.broadcastNotification);
 

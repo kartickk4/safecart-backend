@@ -168,29 +168,31 @@ const verifyPayment = async (req, res) => {
  */
 const getWalletBalance = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('walletBalance cashbackBalance fullName email');
+    const user = req.user || await User.findById(req.user._id).select('walletBalance cashbackBalance fullName email');
     if (!user) {
       return res.status(404).json({ error: 'User not found.' });
     }
 
     const userMatch = { $or: [{ sellerId: user._id }, { userId: user._id }] };
-    const recentTransactions = await WalletTransaction.find(userMatch)
-      .sort({ createdAt: -1 })
-      .limit(5);
 
-    // Compute stats
-    const creditAgg = await WalletTransaction.aggregate([
-      { $match: { ...userMatch, type: 'credit', status: 'success' } },
-      { $group: { _id: null, total: { $sum: '$amount' } } }
+    // Parallelize recent transactions lookup and combined credit/debit aggregation
+    const [recentTransactions, typeAgg] = await Promise.all([
+      WalletTransaction.find(userMatch)
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .lean(),
+      WalletTransaction.aggregate([
+        { $match: { ...userMatch, status: 'success', type: { $in: ['credit', 'debit'] } } },
+        { $group: { _id: '$type', total: { $sum: '$amount' } } }
+      ])
     ]);
 
-    const debitAgg = await WalletTransaction.aggregate([
-      { $match: { ...userMatch, type: 'debit', status: 'success' } },
-      { $group: { _id: null, total: { $sum: '$amount' } } }
-    ]);
-
-    const totalRecharged = creditAgg.length > 0 ? parseFloat(creditAgg[0].total.toFixed(2)) : 0;
-    const totalDeducted = debitAgg.length > 0 ? parseFloat(debitAgg[0].total.toFixed(2)) : 0;
+    let totalRecharged = 0;
+    let totalDeducted = 0;
+    for (const item of typeAgg) {
+      if (item._id === 'credit') totalRecharged = parseFloat(Number(item.total).toFixed(2));
+      if (item._id === 'debit') totalDeducted = parseFloat(Number(item.total).toFixed(2));
+    }
 
     res.json({
       success: true,
@@ -214,8 +216,8 @@ const getWalletBalance = async (req, res) => {
  */
 const getTransactions = async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
     const type = req.query.type; // 'credit' | 'debit'
 
     const query = { $or: [{ sellerId: req.user._id }, { userId: req.user._id }] };
@@ -223,11 +225,15 @@ const getTransactions = async (req, res) => {
       query.type = type;
     }
 
-    const total = await WalletTransaction.countDocuments(query);
-    const transactions = await WalletTransaction.find(query)
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit);
+    // Execute count and paginated query in parallel
+    const [total, transactions] = await Promise.all([
+      WalletTransaction.countDocuments(query),
+      WalletTransaction.find(query)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean()
+    ]);
 
     res.json({
       success: true,

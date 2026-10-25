@@ -12,6 +12,14 @@ const { getCarrierRates, getCarrierRatesAsync } = require('../services/carrierRa
 const { autoScheduleCourierPickup } = require('../services/pickupService');
 const { calculateServiceFee, calculateSellerPayout } = require('../utils/feeConfig');
 const crypto = require('crypto');
+const { cacheManager } = require('../services/cacheManager');
+
+// Helper to invalidate admin dashboard aggregates whenever shipment state changes
+const invalidateDashboardCache = () => {
+  cacheManager.invalidateTag('admin:analytics').catch(() => {});
+  cacheManager.invalidateTag('admin:finance').catch(() => {});
+  cacheManager.invalidatePattern('admin:*').catch(() => {});
+};
 
 /**
  * Helper: Generate Shipment ID in form SPL-XXXX-X
@@ -152,9 +160,18 @@ const getShipments = async (req, res) => {
       query = { $or: queryConditions };
     }
 
-    const shipments = await Shipment.find(query)
-      .sort({ createdAt: -1 })
-      .lean();
+    let shipmentQuery = Shipment.find(query)
+      .select('-parcelPhoto -defectPhoto')
+      .sort({ createdAt: -1 });
+
+    if (req.query.limit || req.query.page) {
+      const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+      const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+      const skip = (page - 1) * limit;
+      shipmentQuery = shipmentQuery.skip(skip).limit(limit);
+    }
+
+    const shipments = await shipmentQuery.lean();
     res.json(shipments);
   } catch (error) {
     console.error('Get Shipments Error:', error);
@@ -171,7 +188,12 @@ const getShipments = async (req, res) => {
 const getShipmentById = async (req, res) => {
   try {
     const id = req.params.id.toUpperCase();
-    const shipment = await Shipment.findOne({ shipmentId: id });
+    
+    // Concurrently fetch shipment and carrier journey
+    const [shipment, journey] = await Promise.all([
+      Shipment.findOne({ shipmentId: id }),
+      CarrierJourney.findOne({ shipmentId: id }).lean()
+    ]);
 
     if (!shipment) {
       return res.status(404).json({ error: 'Shipment not found' });
@@ -189,9 +211,6 @@ const getShipmentById = async (req, res) => {
 
     // Auto-close return window if 24 hours have elapsed
     const activeShipment = await escrow.checkAndAutoCloseReturnWindow(shipment);
-
-    // Get journey track
-    const journey = await CarrierJourney.findOne({ shipmentId: id });
 
     res.json({
       shipment: activeShipment || shipment,
@@ -227,7 +246,7 @@ const createShipment = async (req, res) => {
     }
 
     // SecureKaro rule: Sender MUST have verified mobile number before creating their first shipment
-    const sender = await User.findById(req.user._id);
+    const sender = req.user || await User.findById(req.user._id);
     if (!sender.phone || !sender.isPhoneVerified) {
       return res.status(403).json({ 
         error: 'Phone verification required',
@@ -566,6 +585,9 @@ const createShipment = async (req, res) => {
       );
     }
 
+    // Refresh affected dashboard summaries
+    invalidateDashboardCache();
+
     res.status(201).json({
       ...shipment.toObject(),
       serviceFee: feeCalc.fee,
@@ -625,7 +647,7 @@ const quoteCodFees = async (req, res) => {
       codCharge: bodyCodCharge
     } = req.body;
 
-    const user = await User.findById(req.user._id);
+    const user = req.user || await User.findById(req.user._id);
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     const fromPincode = bodySenderPincode || user.pincode || user.pickupAddress?.pincode || '';
@@ -738,7 +760,9 @@ const executeOrderPaymentAndCourierBooking = async (shipment, paymentDetails = {
     return shipment;
   }
 
-  const sender = await User.findById(shipment.senderId);
+  const sender = (shipment.senderId && typeof shipment.senderId === 'object' && shipment.senderId.phone)
+    ? shipment.senderId
+    : await User.findById(shipment.senderId);
 
   // Selected courier partner (from buyer checkout selection or seller preference)
   const chosenCarrierSlug = (paymentDetails.carrierSlug || shipment.carrierSlug || process.env.DEFAULT_CARRIER || 'delhivery').toLowerCase();
@@ -809,26 +833,31 @@ const executeOrderPaymentAndCourierBooking = async (shipment, paymentDetails = {
   }
   await journey.save();
 
-  // 4. Create notification for seller
-  await createNotification(
-    shipment.senderId,
-    'payments',
-    `Payment Received — Carrier Booked: ${courierTitle} (${shipment.shipmentId})`,
-    `Buyer has completed payment of ₹${shipment.amount}. Courier shipment created with ${courierTitle} (AWB: ${shipment.awbCode}). Carrier Booked: ${courierTitle}. Pickup scheduled. Please print shipping label.`,
-    'shipping'
-  );
+  // 4. Create notifications in parallel
+  const senderIdForNotify = shipment.senderId?._id || shipment.senderId;
+  const notificationPromises = [
+    createNotification(
+      senderIdForNotify,
+      'payments',
+      `Payment Received — Carrier Booked: ${courierTitle} (${shipment.shipmentId})`,
+      `Buyer has completed payment of ₹${shipment.amount}. Courier shipment created with ${courierTitle} (AWB: ${shipment.awbCode}). Carrier Booked: ${courierTitle}. Pickup scheduled. Please print shipping label.`,
+      'shipping'
+    )
+  ];
 
-  // 5. Create notification for receiver if registered
   const receiver = await findReceiverUser(shipment.receiverPhone);
   if (receiver) {
-    await createNotification(
-      receiver._id,
-      'inventory_2',
-      `Payment Successful — Carrier Booked: ${courierTitle}`,
-      `Your payment of ₹${shipment.amount} is confirmed. Courier shipment created with your selected carrier: ${courierTitle} (AWB: ${shipment.awbCode}).`,
-      'shipping'
+    notificationPromises.push(
+      createNotification(
+        receiver._id,
+        'inventory_2',
+        `Payment Successful — Carrier Booked: ${courierTitle}`,
+        `Your payment of ₹${shipment.amount} is confirmed. Courier shipment created with your selected carrier: ${courierTitle} (AWB: ${shipment.awbCode}).`,
+        'shipping'
+      )
     );
   }
+  await Promise.allSettled(notificationPromises);
 
   // 6. Grant Payment Link Prepayment Cashback (Fixed ₹5 per Option B)
   try {
@@ -1666,7 +1695,10 @@ const getSupplierReturnOrders = async (req, res) => {
         { status: { $in: ['Return Requested', 'Return In Transit', 'Returned & Refunded'] } },
         { returnAwbCode: { $ne: '' } }
       ]
-    }).sort({ updatedAt: -1 });
+    })
+      .select('-parcelPhoto -defectPhoto')
+      .sort({ updatedAt: -1 })
+      .lean();
 
     res.json({
       success: true,
@@ -1687,19 +1719,23 @@ const getSupplierReturnOrders = async (req, res) => {
 const getReceiverReturnOrders = async (req, res) => {
   try {
     const userPhone = req.user.phone;
-    const phoneFilters = [];
+    const phoneList = [];
     if (userPhone && userPhone.trim()) {
-      phoneFilters.push({ receiverPhone: userPhone });
-      const digits = userPhone.replace(/\D/g, '');
+      const raw = userPhone.trim();
+      phoneList.push(raw);
+      const digits = raw.replace(/\D/g, '');
       if (digits.length >= 10) {
-        phoneFilters.push({ receiverPhone: new RegExp(digits.slice(-10) + '$') });
+        const ten = digits.slice(-10);
+        phoneList.push(ten, `+91${ten}`, `91${ten}`, `+91 ${ten}`);
       }
     }
+    const orConditions = [{ receiverId: req.user._id }];
+    if (phoneList.length > 0) {
+      orConditions.push({ receiverPhone: { $in: phoneList } });
+    }
+
     const returnShipments = await Shipment.find({
-      $or: [
-        ...phoneFilters,
-        { receiverId: req.user._id }
-      ],
+      $or: orConditions,
       $and: [
         {
           $or: [
@@ -1710,7 +1746,10 @@ const getReceiverReturnOrders = async (req, res) => {
           ]
         }
       ]
-    }).sort({ updatedAt: -1 });
+    })
+      .select('-parcelPhoto -defectPhoto')
+      .sort({ updatedAt: -1 })
+      .lean();
 
     res.json({
       success: true,
@@ -1751,6 +1790,16 @@ const optInPhotoReview = async (req, res) => {
       return res.status(404).json({ error: 'Shipment not found' });
     }
 
+    // IDOR Protection: Caller must be sender, receiver, or admin
+    const userPhone = req.user?.phone;
+    const isSender = await isAuthorizedSenderOrSupplier(req.user, shipment);
+    const isReceiver = shipment.receiverPhone === userPhone ||
+      (userPhone && shipment.receiverPhone && shipment.receiverPhone.replace(/\D/g, '').endsWith(userPhone.replace(/\D/g, '').slice(-10)));
+
+    if (!isSender && !isReceiver && req.user?.role !== 'Admin') {
+      return res.status(403).json({ error: 'Not authorized to modify photo review for this shipment' });
+    }
+
     shipment.photoReviewEnabled = true;
     shipment.photoReviewRequested = true;
     shipment.photoReviewPaid = true;
@@ -1770,7 +1819,7 @@ const optInPhotoReview = async (req, res) => {
 /**
  * @desc    Refuse / opt out of photo review (Deprecated: photo verification is mandatory for all shipments)
  * @route   POST /api/v1/shipments/:id/photo-review-refuse
- * @access  Public / Private
+ * @access  Private
  */
 const refusePhotoReview = async (req, res) => {
   const id = req.params.id.toUpperCase();
@@ -1778,6 +1827,16 @@ const refusePhotoReview = async (req, res) => {
     const shipment = await Shipment.findOne({ shipmentId: id });
     if (!shipment) {
       return res.status(404).json({ error: 'Shipment not found' });
+    }
+
+    // IDOR Protection: Caller must be sender, receiver, or admin
+    const userPhone = req.user?.phone;
+    const isSender = await isAuthorizedSenderOrSupplier(req.user, shipment);
+    const isReceiver = shipment.receiverPhone === userPhone ||
+      (userPhone && shipment.receiverPhone && shipment.receiverPhone.replace(/\D/g, '').endsWith(userPhone.replace(/\D/g, '').slice(-10)));
+
+    if (!isSender && !isReceiver && req.user?.role !== 'Admin') {
+      return res.status(403).json({ error: 'Not authorized to modify photo review for this shipment' });
     }
 
     // Parcel photo verification is mandatory for all shipments on SecureKaro
@@ -2772,6 +2831,7 @@ const exportUserShipments = async (req, res) => {
     };
 
     const shipments = await Shipment.find(query)
+      .select('-parcelPhoto -defectPhoto')
       .populate('senderId', 'fullName email phone')
       .sort({ createdAt: -1 })
       .lean();

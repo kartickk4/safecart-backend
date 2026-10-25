@@ -2,6 +2,7 @@ const Shipment = require('../models/Shipment');
 const CarrierJourney = require('../models/CarrierJourney');
 const User = require('../models/User');
 const { createNotification } = require('../services/notification');
+const { cacheManager } = require('../services/cacheManager');
 const axios = require('axios');
 
 
@@ -31,29 +32,54 @@ const findReceiverUser = async (phone) => {
  * @desc    Get tracking journey details by AWB code or Shipment ID
  * @route   GET /api/v1/tracking/:awb
  * @access  Public
+ *
+ * Implements:
+ * 1. PII Sanitization: Never exposes customer phone, address, or payment details publicly.
+ * 2. Safe 3-Minute caching for public tracking milestones.
+ * 3. Cache stampede protection.
  */
 const getTrackingByAwb = async (req, res) => {
   const { awb } = req.params;
+  const cleanAwb = String(awb || '').trim().toUpperCase();
 
   try {
-    const shipment = await Shipment.findOne({
-      $or: [{ awbCode: awb }, { shipmentId: awb }]
-    });
+    const cacheKey = cacheManager.generateKey('tracking:milestones', { awb: cleanAwb });
+    const isCached = cacheManager.memoryStore.has(cacheKey);
 
-    const journey = await CarrierJourney.findOne({
-      $or: [{ awbCode: awb }, { shipmentId: awb }]
-    });
+    const trackingData = await cacheManager.getOrSet(cacheKey, async () => {
+      const shipment = await Shipment.findOne({
+        $or: [{ awbCode: cleanAwb }, { shipmentId: cleanAwb }]
+      }).select('shipmentId awbCode carrierSlug carrierName status city createdAt');
 
-    if (!shipment && !journey) {
+      const journey = await CarrierJourney.findOne({
+        $or: [{ awbCode: cleanAwb }, { shipmentId: cleanAwb }]
+      });
+
+      if (!shipment && !journey) {
+        return null;
+      }
+
+      // Safe Public Tracking Payload (Zero PII, no personal contact numbers, no payment secrets)
+      return {
+        awb: cleanAwb,
+        shipmentId: shipment ? shipment.shipmentId : (journey ? journey.shipmentId : null),
+        status: shipment ? shipment.status : (journey ? journey.courierName : 'In Transit'),
+        courierName: (journey && journey.courierName) || (shipment && shipment.carrierName) || 'Carrier Partner',
+        carrierSlug: shipment ? shipment.carrierSlug : 'delhivery',
+        route: shipment?.city || 'Inter-city Transit',
+        milestones: journey ? journey.milestones : [],
+        lastUpdated: new Date().toISOString()
+      };
+    }, 180, { tags: [`tracking:${cleanAwb}`, 'tracking:public'] });
+
+    if (!trackingData) {
       return res.status(404).json({ error: 'Tracking info not found for provided AWB or Shipment ID' });
     }
 
-    res.json({
-      shipment: shipment || null,
-      awb: awb,
-      status: shipment ? shipment.status : (journey ? journey.courierName : 'In Transit'),
-      journey: journey ? journey.milestones : []
-    });
+    res.setHeader('X-Cache', isCached ? 'HIT' : 'MISS');
+    res.setHeader('X-Cache-Key', cacheKey);
+    res.setHeader('Cache-Control', 'public, max-age=180');
+    res.json(trackingData);
   } catch (error) {
     console.error('Get Tracking Error:', error);
     res.status(500).json({ error: 'Internal Server Error' });
@@ -167,6 +193,11 @@ const handleWebhook = async (req, res) => {
         }
       }
     }
+
+    // Instantly invalidate tracking milestones cache for this AWB and refresh admin summaries
+    await cacheManager.invalidateTag(`tracking:${awbCode}`);
+    await cacheManager.invalidateTag('admin:analytics');
+    await cacheManager.invalidatePattern(`tracking:milestones:*${awbCode}*`);
 
     res.json({ message: 'Webhook processed successfully' });
   } catch (error) {

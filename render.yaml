@@ -3,7 +3,7 @@ services:
     name: securekaro-backend
     env: node
     region: singapore
-    plan: free
+    plan: starter
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
@@ -14,21 +14,71 @@ services:
         value: 10000
       - key: MONGODB_URI
         sync: false
+      - key: DB_MAX_POOL_SIZE
+        value: "50"
+      - key: DB_MIN_POOL_SIZE
+        value: "5"
       - key: JWT_SECRET
         sync: false
       - key: FRONTEND_URL
         sync: false
+
+      # Cashfree Payment Gateway
       - key: CASHFREE_SECRET_KEY
         sync: false
       - key: CASHFREE_APP_ID
         sync: false
       - key: CASHFREE_ENV
         value: "TEST"
+
+      # Logistics & Live Tracking
       - key: CARRIER_TRACKING_MOCK
         value: "false"
       - key: CARRIER_TRACKING_API_KEY
         sync: false
+      - key: DEFAULT_CARRIER
+        value: "delhivery"
+      - key: ENABLE_TRACKING_CRON
+        value: "true"
+
+      # External Verification APIs
       - key: BIGDATACLOUD_API_KEY
         sync: false
       - key: EMAIL_VERIFIER_API_KEY
+        sync: false
+
+      # Notifications (SMS & WhatsApp)
+      - key: FAST2SMS_API_KEY
+        sync: false
+      - key: WA_VERIFY_TOKEN
+        sync: false
+
+      # Shiprocket Aggregator
+      - key: SHIPROCKET_EMAIL
+        sync: false
+      - key: SHIPROCKET_PASSWORD
+        sync: false
+
+      # NimbusPost Aggregator
+      - key: NIMBUS_API_KEY
+        sync: false
+      - key: NIMBUS_API_SECRET
+        sync: false
+      - key: NIMBUS_EMAIL
+        sync: false
+      - key: NIMBUS_PASSWORD
+        sync: false
+
+      # YouPI-PG Sovereign UPI Payment Gateway
+      - key: YOUPI_PG_BASE_URL
+        sync: false
+      - key: YOUPI_PORTAL_URL
+        sync: false
+      - key: YOUPI_MERCHANT_ID
+        sync: false
+      - key: YOUPI_MERCHANT_KEY
+        sync: false
+      - key: YOUPI_WEBHOOK_SECRET
+        sync: false
+      - key: YOUPI_GATEWAY_IPS
         sync: false

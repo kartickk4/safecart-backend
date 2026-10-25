@@ -21,6 +21,7 @@ function loadMod(type, name) {
 const { getCheapestPickupCarrier } = loadMod('services', 'carrierRateService');
 const { createNotification } = loadMod('services', 'notification');
 const { createOrderInShiprocket } = loadMod('services', 'shiprocketService');
+const { createOrderInNimbusPost } = loadMod('services', 'nimbuspostService');
 const CarrierJourney = loadMod('models', 'CarrierJourney');
 
 // Realistic simulated pickup executives across all popular courier partners
@@ -199,24 +200,45 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
     shipment.pickupAgentPhone = executive.phone;
     shipment.pickupLocationAddress = pickupAddressStr;
     shipment.pickupRateComparison = comparison;
-    shipment.pickupAggregator = 'Shiprocket Multi-Carrier API';
+    const isNimbus = String(assignedCarrierSlug || '').startsWith('nimbus_');
+    shipment.pickupAggregator = isNimbus ? 'NimbusPost Multi-Carrier API' : 'Shiprocket Multi-Carrier API';
 
-    // Live Shiprocket API: Push order to merchant's Shiprocket dashboard and auto-dispatch
-    try {
-      if (typeof createOrderInShiprocket === 'function') {
-        const srRes = await createOrderInShiprocket(shipment, sender);
-        if (srRes?.order_id) {
-          shipment.shiprocketOrderId = srRes.order_id;
-          shipment.shiprocketShipmentId = srRes.shipment_id;
-          pickupToken = `SR-${srRes.order_id}`;
-          shipment.pickupToken = pickupToken;
-          if (srRes.dispatch?.courierName) {
-            assignedCarrierName = srRes.dispatch.courierName;
+    // Hybrid Dispatch: Push order to NimbusPost or Shiprocket based on the selected courier
+    if (isNimbus) {
+      try {
+        if (typeof createOrderInNimbusPost === 'function') {
+          const npRes = await createOrderInNimbusPost(shipment, sender);
+          if (npRes?.orderId) {
+            shipment.nimbusOrderId = npRes.orderId;
+            shipment.nimbusShipmentId = npRes.shipmentId;
+            pickupToken = `NP-${npRes.orderId}`;
+            shipment.pickupToken = pickupToken;
+            if (npRes.courierName) {
+              assignedCarrierName = npRes.courierName;
+            }
           }
         }
+      } catch (npErr) {
+        console.warn('[NIMBUSPOST SYNC BACKGROUND NOTICE]:', npErr.message);
       }
-    } catch (srErr) {
-      console.warn('[SHIPROCKET SYNC BACKGROUND NOTICE]:', srErr.message);
+    } else {
+      // Live Shiprocket API: Push order to merchant's Shiprocket dashboard and auto-dispatch
+      try {
+        if (typeof createOrderInShiprocket === 'function') {
+          const srRes = await createOrderInShiprocket(shipment, sender);
+          if (srRes?.order_id) {
+            shipment.shiprocketOrderId = srRes.order_id;
+            shipment.shiprocketShipmentId = srRes.shipment_id;
+            pickupToken = `SR-${srRes.order_id}`;
+            shipment.pickupToken = pickupToken;
+            if (srRes.dispatch?.courierName) {
+              assignedCarrierName = srRes.dispatch.courierName;
+            }
+          }
+        }
+      } catch (srErr) {
+        console.warn('[SHIPROCKET SYNC BACKGROUND NOTICE]:', srErr.message);
+      }
     }
 
     if (typeof shipment.save === 'function') {
@@ -236,7 +258,7 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
       }
 
       const comparisonText = comparison.length > 1 
-        ? `Shiprocket Multi-Carrier API compared ${comparison.length} popular courier partners (Delhivery, Shadowfax, Ekart, Xpressbees, DTDC, BlueDart, Ecom Express). Lowest rate: ${assignedCarrierName} at ₹${assignedRate}.` 
+        ? `SecureKaro Hybrid Logistics Engine compared ${comparison.length} popular courier partners across Shiprocket & NimbusPost (Delhivery, Shadowfax, Ekart, Xpressbees, DTDC, BlueDart, Ecom Express). Lowest rate: ${assignedCarrierName} at ₹${assignedRate}.` 
         : '';
 
       journey.milestones.push({
@@ -257,7 +279,7 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
         sender?._id || shipment.senderId,
         'local_shipping',
         `Courier Pickup Auto-Scheduled: ${shipment.shipmentId}`,
-        `Shiprocket Multi-Carrier API compared ${comparison.length} popular courier partners (Delhivery, Shadowfax, Ekart, Xpressbees, DTDC, BlueDart) and auto-scheduled ${assignedCarrierName} (lowest rate: ₹${assignedRate}). Pickup slot: ${pickupSlot}. Courier Ref: ${pickupToken}. Executive: ${executive.name} (${executive.phone}).`,
+        `SecureKaro Hybrid Logistics Engine compared ${comparison.length} popular courier partners across Shiprocket & NimbusPost and auto-scheduled ${assignedCarrierName} (lowest rate: ₹${assignedRate}). Pickup slot: ${pickupSlot}. Courier Ref: ${pickupToken}. Executive: ${executive.name} (${executive.phone}).`,
         'shipping'
       );
     }

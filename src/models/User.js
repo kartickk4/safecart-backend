@@ -168,13 +168,26 @@ const UserSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  tokenVersion: {
+    type: Number,
+    default: 0
+  },
   createdAt: { 
     type: Date, 
     default: Date.now 
   }
 });
 
-// Compound Unique Index: Allows same email ONLY if role is different (Option 3)
+// Compound Unique Index: Allows same email ONLY if role is different
 UserSchema.index({ email: 1, role: 1 }, { unique: true });
+
+// SPARSE — Phone lookup (receiver identification in every shipment flow).
+// Covers: User.findOne({ phone }), $or phone normalization queries.
+// Sparse: skips documents where phone is undefined/null.
+UserSchema.index({ phone: 1 }, { sparse: true });
+
+// COMPOSITE — Admin user list: filter by role, sorted by signup date.
+// Covers: User.find({ role, isSuspended }).sort({ createdAt: -1 })
+UserSchema.index({ role: 1, createdAt: -1 });
 
 module.exports = mongoose.model('User', UserSchema);

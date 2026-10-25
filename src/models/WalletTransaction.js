@@ -3,14 +3,14 @@ const mongoose = require('mongoose');
 const WalletTransactionSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    index: true
+    ref: 'User'
+    // index defined below as composite with createdAt
   },
   sellerId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true,
-    index: true
+    required: true
+    // index defined below as composite with createdAt
   },
   type: {
     type: String,
@@ -80,5 +80,22 @@ const WalletTransactionSchema = new mongoose.Schema({
 }, {
   timestamps: true
 });
+
+// ── Performance & Query Indexes ───────────────────────────────────────────────
+//
+// COMPOSITE — Wallet history sorted by most recent (most frequent query pattern).
+// Covers: WalletTransaction.find({ sellerId }).sort({ createdAt: -1 })
+// Supersedes the old single-field { sellerId: 1 } index via prefix.
+WalletTransactionSchema.index({ sellerId: 1, createdAt: -1 });
+
+// COMPOSITE — Buyer-side wallet history sorted by most recent.
+// Covers: WalletTransaction.find({ userId }).sort({ createdAt: -1 })
+// Supersedes the old single-field { userId: 1 } index via prefix.
+WalletTransactionSchema.index({ userId: 1, createdAt: -1 });
+
+// ── Redundant single-field indexes (commented out — superseded by composites above) ──
+// { sellerId: 1 } — superseded by { sellerId: 1, createdAt: -1 }
+// { userId: 1 }   — superseded by { userId: 1, createdAt: -1 }
+// Note: To drop the old indexes from MongoDB Atlas, run the migration script.
 
 module.exports = mongoose.model('WalletTransaction', WalletTransactionSchema);

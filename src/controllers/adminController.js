@@ -30,6 +30,7 @@ const BulkJob = loadMod('models', 'BulkJob');
 const SystemConfig = loadMod('models', 'SystemConfig');
 const CarrierJourney = loadMod('models', 'CarrierJourney');
 const { createNotification } = loadMod('services', 'notification');
+const { cacheManager } = loadMod('services', 'cacheManager');
 
 // Helper to record an audit log entry
 const logAudit = async (req, action, targetType, targetId, details) => {
@@ -56,15 +57,18 @@ const logAudit = async (req, action, targetType, targetId, details) => {
  * @desc    Get Admin Overview Analytics & Health
  * @route   GET /api/v1/admin/analytics
  * @access  Private (Admin)
+ *
+ * Implements 45-second safe short-lived caching with stampede protection.
+ * Automatically invalidated when shipments are created, funded, dispatched, or refunded.
  */
 const getAnalyticsDashboard = async (req, res) => {
   try {
+    const cacheKey = cacheManager.generateKey('admin:analytics', { scope: 'overview' });
+    const isCached = cacheManager.memoryStore.has(cacheKey);
+
+    const analyticsData = await cacheManager.getOrSet(cacheKey, async () => {
     const [
-      totalUsers,
-      totalSuppliers,
-      totalReceivers,
-      suspendedUsers,
-      proUsers,
+      userFacetResult,
       totalShipments,
       shipmentStatusCounts,
       financialAggregates,
@@ -72,11 +76,19 @@ const getAnalyticsDashboard = async (req, res) => {
       recentShipments,
       recentAuditLogs
     ] = await Promise.all([
-      User.countDocuments({}),
-      User.countDocuments({ role: 'Supplier' }),
-      User.countDocuments({ role: { $in: ['Receiver', 'User'] } }),
-      User.countDocuments({ isSuspended: true }),
-      User.countDocuments({ isPro: true }),
+      // Single facet aggregation replaces 5 User.countDocuments calls and User wallet aggregate
+      User.aggregate([
+        {
+          $facet: {
+            total: [{ $count: 'count' }],
+            suppliers: [{ $match: { role: 'Supplier' } }, { $count: 'count' }],
+            receivers: [{ $match: { role: { $in: ['Receiver', 'User'] } } }, { $count: 'count' }],
+            suspended: [{ $match: { isSuspended: true } }, { $count: 'count' }],
+            pro: [{ $match: { isPro: true } }, { $count: 'count' }],
+            wallet: [{ $group: { _id: null, totalWallet: { $sum: '$walletBalance' }, totalCashback: { $sum: '$cashbackBalance' } } }]
+          }
+        }
+      ]),
       Shipment.countDocuments({}),
       Shipment.aggregate([
         { $group: { _id: '$status', count: { $sum: 1 }, totalAmount: { $sum: '$amount' } } }
@@ -110,13 +122,24 @@ const getAnalyticsDashboard = async (req, res) => {
       Shipment.find({})
         .sort({ createdAt: -1 })
         .limit(6)
+        .select('shipmentId amount status escrowStage createdAt senderId receiverPhone paymentMode carrierSlug awbCode')
         .populate('senderId', 'fullName email phone')
         .lean(),
       AuditLog.find({})
         .sort({ createdAt: -1 })
         .limit(8)
+        .select('adminEmail action targetType targetId details ipAddress createdAt')
         .lean()
     ]);
+
+    // Unpack user facet metrics
+    const userFacet = userFacetResult[0] || {};
+    const totalUsers = userFacet.total?.[0]?.count || 0;
+    const totalSuppliers = userFacet.suppliers?.[0]?.count || 0;
+    const totalReceivers = userFacet.receivers?.[0]?.count || 0;
+    const suspendedUsers = userFacet.suspended?.[0]?.count || 0;
+    const proUsers = userFacet.pro?.[0]?.count || 0;
+    const walletLiabilities = userFacet.wallet?.[0] || { totalWallet: 0, totalCashback: 0 };
 
     // Format status counts map
     const statusMap = {};
@@ -131,13 +154,7 @@ const getAnalyticsDashboard = async (req, res) => {
       escrowHeld: 0
     };
 
-    // Calculate total user wallet liabilities
-    const walletLiabilityResult = await User.aggregate([
-      { $group: { _id: null, totalWallet: { $sum: '$walletBalance' }, totalCashback: { $sum: '$cashbackBalance' } } }
-    ]);
-    const walletLiabilities = walletLiabilityResult[0] || { totalWallet: 0, totalCashback: 0 };
-
-    res.json({
+    return {
       success: true,
       users: {
         total: totalUsers,
@@ -178,7 +195,12 @@ const getAnalyticsDashboard = async (req, res) => {
       },
       recentShipments,
       recentAuditLogs
-    });
+    };
+    }, 45, { tags: ['admin:analytics', 'admin:dashboard'] });
+
+    res.setHeader('X-Cache', isCached ? 'HIT' : 'MISS');
+    res.setHeader('X-Cache-Key', cacheKey);
+    res.json(analyticsData);
   } catch (error) {
     console.error('Admin Analytics Error:', error);
     res.status(500).json({ error: 'Failed to retrieve admin analytics', details: error.message });
@@ -505,10 +527,13 @@ const getAllShipments = async (req, res) => {
     }
 
     if (isDisputed === 'true') {
-      filter.$or = [
-        { status: 'Locked' },
-        { escrowStage: -1 }
-      ];
+      const disputeCond = [{ status: 'Locked' }, { escrowStage: -1 }];
+      if (filter.$or) {
+        filter.$and = [{ $or: filter.$or }, { $or: disputeCond }];
+        delete filter.$or;
+      } else {
+        filter.$or = disputeCond;
+      }
     }
 
     if (minAmount || maxAmount) {
@@ -520,6 +545,7 @@ const getAllShipments = async (req, res) => {
     const [totalShipments, shipments] = await Promise.all([
       Shipment.countDocuments(filter),
       Shipment.find(filter)
+        .select('-parcelPhoto -defectPhoto')
         .populate('senderId', 'fullName email phone isPro')
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -1073,72 +1099,83 @@ const resolveDispute = async (req, res) => {
  */
 const getFinancialSummary = async (req, res) => {
   try {
-    const [monthlyAggregates, topSuppliers, totalWalletHoldings] = await Promise.all([
-      Shipment.aggregate([
-        {
-          $group: {
-            _id: {
-              year: { $year: '$createdAt' },
-              month: { $month: '$createdAt' }
-            },
-            gmv: { $sum: '$amount' },
-            count: { $sum: 1 },
-            released: { $sum: '$principalDisbursedToSupplier' },
-            fees: { $sum: '$gatewayFeeDeducted' }
-          }
-        },
-        { $sort: { '_id.year': -1, '_id.month': -1 } },
-        { $limit: 12 }
-      ]),
-      Shipment.aggregate([
-        { $group: { _id: '$senderId', gmv: { $sum: '$amount' }, ordersCount: { $sum: 1 } } },
-        { $sort: { gmv: -1 } },
-        { $limit: 8 },
-        {
-          $lookup: {
-            from: 'users',
-            localField: '_id',
-            foreignField: '_id',
-            as: 'supplierInfo'
-          }
-        },
-        { $unwind: { path: '$supplierInfo', preserveNullAndEmptyArrays: true } }
-      ]),
-      User.aggregate([
-        {
-          $group: {
-            _id: null,
-            totalWalletBalance: { $sum: '$walletBalance' },
-            totalCashbackBalance: { $sum: '$cashbackBalance' },
-            totalReferralCredits: { $sum: '$referralCredits' }
-          }
-        }
-      ])
-    ]);
+    const cacheKey = cacheManager.generateKey('admin:finance', { view: 'summary' });
+    const isCached = cacheManager.memoryStore.has(cacheKey);
 
-    res.json({
-      success: true,
-      monthlyBreakdown: monthlyAggregates,
-      topSuppliers: topSuppliers.map(s => ({
-        supplierId: s._id,
-        fullName: s.supplierInfo?.fullName || 'Unknown Merchant',
-        email: s.supplierInfo?.email || '',
-        phone: s.supplierInfo?.phone || '',
-        isPro: s.supplierInfo?.isPro || false,
-        gmv: s.gmv,
-        ordersCount: s.ordersCount
-      })),
-      walletHoldings: totalWalletHoldings[0] || {
-        totalWalletBalance: 0,
-        totalCashbackBalance: 0,
-        totalReferralCredits: 0
-      }
-    });
+    const finPayload = await cacheManager.getOrSet(cacheKey, async () => {
+      const [monthlyAggregates, topSuppliers, totalWalletHoldings] = await Promise.all([
+        Shipment.aggregate([
+          {
+            $group: {
+              _id: {
+                year: { $year: '$createdAt' },
+                month: { $month: '$createdAt' }
+              },
+              gmv: { $sum: '$amount' },
+              count: { $sum: 1 },
+              released: { $sum: '$principalDisbursedToSupplier' },
+              fees: { $sum: '$gatewayFeeDeducted' }
+            }
+          },
+          { $sort: { '_id.year': -1, '_id.month': -1 } },
+          { $limit: 12 }
+        ]),
+        Shipment.aggregate([
+          { $group: { _id: '$senderId', gmv: { $sum: '$amount' }, ordersCount: { $sum: 1 } } },
+          { $sort: { gmv: -1 } },
+          { $limit: 8 },
+          {
+            $lookup: {
+              from: 'users',
+              localField: '_id',
+              foreignField: '_id',
+              as: 'supplierInfo'
+            }
+          },
+          { $unwind: { path: '$supplierInfo', preserveNullAndEmptyArrays: true } }
+        ]),
+        User.aggregate([
+          {
+            $group: {
+              _id: null,
+              totalWalletBalance: { $sum: '$walletBalance' },
+              totalCashbackBalance: { $sum: '$cashbackBalance' },
+              totalReferralCredits: { $sum: '$referralCredits' }
+            }
+          }
+        ])
+      ]);
+
+      return {
+        success: true,
+        monthlyBreakdown: monthlyAggregates,
+        topSuppliers: topSuppliers.map(s => ({
+          supplierId: s._id,
+          fullName: s.supplierInfo?.fullName || 'Unknown Merchant',
+          email: s.supplierInfo?.email || '',
+          phone: s.supplierInfo?.phone || '',
+          isPro: s.supplierInfo?.isPro || false,
+          gmv: s.gmv,
+          ordersCount: s.ordersCount
+        })),
+        walletHoldings: totalWalletHoldings[0] || {
+          totalWalletBalance: 0,
+          totalCashbackBalance: 0,
+          totalReferralCredits: 0
+        }
+      };
+    }, 60, { tags: ['admin:finance'] });
+
+    res.setHeader('X-Cache', isCached ? 'HIT' : 'MISS');
+    res.setHeader('X-Cache-Key', cacheKey);
+    res.json(finPayload);
   } catch (error) {
     console.error('Admin FinancialSummary Error:', error);
     res.status(500).json({ error: 'Failed to retrieve financial summary', details: error.message });
   }
 };
+
+
 
 /**
  * @desc    Adjust User Wallet Balance (Credit or Debit with Audit Trail)
@@ -1710,6 +1747,7 @@ const getAllReturns = async (req, res) => {
     const [totalReturns, returns] = await Promise.all([
       Shipment.countDocuments(filter),
       Shipment.find(filter)
+        .select('-parcelPhoto -defectPhoto')
         .populate('senderId', 'fullName email phone')
         .sort({ returnRequestedAt: -1, updatedAt: -1 })
         .skip(skip)
@@ -2277,6 +2315,7 @@ const getLiveEscrowBreakdown = async (req, res) => {
       escrowStage: { $gte: 2, $lt: 6 },
       status: { $nin: ['Cancelled', 'Undelivered', 'Returned & Refunded', 'Released'] }
     })
+      .select('-parcelPhoto -defectPhoto')
       .populate('senderId', 'fullName email phone')
       .sort({ createdAt: -1 })
       .lean();
@@ -2412,14 +2451,18 @@ const processWithdrawal = async (req, res) => {
  */
 const getSystemConfig = async (req, res) => {
   try {
-    let config = null;
-    if (SystemConfig) {
-      config = await SystemConfig.findOne({ configKey: 'GLOBAL_CONFIG' }).lean();
-      if (!config) {
-        config = await SystemConfig.create({ configKey: 'GLOBAL_CONFIG' });
+    const cacheKey = cacheManager.generateKey('admin:system', { config: 'global' });
+    const isCached = cacheManager.memoryStore.has(cacheKey);
+
+    const config = await cacheManager.getOrSet(cacheKey, async () => {
+      if (SystemConfig) {
+        let conf = await SystemConfig.findOne({ configKey: 'GLOBAL_CONFIG' }).lean();
+        if (!conf) {
+          conf = await SystemConfig.create({ configKey: 'GLOBAL_CONFIG' });
+        }
+        return conf;
       }
-    } else {
-      config = {
+      return {
         gatewayFeeRate: 0,
         returnWindowHours: 24,
         confirmationWindowHours: 24,
@@ -2428,7 +2471,7 @@ const getSystemConfig = async (req, res) => {
         undeliveredReliefSupplier: 20,
         mockCarrierEnabled: true
       };
-    }
+    }, 300, { tags: ['admin:config'] });
 
     const health = {
       uptimeSeconds: process.uptime(),
@@ -2438,6 +2481,8 @@ const getSystemConfig = async (req, res) => {
       timestamp: new Date()
     };
 
+    res.setHeader('X-Cache', isCached ? 'HIT' : 'MISS');
+    res.setHeader('X-Cache-Key', cacheKey);
     res.json({
       success: true,
       config,
@@ -2497,6 +2542,11 @@ const updateSystemConfig = async (req, res) => {
 
     await config.save();
 
+    // Invalidate affected cache entries immediately
+    await cacheManager.invalidateTag('admin:config');
+    await cacheManager.invalidatePattern('admin:system*');
+    await cacheManager.invalidateTag('admin:analytics');
+
     await logAudit(req, 'UPDATE_SYSTEM_CONFIG', 'System', 'GLOBAL_CONFIG', {
       gatewayFeeRate: config.gatewayFeeRate,
       returnWindowHours: config.returnWindowHours,
@@ -2506,12 +2556,60 @@ const updateSystemConfig = async (req, res) => {
 
     res.json({
       success: true,
-      message: 'System configuration updated successfully',
+      message: 'System configuration updated successfully and cache invalidated',
       config
     });
   } catch (error) {
     console.error('Admin updateSystemConfig error:', error);
     res.status(500).json({ error: 'Failed to update system configuration', details: error.message });
+  }
+};
+
+/**
+ * @desc    Get Live Cache Hit/Miss Metrics and Telemetry
+ * @route   GET /api/v1/admin/cache/metrics
+ * @access  Private (Admin)
+ */
+const getCacheMetricsHandler = async (req, res) => {
+  try {
+    const metrics = cacheManager.getMetrics();
+    res.json({
+      success: true,
+      metrics
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to retrieve cache metrics', details: err.message });
+  }
+};
+
+/**
+ * @desc    Administratively Purge System Cache (by tag, pattern, or full flush)
+ * @route   POST /api/v1/admin/cache/clear
+ * @access  Private (Admin)
+ */
+const clearCacheHandler = async (req, res) => {
+  try {
+    const { pattern, tag } = req.body || {};
+    let purgedCount = 0;
+
+    if (tag) {
+      purgedCount = await cacheManager.invalidateTag(tag);
+    } else if (pattern) {
+      purgedCount = await cacheManager.invalidatePattern(pattern);
+    } else {
+      purgedCount = await cacheManager.clear();
+    }
+
+    await logAudit(req, 'PURGE_CACHE', 'SystemCache', tag || pattern || 'ALL', { purgedCount });
+
+    res.json({
+      success: true,
+      message: `Cache successfully purged (${purgedCount} entries removed)`,
+      purgedCount,
+      target: tag ? `tag:${tag}` : (pattern ? `pattern:${pattern}` : 'all')
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to clear cache', details: err.message });
   }
 };
 
@@ -2774,5 +2872,8 @@ module.exports = {
   getBulkJobs,
   broadcastNotification,
   getAuditLogs,
-  exportData
+  exportData,
+  getCacheMetricsHandler,
+  clearCacheHandler
 };
+

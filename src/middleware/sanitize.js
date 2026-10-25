@@ -11,14 +11,20 @@ const sanitizeInput = (req, res, next) => {
     if (depth > 10) return {};
     if (obj && typeof obj === 'object') {
       for (const key in obj) {
-        // Strip MongoDB operator injection attempts
-        if (key.startsWith('$') || key.includes('.')) {
+        // Strip MongoDB operator injection & prototype pollution attempts
+        if (
+          key.startsWith('$') || 
+          key.includes('.') || 
+          key === '__proto__' || 
+          key === 'constructor' || 
+          key === 'prototype'
+        ) {
           console.warn(`[Security] Stripping dangerous key: "${key}" from ${req.method} ${req.path}`);
           delete obj[key];
         } else if (typeof obj[key] === 'string') {
           // Strip null bytes from string values
           obj[key] = obj[key].replace(/\0/g, '');
-        } else if (typeof obj[key] === 'object') {
+        } else if (typeof obj[key] === 'object' && obj[key] !== null) {
           sanitize(obj[key], depth + 1);
         }
       }

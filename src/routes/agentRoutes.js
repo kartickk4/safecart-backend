@@ -34,7 +34,7 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB max
   fileFilter: (req, file, cb) => {
     const allowed = ['.xlsx', '.xls', '.csv'];
-    const ext = path.extname(file.originalname).toLowerCase();
+    const ext = path.extname(file.originalname || '').toLowerCase();
     if (allowed.includes(ext)) {
       cb(null, true);
     } else {
@@ -43,13 +43,27 @@ const upload = multer({
   }
 });
 
+const handleSafeUpload = (req, res, next) => {
+  upload.single('file')(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'File too large. Maximum size allowed is 10 MB.' });
+      }
+      return res.status(400).json({ error: `Upload error: ${err.message}` });
+    } else if (err) {
+      return res.status(400).json({ error: err.message });
+    }
+    next();
+  });
+};
+
 const router = express.Router();
 
 // Chat — single shipment AI agent conversation turn
 router.post('/chat', protect, handleChat);
 
 // Bulk upload — parse & validate Excel file
-router.post('/bulk-upload', protect, upload.single('file'), handleBulkUpload);
+router.post('/bulk-upload', protect, handleSafeUpload, handleBulkUpload);
 
 // Confirm bulk booking — start processing all valid rows
 router.post('/bulk-confirm', protect, confirmBulkBooking);

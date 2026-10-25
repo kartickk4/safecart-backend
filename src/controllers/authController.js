@@ -25,13 +25,23 @@ const User = loadMod('models', 'User');
 const Otp = loadMod('models', 'Otp');
 const smsService = loadMod('services', 'smsService');
 const emailVerifierService = loadMod('services', 'emailVerifierService');
+const emailService = loadMod('services', 'emailService');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'securekaro_default_fallback_secret_key_2026';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error('CRITICAL SECURITY ERROR: JWT_SECRET environment variable is not defined.');
+}
 
-// Helper: Generate long-lived Access Token (30 days)
-const generateAccessToken = (id) => {
-  return jwt.sign({ id }, JWT_SECRET, {
-    expiresIn: '30d',
+// Helper: Generate Access Token (7 days) with tokenVersion for instant revocation
+const generateAccessToken = (userOrId, tokenVersion = 0) => {
+  let id = userOrId;
+  let version = tokenVersion;
+  if (userOrId && typeof userOrId === 'object' && userOrId._id) {
+    id = userOrId._id;
+    version = userOrId.tokenVersion !== undefined ? userOrId.tokenVersion : 0;
+  }
+  return jwt.sign({ id, tokenVersion: version }, JWT_SECRET, {
+    expiresIn: '7d',
   });
 };
 
@@ -459,9 +469,27 @@ const sendEmailOtp = async (req, res) => {
       role
     });
 
+    // Dispatch transactional email via Resend
+    let emailDispatched = false;
+    let emailWarning = null;
+    try {
+      const emailRes = await emailService.sendOtpEmail(normalizedEmail, otpCode, role);
+      if (emailRes.success) {
+        emailDispatched = true;
+      } else {
+        emailWarning = emailRes.reason || emailRes.error;
+      }
+    } catch (sendErr) {
+      console.warn('[EMAIL OTP] Resend dispatch error:', sendErr.message);
+      emailWarning = sendErr.message;
+    }
+
     res.json({
-      message: `Email verification code sent to ${normalizedEmail} (${role} Portal). Valid for 5 minutes.`,
+      message: emailDispatched
+        ? `Email verification code sent to ${normalizedEmail} (${role} Portal). Valid for 5 minutes.`
+        : `Verification code generated for ${normalizedEmail}. ${emailWarning ? `(Notice: ${emailWarning})` : ''}`,
       emailStatus: validation.status || 'valid',
+      emailDispatched,
       ...(process.env.NODE_ENV !== 'production' && { debugCode: otpCode })
     });
   } catch (error) {
@@ -519,12 +547,28 @@ const verifyEmailOtp = async (req, res) => {
 };
 
 /**
- * @desc    Logout user
+ * @desc    Logout user (revokes active token version if authenticated)
  * @route   POST /api/v1/auth/logout
- * @access  Public
+ * @access  Public / Optional Auth
  */
 const logout = async (req, res) => {
-  res.json({ message: 'Successfully logged out' });
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded && decoded.id) {
+          await User.findByIdAndUpdate(decoded.id, { $inc: { tokenVersion: 1 } });
+        }
+      } catch (err) {
+        // Token already expired or invalid, nothing to invalidate
+      }
+    }
+  } catch (e) {
+    // Graceful ignore
+  }
+  res.json({ message: 'Successfully logged out', success: true });
 };
 
 /**
@@ -598,9 +642,21 @@ const forgotPassword = async (req, res) => {
       }
     }
 
+    // If user has an email, dispatch password reset email via Resend
+    let emailDispatched = false;
+    if (rawEmail) {
+      try {
+        const emailRes = await emailService.sendPasswordResetEmail(rawEmail, otpCode, role);
+        if (emailRes.success) emailDispatched = true;
+      } catch (emailErr) {
+        console.warn('[FORGOT PASSWORD] Resend dispatch warning:', emailErr.message);
+      }
+    }
+
     res.json({
-      message: `Password reset OTP sent to ${smsDispatched ? phoneToSendSms : identifier} (${role} Portal). Valid for 5 minutes.`,
+      message: `Password reset OTP sent to ${smsDispatched ? phoneToSendSms : (emailDispatched ? rawEmail : identifier)} (${role} Portal). Valid for 5 minutes.`,
       smsDispatched,
+      emailDispatched,
       identifier,
       ...(process.env.NODE_ENV !== 'production' && { debugCode: otpCode })
     });
@@ -677,7 +733,18 @@ const resetPassword = async (req, res) => {
 
     const salt = await bcrypt.genSalt(10);
     user.passwordHash = await bcrypt.hash(newPassword, salt);
+    // Invalidate all previously issued JWT tokens on password change
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
     await user.save();
+
+    // Send security confirmation email if user has email
+    if (user.email) {
+      try {
+        await emailService.sendPasswordChangedAlert(user.email, role);
+      } catch (alertErr) {
+        console.warn('[RESET PASSWORD] Confirmation alert warning:', alertErr.message);
+      }
+    }
 
     res.json({
       message: `Password successfully reset for ${role} account! You can now log in.`,

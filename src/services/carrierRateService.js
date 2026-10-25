@@ -1,4 +1,6 @@
 const axios = require('axios');
+const { fetchLiveNimbusRates, getRealisticNimbusQuotes } = require('./nimbuspostService');
+const { cacheManager } = require('./cacheManager');
 
 // Pincode-to-zone mapping (first 3 digits of 6-digit pincode)
 const METRO_PREFIXES = new Set([
@@ -29,17 +31,26 @@ function getZone(pincode) {
 }
 
 function getPincodeInfo(pincode) {
-  const zone = getZone(pincode);
+  const cleanPin = String(pincode || '').trim().slice(0, 6);
+  const cacheKey = cacheManager.generateKey('logistics:pincode', { pin: cleanPin });
+  const cached = cacheManager.memoryStore.get(cacheKey);
+  if (cached) return cached;
+
+  const zone = getZone(cleanPin);
   const labels = {
     metro: 'Metro Zone (Fastest Delivery)',
     tier2: 'Tier-2 City Zone',
     tier3: 'Rest of India / Tier-3 Zone'
   };
-  return {
-    pincode: String(pincode || ''),
+  const result = {
+    pincode: cleanPin,
     zone,
     label: labels[zone] || 'Standard Logistics Zone'
   };
+
+  // Cache for 24 hours (86400 seconds) - static geographic mapping
+  cacheManager.set(cacheKey, result, 86400, ['logistics:geo']);
+  return result;
 }
 
 // In-memory token cache for Shiprocket API
@@ -198,6 +209,9 @@ const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = nu
       isCod,
       eta:        etas[slug] || '3-5 days',
       rating:     CARRIER_RATINGS[slug] || 4.5,
+      aggregator: 'shiprocket',
+      aggregatorName: 'Shiprocket',
+      courierPartner: CARRIER_NAMES[slug] || slug,
       apiSource:  'Shiprocket Rate Engine',
       zone:       zoneKey,
       serviceType: isReverse ? 'Reverse Logistics & Doorstep QC' : (isCod ? 'Cash on Delivery (COD)' : 'Prepaid Express Delivery')
@@ -272,11 +286,21 @@ async function fetchLiveShiprocketRates(fromPincode, toPincode, weightKg = 0.5, 
       const secureCharge = isSecureShipment ? 54.00 : 0;
       const finalRate = parseFloat((baseRate + secureCharge + whatsappCharge).toFixed(2));
 
+      const targetWeight = parseFloat(weightKg || 0.5);
+      const weightSlabText = `${targetWeight} K.G`;
+
       return {
         slug: uniqueSlug,
         baseSlug,
         courierCompanyId: c.courier_company_id,
-        name: c.courier_name,
+        aggregator: 'shiprocket',
+        aggregatorName: 'Shiprocket',
+        courierPartner: `${c.courier_name} ${weightSlabText}`,
+        rawName: c.courier_name,
+        minWeightKg: targetWeight,
+        minWeightGrams: Math.round(targetWeight * 1000),
+        weightSlab: weightSlabText,
+        isCloseToWeight: true,
         price: finalRate,
         exactRate: finalRate,
         freightCharge: parseFloat(freightCharge.toFixed(2)),
@@ -305,16 +329,97 @@ async function fetchLiveShiprocketRates(fromPincode, toPincode, weightKg = 0.5, 
 }
 
 /**
- * Async carrier rate query: queries live Shiprocket API first, falling back to local matrix
+ * Async carrier rate query: queries BOTH Shiprocket & NimbusPost concurrently,
+ * merges their rates side-by-side, and highlights the cheapest recommended option.
+ *
+ * Implements:
+ * 1. Safe Cache Key generation (from/to pincodes, weight slabs, volumetric dimensions, COD, value).
+ * 2. 15-Minute TTL adhering to courier API freshness rules and rate limit quotas.
+ * 3. Single-Flight request coalescing to completely prevent Cache Stampedes.
+ * 4. Fallback to deterministic local pricing engine if upstream aggregators fail.
  */
 const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dimensions = null, isReverse = false, isCod = false, declaredValue = 0, isSecureShipment = true) => {
-  if (!isReverse) {
-    const liveQuotes = await fetchLiveShiprocketRates(fromPincode, toPincode, weightKg, dimensions, isCod, declaredValue, isSecureShipment);
-    if (liveQuotes && liveQuotes.length > 0) {
-      return liveQuotes;
-    }
+  if (isReverse) {
+    return getCarrierRates(fromPincode, toPincode, weightKg, dimensions, isReverse, isCod, declaredValue, isSecureShipment);
   }
-  return getCarrierRates(fromPincode, toPincode, weightKg, dimensions, isReverse, isCod, declaredValue, isSecureShipment);
+
+  const cleanFrom = String(fromPincode || '').trim().slice(0, 6);
+  const cleanTo = String(toPincode || '').trim().slice(0, 6);
+  const normalizedWeight = parseFloat((Math.max(0.1, parseFloat(weightKg) || 0.5)).toFixed(2));
+  const decValSlab = Math.round((parseFloat(declaredValue) || 0) / 500) * 500; // 500 INR slabs
+
+  let dimsKey = 'none';
+  if (dimensions && dimensions.length && dimensions.width && dimensions.height) {
+    dimsKey = `${dimensions.length}x${dimensions.width}x${dimensions.height}`;
+  }
+
+  const rateCacheKey = cacheManager.generateKey('logistics:rates', {
+    from: cleanFrom,
+    to: cleanTo,
+    w: normalizedWeight,
+    dims: dimsKey,
+    cod: isCod ? 1 : 0,
+    val: decValSlab,
+    sec: isSecureShipment ? 1 : 0
+  });
+
+  return cacheManager.getOrSet(rateCacheKey, async () => {
+    // Concurrently fetch rates from both aggregators
+    const [shiprocketSettled, nimbusSettled] = await Promise.allSettled([
+      fetchLiveShiprocketRates(cleanFrom, cleanTo, normalizedWeight, dimensions, isCod, declaredValue, isSecureShipment),
+      fetchLiveNimbusRates(cleanFrom, cleanTo, normalizedWeight, dimensions, isCod, declaredValue, isSecureShipment)
+    ]);
+
+    let shiprocketQuotes = shiprocketSettled.status === 'fulfilled' && shiprocketSettled.value ? shiprocketSettled.value : null;
+    if (!shiprocketQuotes || shiprocketQuotes.length === 0) {
+      shiprocketQuotes = getCarrierRates(cleanFrom, cleanTo, normalizedWeight, dimensions, isReverse, isCod, declaredValue, isSecureShipment);
+    }
+
+    let nimbusQuotes = nimbusSettled.status === 'fulfilled' && nimbusSettled.value ? nimbusSettled.value : null;
+    if (!nimbusQuotes || nimbusQuotes.length === 0) {
+      nimbusQuotes = getRealisticNimbusQuotes(cleanFrom, cleanTo, normalizedWeight, isCod, declaredValue, isSecureShipment);
+    }
+
+    // Merge quotes from both aggregators
+    const combinedQuotes = [...shiprocketQuotes, ...nimbusQuotes];
+
+    // Sort cheapest first
+    combinedQuotes.sort((a, b) => a.price - b.price);
+
+    // Clear previous lowest flags and set the recommended cheapest carrier
+    combinedQuotes.forEach(q => {
+      q.isLowest = false;
+      q.isRecommended = false;
+    });
+
+    if (combinedQuotes.length > 0) {
+      combinedQuotes[0].isLowest = true;
+      combinedQuotes[0].isRecommended = true;
+    }
+
+    return combinedQuotes;
+  }, 900, { tags: ['logistics:rates'] }); // 15-minute TTL complying with courier quote validity
+};
+
+/**
+ * Returns supported courier partners metadata (slowly changing public data).
+ * Cached for 24 hours.
+ */
+const getSupportedCouriersList = async () => {
+  const cacheKey = cacheManager.generateKey('logistics:couriers', { v: 1 });
+  return cacheManager.getOrSet(cacheKey, async () => {
+    return Object.entries(CARRIER_NAMES).map(([slug, name]) => ({
+      slug,
+      name,
+      rating: CARRIER_RATINGS[slug] || 4.5,
+      aggregatorsSupported: ['Shiprocket', 'NimbusPost'],
+      surfaceSupported: true,
+      airSupported: ['bluedart', 'delhivery', 'shadowfax'].includes(slug),
+      codSupported: true,
+      reversePickupSupported: ['delhivery', 'shadowfax', 'xpressbees', 'ekart'].includes(slug),
+      insuranceSupported: true
+    }));
+  }, 86400, ['logistics:couriers']);
 };
 
 /**
@@ -330,17 +435,33 @@ const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dime
  * @returns {object} { cheapest, comparison, allQuotes, isReverse, apiProvider, totalCouriersCompared, savingsAmount }
  */
 const getCheapestPickupCarrier = (fromPincode, toPincode, weightKg = 0.5, dimensions = null, isReverse = false) => {
-  const allQuotes = getCarrierRates(fromPincode, toPincode, weightKg, dimensions, isReverse);
+  const srQuotes = getCarrierRates(fromPincode, toPincode, weightKg, dimensions, isReverse);
+  const nimbusQuotes = getRealisticNimbusQuotes(fromPincode, toPincode, weightKg, false, 0, !isReverse);
+  
+  // Combine all quotes from both Shiprocket and NimbusPost
+  const allQuotes = [...srQuotes, ...nimbusQuotes];
+  allQuotes.sort((a, b) => a.price - b.price);
+
+  allQuotes.forEach(q => {
+    q.isLowest = false;
+    q.isRecommended = false;
+  });
+
+  if (allQuotes.length > 0) {
+    allQuotes[0].isLowest = true;
+    allQuotes[0].isRecommended = true;
+  }
+
   const cheapest = allQuotes[0];
   const highest = allQuotes[allQuotes.length - 1];
-  const savingsAmount = highest.price - cheapest.price;
+  const savingsAmount = parseFloat((highest.price - cheapest.price).toFixed(2));
 
   return {
     cheapest,
-    comparison: allQuotes, // All popular courier partners compared via Shiprocket API
+    comparison: allQuotes, // All popular courier partners compared across Shiprocket & NimbusPost
     allQuotes,
     isReverse,
-    apiProvider: 'Shiprocket Multi-Carrier Logistics Engine',
+    apiProvider: 'SecureKaro Hybrid Logistics Engine (Shiprocket + NimbusPost)',
     totalCouriersCompared: allQuotes.length,
     savingsAmount
   };
@@ -352,5 +473,7 @@ module.exports = {
   fetchLiveShiprocketRates,
   getPincodeInfo,
   getZone,
-  getCheapestPickupCarrier
+  getCheapestPickupCarrier,
+  getSupportedCouriersList
 };
+

@@ -37,16 +37,27 @@ function loadMod(type, name) {
 
 const authController = loadModule('authController');
 const { protect } = loadMod('middleware', 'auth');
+const { validate } = loadMod('middleware', 'validate');
+const {
+  signupSchema,
+  loginSchema,
+  sendOtpSchema,
+  verifyOtpSchema,
+  sendEmailOtpSchema,
+  verifyEmailOtpSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema
+} = loadMod('validators', 'authValidator');
 
 const router = express.Router();
-router.post('/signup', authController.signup);
-router.post('/login', authController.login);
-router.post('/send-otp', authController.sendOtp);
-router.post('/verify-otp', authController.verifyOtp);
-router.post('/send-email-otp', authController.sendEmailOtp);
-router.post('/verify-email-otp', authController.verifyEmailOtp);
-router.post('/forgot-password', authController.forgotPassword);
-router.post('/reset-password', authController.resetPassword);
+router.post('/signup', validate(signupSchema), authController.signup);
+router.post('/login', validate(loginSchema), authController.login);
+router.post('/send-otp', validate(sendOtpSchema), authController.sendOtp);
+router.post('/verify-otp', validate(verifyOtpSchema), authController.verifyOtp);
+router.post('/send-email-otp', validate(sendEmailOtpSchema), authController.sendEmailOtp);
+router.post('/verify-email-otp', validate(verifyEmailOtpSchema), authController.verifyEmailOtp);
+router.post('/forgot-password', validate(forgotPasswordSchema), authController.forgotPassword);
+router.post('/reset-password', validate(resetPasswordSchema), authController.resetPassword);
 router.post('/google', authController.googleAuth);
 router.post('/switch-role', protect, authController.switchRole);
 router.post('/logout', authController.logout);

@@ -1585,13 +1585,33 @@ const handleBulkUpload = async (req, res) => {
     }
 
     const userId = req.user._id;
-    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' });
+    let workbook;
+    try {
+      workbook = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true, dense: true });
+    } catch (parseErr) {
+      return res.status(400).json({ error: 'Corrupted or unreadable Excel file. Please upload a valid .xlsx or .csv.' });
+    }
 
-    if (!rows || rows.length === 0) {
+    const sheetName = workbook.SheetNames && workbook.SheetNames[0];
+    if (!sheetName || !workbook.Sheets[sheetName]) {
+      return res.status(400).json({ error: 'Excel file contains no readable worksheets.' });
+    }
+
+    const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' });
+
+    if (!rawRows || rawRows.length === 0) {
       return res.status(400).json({ error: 'Excel file is empty or has no data rows.' });
     }
+
+    // Strip any prototype pollution keys from parsed rows
+    const rows = rawRows.map(row => {
+      if (row && typeof row === 'object') {
+        delete row['__proto__'];
+        delete row['constructor'];
+        delete row['prototype'];
+      }
+      return row;
+    });
     if (rows.length > 500) {
       return res.status(400).json({ error: 'Maximum 500 shipments per batch. Please split into multiple files.' });
     }

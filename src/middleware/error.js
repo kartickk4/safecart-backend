@@ -1,15 +1,18 @@
+const logger = require('../utils/logger');
+
 const errorHandler = (err, req, res, next) => {
-  // SECURITY: Never log full error stacks in production — they reveal internal paths and logic
   const isProd = process.env.NODE_ENV === 'production';
-
-  if (!isProd) {
-    console.error(`[ERROR] ${req.method} ${req.path}:`, err.stack);
-  } else {
-    // In production, log minimal info (no stack trace)
-    console.error(`[ERROR] ${req.method} ${req.path}: ${err.message}`);
-  }
-
   const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
+
+  // Structured error logging with request ID correlation
+  logger.error({
+    requestId: req.id,
+    method: req.method,
+    path: req.path,
+    statusCode,
+    error: err.message,
+    stack: isProd ? undefined : err.stack
+  }, `Request error on ${req.method} ${req.path}`);
 
   let errorMessage = isProd
     ? (err.isOperational ? err.message : 'An internal error occurred.')
@@ -22,6 +25,7 @@ const errorHandler = (err, req, res, next) => {
 
   res.status(statusCode).json({
     error: errorMessage,
+    requestId: req.id,
     // SECURITY: Never expose stack trace in production
     ...(isProd ? {} : { stack: err.stack })
   });

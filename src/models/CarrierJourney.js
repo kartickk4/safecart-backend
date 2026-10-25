@@ -36,4 +36,10 @@ CarrierJourneySchema.pre('save', function (next) {
   next();
 });
 
+// SPARSE — AWB code lookup for tracking poll and webhook updates.
+// Covers: CarrierJourney.findOne({ awbCode })
+// Covers: CarrierJourney.findOne({ $or: [{ awbCode }, { shipmentId }] })
+// Sparse: skips documents where awbCode is empty/null.
+CarrierJourneySchema.index({ awbCode: 1 }, { sparse: true });
+
 module.exports = mongoose.model('CarrierJourney', CarrierJourneySchema);

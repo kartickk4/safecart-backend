@@ -23,6 +23,11 @@ const ShipmentSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  receiverId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
   description: { 
     type: String, 
     required: true 
@@ -58,6 +63,25 @@ const ShipmentSchema = new mongoose.Schema({
   cashfreeLinkId: {
     type: String,
     default: ""
+  },
+
+  // YouPI-PG UPI Gateway Integration Fields
+  paymentMode: {
+    type: String,
+    enum: ['cod', 'prepaid_youpi', 'prepaid_cashfree', 'escrow', ''],
+    default: ''
+  },
+  youpiPaymentId: {
+    type: String,
+    default: null
+  },
+  youpiPaymentConfirmed: {
+    type: Boolean,
+    default: false
+  },
+  youpiConfirmedAt: {
+    type: Date,
+    default: null
   },
   payoutTransferMode: {
     type: String,
@@ -651,6 +675,14 @@ const ShipmentSchema = new mongoose.Schema({
     type: Number,
     default: null
   },
+  nimbusOrderId: {
+    type: String,
+    default: null
+  },
+  nimbusShipmentId: {
+    type: String,
+    default: null
+  },
   bulkJobId: {
     type: String,
     default: ''
@@ -672,16 +704,62 @@ ShipmentSchema.pre('save', function (next) {
   next();
 });
 
-// Performance & Query Indexes
-ShipmentSchema.index({ senderId: 1 });
-ShipmentSchema.index({ receiverPhone: 1 });
+// ── Performance & Query Indexes ─────────────────────────────────────────────
+//
+// COMPOSITE — Seller shipment list (most frequent API call).
+// Covers: Shipment.find({ senderId: { $in: ids } }).sort({ createdAt: -1 })
+// Eliminates the SORT stage; also satisfies queries on senderId alone via prefix.
+ShipmentSchema.index({ senderId: 1, createdAt: -1 });
+
+// COMPOSITE — Seller-scoped confirmation window check.
+// Covers: Shipment.find({ senderId, confirmationWindowClosed })
 ShipmentSchema.index({ senderId: 1, confirmationWindowClosed: 1 });
+
+// COMPOSITE — Seller-scoped return orders list.
+// Covers: Shipment.find({ senderId: { $in: ids }, returnStatus: { $in: [...] } })
 ShipmentSchema.index({ senderId: 1, returnStatus: 1 });
-ShipmentSchema.index({ returnWindowClosed: 1, returnWindowExpiresAt: 1 });
-ShipmentSchema.index({ returnAllowed: 1 });
-ShipmentSchema.index({ returnAwbCode: 1 });
-ShipmentSchema.index({ returnCarrierSlug: 1 });
-ShipmentSchema.index({ status: 1 });
+
+// SINGLE — Receiver phone lookup (receiver shipment list, $or queries).
+ShipmentSchema.index({ receiverPhone: 1 });
+
+// SINGLE — Status + date sort for admin dashboard and cron status filters.
+// Covers: Shipment.find({ status }).sort({ createdAt: -1 })
+// Also satisfies single-field { status: 1 } queries via prefix.
+ShipmentSchema.index({ status: 1, createdAt: -1 });
+
+// SINGLE — Bare createdAt sort index (admin full list, no status filter).
 ShipmentSchema.index({ createdAt: -1 });
+
+// SPARSE — AWB code lookup for tracking webhooks and public tracking.
+// Covers: Shipment.findOne({ awbCode }), $or queries mixing awbCode+shipmentId.
+// Sparse: many shipments start with empty awbCode; sparse skips them.
+ShipmentSchema.index({ awbCode: 1 }, { sparse: true });
+
+// SPARSE — InboxQrToken for QR-scan and OTP delivery confirmation.
+// Covers: Shipment.findOne({ inboxQrToken: token })
+ShipmentSchema.index({ inboxQrToken: 1 }, { sparse: true });
+
+// SPARSE — YouPI payment ID for payment gateway webhooks.
+// Covers: Shipment.findOne({ youpiPaymentId })
+ShipmentSchema.index({ youpiPaymentId: 1 }, { sparse: true });
+
+// COMPOSITE — Background tracking poll (runs every 30 minutes).
+// Covers: Shipment.find({ escrowStage: 4, awbCode: { $ne: "" } })
+// Eliminates full collection scan every 30 minutes.
+ShipmentSchema.index({ escrowStage: 1, awbCode: 1 });
+
+// COMPOSITE — Return window auto-close cron (runs every 15 minutes).
+// Covers: Shipment.find({ deliveryConfirmed, returnWindowClosed, returnWindowExpiresAt: { $lte } })
+// Supersedes the old 2-field { returnWindowClosed, returnWindowExpiresAt } index.
+ShipmentSchema.index({ deliveryConfirmed: 1, returnWindowClosed: 1, returnWindowExpiresAt: 1 });
+
+// SINGLE — Return AWB for reverse logistics lookups.
+ShipmentSchema.index({ returnAwbCode: 1 });
+
+// ── Redundant Indexes (commented out — kept for reference / rollback) ─────────
+// { senderId: 1 }          — superseded by { senderId: 1, createdAt: -1 } (prefix)
+// { returnWindowClosed: 1, returnWindowExpiresAt: 1 } — superseded by 3-field composite above
+// { returnAllowed: 1 }     — boolean, low cardinality, not a useful standalone index
+// { returnCarrierSlug: 1 } — very low query frequency, not worth the write overhead
 
 module.exports = mongoose.model('Shipment', ShipmentSchema);
