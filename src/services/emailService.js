@@ -3,6 +3,7 @@ const { Resend } = require('resend');
 const apiKey = process.env.RESEND_API_KEY;
 const resend = apiKey ? new Resend(apiKey) : null;
 const getFromEmail = () => (process.env.RESEND_FROM_EMAIL || 'SecureKaro <support@securekaro.in>').replace(/^"|"$/g, '');
+const getReplyToEmail = () => (process.env.RESEND_REPLY_TO || 'logistic@securekaro.in').replace(/^"|"$/g, '');
 const getLogoUrl = () => process.env.APP_LOGO_URL || 'https://securekaro.in/logo.jpg';
 
 /**
@@ -44,7 +45,7 @@ const getBrandedHtml = (title, bodyContent) => {
       </div>
       <div class="footer">
         <p>© ${new Date().getFullYear()} SecureKaro Technologies. All rights reserved.</p>
-        <p>If you didn't request this email, please secure your account immediately or contact support@securekaro.in</p>
+        <p>If you didn't request this email, please secure your account immediately or contact logistic@securekaro.in</p>
       </div>
     </div>
   </body>
@@ -79,6 +80,7 @@ const sendOtpEmail = async (to, otp, role = 'Receiver') => {
 
     const response = await resend.emails.send({
       from: getFromEmail(),
+      reply_to: getReplyToEmail(),
       to,
       subject,
       html: getBrandedHtml(subject, body),
@@ -119,6 +121,7 @@ const sendPasswordResetEmail = async (to, otp, role = 'User') => {
 
     const response = await resend.emails.send({
       from: getFromEmail(),
+      reply_to: getReplyToEmail(),
       to,
       subject,
       html: getBrandedHtml(subject, body),
@@ -152,6 +155,7 @@ const sendEscrowAlertEmail = async (to, { title, message, shipmentId, amount }) 
 
     const response = await resend.emails.send({
       from: getFromEmail(),
+      reply_to: getReplyToEmail(),
       to,
       subject,
       html: getBrandedHtml(subject, body),
@@ -179,13 +183,14 @@ const sendPasswordChangedAlert = async (to, role = 'User') => {
       </p>
       <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:8px; padding:14px; margin:20px 0;">
         <p style="margin:0; font-size:13px; color:#991b1b; font-weight:500;">
-          ⚠️ If you did NOT make this change, your account may be compromised. Please contact support@securekaro.in immediately.
+          ⚠️ If you did NOT make this change, your account may be compromised. Please contact logistic@securekaro.in immediately.
         </p>
       </div>
     `;
 
     const response = await resend.emails.send({
       from: getFromEmail(),
+      reply_to: getReplyToEmail(),
       to,
       subject,
       html: getBrandedHtml(subject, body),
