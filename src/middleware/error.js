@@ -18,6 +18,14 @@ const errorHandler = (err, req, res, next) => {
     ? (err.isOperational ? err.message : 'An internal error occurred.')
     : (err.message || 'Internal Server Error');
 
+  // Detect CORS security policy rejections
+  if (err.message && err.message.includes('CORS')) {
+    return res.status(403).json({
+      error: 'Access blocked by CORS policy',
+      requestId: req.id
+    });
+  }
+
   // Detect Mongoose buffering timeout / connection drop
   if (err.message && err.message.includes('buffering timed out')) {
     errorMessage = 'Database is currently reconnecting. Please retry in a few seconds.';

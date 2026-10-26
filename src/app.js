@@ -113,16 +113,25 @@ const allowedOrigins = process.env.FRONTEND_URL
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow server-to-server (no origin) only in dev
+    // Allow requests with no origin (such as mobile native apps, curl, server-to-server)
     if (!origin) {
-      if (!isProd) return callback(null, true);
-      return callback(new Error('Origin required in production'));
+      return callback(null, true);
     }
 
     // Always block wildcard (*) in origins list
     if (allowedOrigins.includes('*')) {
       console.error('[SECURITY] Wildcard (*) detected in FRONTEND_URL — blocking all requests.');
       return callback(new Error('Invalid CORS configuration'));
+    }
+
+    // Allow Capacitor Mobile App origins (Android & iOS)
+    if (
+      origin === 'https://localhost' || 
+      origin === 'http://localhost' || 
+      origin.startsWith('capacitor://') ||
+      origin.startsWith('ionic://')
+    ) {
+      return callback(null, true);
     }
 
     if (
