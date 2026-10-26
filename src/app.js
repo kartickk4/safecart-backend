@@ -215,7 +215,7 @@ app.use(sanitizeInput);
 // Basic Welcome & Healthcheck API
 app.get('/', (req, res) => {
   res.json({
-    message: 'Welcome to the SecureKaro Secure Escrow Backend API!',
+    message: 'Welcome to the SecureKaro Courier Logistics & Shipping API!',
     status: 'online',
     health: '/health'
   });

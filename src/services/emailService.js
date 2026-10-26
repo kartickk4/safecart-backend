@@ -38,13 +38,13 @@ const getBrandedHtml = (title, bodyContent) => {
           <img src="${logoUrl}" alt="SecureKaro" height="42" style="display:block; margin:0 auto; max-height:46px; width:auto; border-radius:8px; border:0; outline:none;" onerror="this.style.display='none'" />
         </a>
         <div class="brand-title">🛡️ SecureKaro</div>
-        <div class="tagline">Sovereign Escrow & Logistics Protection</div>
+        <div class="tagline">Courier Booking & Delivery Verification</div>
       </div>
       <div class="content">
         ${bodyContent}
       </div>
       <div class="footer">
-        <p>© ${new Date().getFullYear()} SecureKaro Technologies. All rights reserved.</p>
+        <p>© ${new Date().getFullYear()} M/s SecureKaro Logistics. All rights reserved.</p>
         <p>If you didn't request this email, please secure your account immediately or contact logistic@securekaro.in</p>
       </div>
     </div>
@@ -148,8 +148,8 @@ const sendEscrowAlertEmail = async (to, { title, message, shipmentId, amount }) 
       <p style="color:#475569; font-size:15px; line-height:1.6;">${message}</p>
       <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:16px; margin:20px 0;">
         ${shipmentId ? `<p style="margin:4px 0;"><strong>Shipment ID:</strong> ${shipmentId}</p>` : ''}
-        ${amount ? `<p style="margin:4px 0;"><strong>Escrow Amount:</strong> ₹${Number(amount).toLocaleString('en-IN')}</p>` : ''}
-        <p style="margin:4px 0;"><strong>Protection Status:</strong> <span style="color:#16a34a; font-weight:600;">Secured in Escrow</span></p>
+        ${amount ? `<p style="margin:4px 0;"><strong>Protection Amount:</strong> ₹${Number(amount).toLocaleString('en-IN')}</p>` : ''}
+        <p style="margin:4px 0;"><strong>Protection Status:</strong> <span style="color:#16a34a; font-weight:600;">Verified & Protected</span></p>
       </div>
     `;
 
