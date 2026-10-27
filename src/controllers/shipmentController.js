@@ -894,6 +894,22 @@ const publicPayShipment = async (req, res) => {
       });
     }
 
+    // In production, verify with Cashfree that the payment was genuinely completed
+    if (process.env.NODE_ENV === 'production' && shipment.cashfreeLinkId) {
+      try {
+        const linkDetails = await cashfreeService.getPaymentLinkDetails(shipment.cashfreeLinkId);
+        const linkStatus = linkDetails?.data?.link_status || linkDetails?.status;
+        if (linkStatus !== 'PAID' && linkStatus !== 'COMPLETED') {
+          return res.status(400).json({
+            error: 'Payment has not been confirmed by the payment gateway yet. Please complete checkout.',
+            paymentLink: shipment.paymentLink
+          });
+        }
+      } catch (cfErr) {
+        console.warn('[Public Pay] Cashfree link verification error:', cfErr.message);
+      }
+    }
+
     const updatedShipment = await executeOrderPaymentAndCourierBooking(shipment, {
       transactionRef: req.body.transactionRef || `PAY_${Date.now()}`,
       gateway: req.body.gateway || 'integrated_gateway',
@@ -920,7 +936,19 @@ const publicPayShipment = async (req, res) => {
 const paymentWebhookHandler = async (req, res) => {
   try {
     const event = req.body;
-    console.log('[Shipment Payment Webhook] Received payment event:', event);
+    console.log('[Shipment Payment Webhook] Received payment event:', event?.type || 'event');
+
+    // SECURITY: Verify Cashfree webhook HMAC signature if header is present
+    const signature = req.headers['x-webhook-signature'];
+    const timestamp = req.headers['x-webhook-timestamp'];
+    if (signature && process.env.CASHFREE_SECRET_KEY) {
+      const rawPayload = req.rawBody ? req.rawBody.toString('utf8') : JSON.stringify(req.body);
+      const isValid = cashfreeService.verifyCashfreeWebhookSignature(rawPayload, signature, timestamp);
+      if (!isValid && process.env.NODE_ENV === 'production') {
+        console.warn('[Shipment Webhook] Invalid HMAC signature received — rejecting webhook.');
+        return res.status(401).json({ error: 'Invalid webhook signature' });
+      }
+    }
 
     const targetRef = event?.data?.order?.order_id || 
                       event?.data?.payment_link_id || 
@@ -1544,11 +1572,23 @@ const closeReturnWindowHandler = async (req, res) => {
  */
 const simulateDelivered = async (req, res) => {
   try {
+    // SECURITY: Delivery simulation must NEVER be exposed publicly in production
+    if (process.env.NODE_ENV === 'production' && !req.user?.isAdmin) {
+      return res.status(403).json({ error: 'Delivery simulation endpoints are disabled in production.' });
+    }
+
     const id = req.params.id.toUpperCase();
     const shipment = await Shipment.findOne({ shipmentId: id });
 
     if (!shipment) {
       return res.status(404).json({ error: 'Shipment not found' });
+    }
+
+    // IDOR check: caller must be admin, sender, or receiver
+    const isReceiver = req.user.phone && shipment.receiverPhone && shipment.receiverPhone.replace(/\D/g, '').endsWith(req.user.phone.replace(/\D/g, '').slice(-10));
+    const isSender = shipment.senderId && shipment.senderId.toString() === req.user._id.toString();
+    if (!req.user.isAdmin && !isReceiver && !isSender) {
+      return res.status(403).json({ error: 'Not authorized to simulate delivery on this shipment.' });
     }
 
     shipment.status = 'Delivered';

@@ -134,10 +134,14 @@ const corsOptions = {
       return callback(null, true);
     }
 
+    // Strict domain matching for production domains
+    const isExactSecureKaro = /^https:\/\/([a-zA-Z0-9-]+\.)?securekaro\.in$/.test(origin);
+    const isConfiguredFrontend = process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL;
+
     if (
       allowedOrigins.includes(origin) || 
-      origin.endsWith('.onrender.com') ||
-      origin.includes('securekaro.in')
+      isExactSecureKaro ||
+      isConfiguredFrontend
     ) {
       return callback(null, true);
     }

@@ -328,6 +328,37 @@ const createPaymentSessionForShipment = async (req, res) => {
       });
     }
 
+    // ── Payment Gateway Selector: Prioritize standard gateway (Cashfree) ──
+    if (process.env.CASHFREE_APP_ID && process.env.CASHFREE_SECRET_KEY) {
+      try {
+        const cashfreeService = require('../services/cashfreeService');
+        const cfLink = await cashfreeService.createPaymentLink({
+          shipmentId: shipment.shipmentId,
+          amount: shipment.amount,
+          receiverName: shipment.receiverName,
+          receiverPhone: shipment.receiverPhone,
+          description: shipment.description
+        });
+
+        shipment.paymentLink = cfLink.linkUrl;
+        shipment.cashfreeLinkId = cfLink.linkId;
+        shipment.paymentMode = 'prepaid_cashfree';
+        await shipment.save();
+
+        return res.status(200).json({
+          success: true,
+          gateway: 'cashfree',
+          shipmentId: shipment.shipmentId,
+          paymentId: cfLink.linkId,
+          checkoutUrl: cfLink.linkUrl,
+          amount: shipment.amount,
+          status: cfLink.linkStatus || 'ACTIVE'
+        });
+      } catch (cfErr) {
+        console.warn('[Payment Gateway] Cashfree session creation note, checking fallback:', cfErr.message);
+      }
+    }
+
     const { createPaymentSession } = require('../services/youpiPaymentService');
     const returnUrl = req.body.returnUrl || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/pay/${shipment.shipmentId}?completed=true`;
 

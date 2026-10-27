@@ -83,28 +83,14 @@ const updateProfile = async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Update basic fields if provided
+    // Update basic fields if provided (SECURITY: Admin privilege cannot be self-assigned)
     if (fullName) user.fullName = fullName.trim();
     if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
-    if (role && ['User', 'Supplier', 'Receiver', 'Admin'].includes(role)) {
-      user.role = role === 'User' ? 'Receiver' : role;
+    if (role && ['Supplier', 'Receiver'].includes(role)) {
+      user.role = role;
     }
     if (req.body.platformType !== undefined) {
       user.platformType = req.body.platformType;
-    }
-    if (req.body.isPro !== undefined) {
-      const proVal = Boolean(req.body.isPro);
-      user.isPro = proVal;
-      user.proPlan = proVal ? 'Pro' : 'Standard';
-      if (proVal && !user.proUpgradedAt) {
-        user.proUpgradedAt = new Date();
-      }
-      if (user.email) {
-        await User.updateMany(
-          { email: user.email.toLowerCase().trim() },
-          { $set: { isPro: proVal, proPlan: user.proPlan, proUpgradedAt: user.proUpgradedAt } }
-        );
-      }
     }
 
     if (phone) {
@@ -137,17 +123,10 @@ const updateProfile = async (req, res) => {
         }
       }
 
-      user.phone = normalizedPhone;
-      if (req.body.isPhoneVerified !== undefined) {
-        user.isPhoneVerified = Boolean(req.body.isPhoneVerified);
-      }
-
-      // Sync verified phone to sibling account with same email if exists (e.g. Supplier/Receiver pair)
-      if (user.email) {
-        await User.updateMany(
-          { email: user.email.toLowerCase().trim(), _id: { $ne: user._id } },
-          { $set: { phone: normalizedPhone, ...(req.body.isPhoneVerified !== undefined ? { isPhoneVerified: Boolean(req.body.isPhoneVerified) } : {}) } }
-        );
+      // If phone number is changing, unverify it until OTP is completed
+      if (user.phone !== normalizedPhone) {
+        user.phone = normalizedPhone;
+        user.isPhoneVerified = false;
       }
     }
 

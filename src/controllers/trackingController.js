@@ -301,18 +301,18 @@ const getPublicTracking = async (req, res) => {
     };
 
     const stageMap = {
-      1: { label: 'Order Created', desc: 'Order initialized, awaiting escrow deposit.' },
-      2: { label: 'Secured in Escrow Vault', desc: 'Buyer funds safely locked in SecureKaro escrow vault.' },
+      1: { label: 'Order Created', desc: 'Order initialized, awaiting payment confirmation.' },
+      2: { label: 'Payment Verified', desc: 'Order payment verified and booked.' },
       3: { label: 'Packed & Ready for Pickup', desc: 'Seller has packaged parcel and scheduled courier pickup.' },
       4: { label: 'In Transit', desc: 'Courier is transporting parcel to destination.' },
-      5: { label: 'Delivered', desc: 'Parcel reached destination. Awaiting buyer inspection.' },
-      6: { label: 'Inspection / Confirmed', desc: 'Delivery confirmed, funds settling to seller.' },
-      7: { label: 'Escrow Completed', desc: 'Transaction completed safely.' }
+      5: { label: 'Delivered', desc: 'Parcel reached destination. Awaiting buyer confirmation.' },
+      6: { label: 'Inspection / Confirmed', desc: 'Delivery confirmed, order complete.' },
+      7: { label: 'Order Completed', desc: 'Transaction completed safely.' }
     };
 
     const currentStageInfo = stageMap[shipment.escrowStage] || {
       label: shipment.status || 'Active',
-      desc: 'Shipment managed under SecureKaro Escrow Protection.'
+      desc: 'Shipment managed under SecureKaro Delivery Protection.'
     };
 
     const publicData = {
@@ -350,7 +350,7 @@ const getPublicTracking = async (req, res) => {
           {
             status: shipment.status || 'In Transit',
             location: shipment.city || 'Regional Logistics Hub',
-            detail: `Parcel status is currently ${shipment.status || 'In Transit'}. Funds safely held in Escrow.`,
+            detail: `Parcel status is currently ${shipment.status || 'In Transit'}. Shipment verified and tracked.`,
             time: shipment.updatedAt || shipment.createdAt || new Date()
           }
         ];

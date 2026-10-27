@@ -68,15 +68,14 @@ const createPaymentLink = async ({ shipmentId, amount, receiverName, receiverPho
     console.warn(`[Cashfree Service] API direct call notice (${error.response?.data?.message || error.message}). Returning verified test payment link format with provided API key.`);
   }
 
-  // Fallback / Simulated Test Payment Link using the provided Cashfree Key format
-  const mockLinkUrl = `https://payments-test.cashfree.com/links/spl_${cleanShipmentId.toLowerCase()}?cf_key=${CASHFREE_SECRET_KEY.slice(-12)}`;
+  // Fallback / Simulated Test Payment Link using standard reference format
+  const mockLinkUrl = `https://payments-test.cashfree.com/links/spl_${cleanShipmentId.toLowerCase()}`;
 
   return {
     linkId,
     linkUrl: mockLinkUrl,
     linkStatus: 'ACTIVE',
-    isMock: true,
-    apiKeyUsed: CASHFREE_SECRET_KEY
+    isMock: true
   };
 };
 
@@ -176,9 +175,26 @@ const requestPayout = async ({
   };
 };
 
+/**
+ * Cryptographically verifies inbound Cashfree webhook signatures using timing-safe HMAC-SHA256
+ */
+const verifyCashfreeWebhookSignature = (rawBody, signature, timestamp) => {
+  if (!CASHFREE_SECRET_KEY || !signature) return false;
+  try {
+    const data = timestamp ? `${timestamp}${rawBody}` : rawBody;
+    const expected = crypto.createHmac('sha256', CASHFREE_SECRET_KEY).update(data).digest('base64');
+    const expectedBuf = Buffer.from(expected);
+    const signatureBuf = Buffer.from(signature);
+    if (expectedBuf.length !== signatureBuf.length) return false;
+    return crypto.timingSafeEqual(expectedBuf, signatureBuf);
+  } catch (e) {
+    return false;
+  }
+};
+
 module.exports = {
   createPaymentLink,
   getPaymentLinkDetails,
   requestPayout,
-  CASHFREE_SECRET_KEY
+  verifyCashfreeWebhookSignature
 };

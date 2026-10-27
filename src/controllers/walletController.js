@@ -79,7 +79,10 @@ const verifyPayment = async (req, res) => {
       return res.status(400).json({ error: 'Invalid payment amount.' });
     }
 
-    const effectivePaymentId = paymentId || `PAY_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    if (!paymentId || typeof paymentId !== 'string' || !paymentId.trim()) {
+      return res.status(400).json({ error: 'A valid gateway payment ID is required for verification.' });
+    }
+    const effectivePaymentId = paymentId.trim();
 
     // Fee calculation for transaction ledger & receipt
     const normalizedMode = (paymentMode || '').toLowerCase();
@@ -104,17 +107,20 @@ const verifyPayment = async (req, res) => {
       });
     }
 
-    // 2. Atomic fetch & credit to User wallet
-    const user = await User.findById(req.user._id);
-    if (!user) {
+    // 2. Fetch current balance snapshot
+    const userSnapshot = await User.findById(req.user._id);
+    if (!userSnapshot) {
       return res.status(404).json({ error: 'User not found.' });
     }
+    const balanceBefore = parseFloat((Number(userSnapshot.walletBalance) || 0).toFixed(2));
 
-    const balanceBefore = parseFloat((Number(user.walletBalance) || 0).toFixed(2));
-    const balanceAfter = parseFloat((balanceBefore + numAmount).toFixed(2));
-
-    user.walletBalance = balanceAfter;
-    await user.save();
+    // 3. Atomic credit to User wallet to prevent race condition lost updates
+    const user = await User.findOneAndUpdate(
+      { _id: req.user._id },
+      { $inc: { walletBalance: numAmount } },
+      { new: true }
+    );
+    const balanceAfter = parseFloat((Number(user.walletBalance) || 0).toFixed(2));
 
     // 3. Record in WalletTransaction ledger
     const transaction = await WalletTransaction.create({
@@ -267,17 +273,6 @@ const withdrawCashback = async (req, res) => {
       return res.status(400).json({ error: 'UPI ID is required for withdrawal.' });
     }
 
-    const user = await User.findById(req.user._id);
-    if (!user) return res.status(404).json({ error: 'User not found.' });
-
-    const currentBalance = parseFloat((Number(user.cashbackBalance) || 0).toFixed(2));
-
-    if (requested > currentBalance) {
-      return res.status(400).json({
-        error: `Insufficient cashback balance. Available: ₹${currentBalance.toFixed(2)}`
-      });
-    }
-
     // ── Fee Logic ────────────────────────────────────────────────────────────
     // If withdrawal amount < ₹100 → deduct ₹3 as processing fee
     const BUYER_FEE_THRESHOLD = 100;
@@ -292,12 +287,28 @@ const withdrawCashback = async (req, res) => {
       });
     }
 
-    const balanceBefore = currentBalance;
-    const balanceAfter = parseFloat((balanceBefore - requested).toFixed(2));
+    // Atomic deduction: prevents double-spending race conditions
+    const user = await User.findOneAndUpdate(
+      { _id: req.user._id, cashbackBalance: { $gte: requested } },
+      { 
+        $inc: { 
+          cashbackBalance: -requested,
+          totalWithdrawn: netTransfer
+        } 
+      },
+      { new: true }
+    );
 
-    user.cashbackBalance = balanceAfter;
-    user.totalWithdrawn = parseFloat(((Number(user.totalWithdrawn) || 0) + netTransfer).toFixed(2));
-    await user.save();
+    if (!user) {
+      const currentSnapshot = await User.findById(req.user._id);
+      const available = currentSnapshot ? currentSnapshot.cashbackBalance : 0;
+      return res.status(400).json({
+        error: `Insufficient cashback balance or concurrent transaction in progress. Available: ₹${available.toFixed(2)}`
+      });
+    }
+
+    const balanceAfter = parseFloat((Number(user.cashbackBalance) || 0).toFixed(2));
+    const balanceBefore = parseFloat((balanceAfter + requested).toFixed(2));
 
     // Record the withdrawal in ledger
     const transaction = await WalletTransaction.create({
@@ -365,17 +376,6 @@ const withdrawWallet = async (req, res) => {
       return res.status(400).json({ error: 'UPI ID is required for withdrawal.' });
     }
 
-    const user = await User.findById(req.user._id);
-    if (!user) return res.status(404).json({ error: 'User not found.' });
-
-    const currentBalance = parseFloat((Number(user.walletBalance) || 0).toFixed(2));
-
-    if (requested > currentBalance) {
-      return res.status(400).json({
-        error: `Insufficient wallet balance. Available: ₹${currentBalance.toFixed(2)}`
-      });
-    }
-
     // ── Fee Logic ────────────────────────────────────────────────────────────
     // If withdrawal amount < ₹2,000 → deduct ₹2 as processing fee
     const SELLER_FEE_THRESHOLD = 2000;
@@ -390,12 +390,28 @@ const withdrawWallet = async (req, res) => {
       });
     }
 
-    const balanceBefore = currentBalance;
-    const balanceAfter = parseFloat((balanceBefore - requested).toFixed(2));
+    // Atomic deduction: prevents double-spending race conditions
+    const user = await User.findOneAndUpdate(
+      { _id: req.user._id, walletBalance: { $gte: requested } },
+      { 
+        $inc: { 
+          walletBalance: -requested,
+          totalWithdrawn: netTransfer
+        } 
+      },
+      { new: true }
+    );
 
-    user.walletBalance = balanceAfter;
-    user.totalWithdrawn = parseFloat(((Number(user.totalWithdrawn) || 0) + netTransfer).toFixed(2));
-    await user.save();
+    if (!user) {
+      const currentSnapshot = await User.findById(req.user._id);
+      const available = currentSnapshot ? currentSnapshot.walletBalance : 0;
+      return res.status(400).json({
+        error: `Insufficient wallet balance or concurrent transaction in progress. Available: ₹${available.toFixed(2)}`
+      });
+    }
+
+    const balanceAfter = parseFloat((Number(user.walletBalance) || 0).toFixed(2));
+    const balanceBefore = parseFloat((balanceAfter + requested).toFixed(2));
 
     // Record the withdrawal in ledger
     const transaction = await WalletTransaction.create({
