@@ -11,6 +11,11 @@ const sanitizeInput = (req, res, next) => {
     if (depth > 10) return {};
     if (obj && typeof obj === 'object') {
       for (const key in obj) {
+        // Allow Meta WhatsApp Cloud API webhook parameters (hub.mode, hub.challenge, hub.verify_token)
+        if (key.startsWith('hub.')) {
+          continue;
+        }
+
         // Strip MongoDB operator injection & prototype pollution attempts
         if (
           key.startsWith('$') || 
