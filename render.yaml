@@ -52,6 +52,10 @@ services:
         sync: false
       - key: WA_VERIFY_TOKEN
         sync: false
+      - key: WHATSAPP_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
 
       # Shiprocket Aggregator
       - key: SHIPROCKET_EMAIL
