@@ -27,7 +27,8 @@ const {
   getReferralStats,
   sendPhoneVerificationOtp,
   verifyPhoneOtp,
-  applyReferralCode
+  applyReferralCode,
+  deleteAccount
 } = loadMod('controllers', 'profileController');
 const { protect } = loadMod('middleware', 'auth');
 
@@ -36,6 +37,9 @@ const router = express.Router();
 router.route('/')
   .get(protect, getProfile)
   .put(protect, updateProfile);
+
+router.route('/account')
+  .delete(protect, deleteAccount);
 
 router.route('/upgrade-pro')
   .post(protect, upgradeProPlan);

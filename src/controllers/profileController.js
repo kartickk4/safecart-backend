@@ -546,6 +546,75 @@ const applyReferralCode = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Delete account and permanently erase personal data (DPDP Act, 2023 - Section 12(3) Right to Erasure)
+ * @route   DELETE /api/v1/profile/account
+ * @access  Private
+ */
+const deleteAccount = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) {
+      return res.status(401).json({ error: 'Not authorized' });
+    }
+
+    // 1. Check if user has active shipments in transit
+    let Shipment;
+    try {
+      Shipment = loadMod('models', 'Shipment');
+    } catch (e) {}
+
+    if (Shipment) {
+      const activeShipment = await Shipment.findOne({
+        $or: [{ supplier: user._id }, { receiverId: user._id }],
+        status: { $in: ['FUNDED', 'PICKED_UP', 'IN_TRANSIT', 'OUT_FOR_DELIVERY', 'RETURN_REQUESTED', 'RETURN_APPROVED', 'RETURN_IN_TRANSIT'] }
+      });
+
+      if (activeShipment) {
+        return res.status(400).json({
+          error: 'Cannot erase account while shipments are currently in transit or pending return resolution. Please wait for ongoing deliveries to conclude before closing your account.'
+        });
+      }
+    }
+
+    // 2. Check if user has unwithdrawn wallet balance
+    if (user.walletBalance && user.walletBalance > 1) {
+      return res.status(400).json({
+        error: `You have an active wallet balance of ₹${user.walletBalance}. Please withdraw your funds to your bank account before deleting your account.`
+      });
+    }
+
+    // 3. DPDP Act, 2023 Anonymization / Erasure:
+    // Under Section 12(3), personal data is permanently wiped from active systems
+    const deletedId = user._id.toString();
+    user.fullName = 'Deleted User';
+    user.phone = undefined;
+    user.address = '';
+    user.city = '';
+    user.state = '';
+    user.pincode = '';
+    user.pickupAddress = { street: '', city: '', state: '', pincode: '', landmark: '' };
+    user.bankDetails = { accountHolderName: '', accountNumber: '', ifscCode: '', bankName: '', upiId: '' };
+    user.avatarUrl = '';
+    user.googleId = '';
+    user.isPhoneVerified = false;
+    user.email = `deleted-${deletedId}@deleted.securekaro.in`;
+    user.isDeleted = true;
+    user.deletedAt = new Date();
+    user.deletionReason = req.body?.reason || 'User requested erasure under DPDP Act 2023';
+
+    await user.save();
+
+    return res.json({
+      success: true,
+      message: 'Your account and personal data have been permanently erased in compliance with Section 12(3) of the Digital Personal Data Protection Act, 2023 (DPDP Act).'
+    });
+  } catch (error) {
+    console.error('DPDP Delete Account Error:', error);
+    return res.status(500).json({ error: 'Failed to process account deletion request. Please contact logistic@securekaro.in.' });
+  }
+};
+
 module.exports = {
   getProfile,
   updateProfile,
@@ -553,5 +622,6 @@ module.exports = {
   getReferralStats,
   sendPhoneVerificationOtp,
   verifyPhoneOtp,
-  applyReferralCode
+  applyReferralCode,
+  deleteAccount
 };
