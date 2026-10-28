@@ -194,6 +194,17 @@ const login = async (req, res) => {
 
     const normalizedEmail = email.toLowerCase().trim();
 
+    // SECURITY: Block password login for OTP placeholder emails
+    if (
+      normalizedEmail.endsWith('@securekaro-otp.in') ||
+      normalizedEmail.endsWith('@safecart-otp.in') ||
+      normalizedEmail.includes('-otp.in')
+    ) {
+      return res.status(401).json({
+        error: 'This account was created via Phone OTP. Please log in using Phone Number & OTP code, or use Forgot Password to set a password.'
+      });
+    }
+
     // Check for user email matching specific role
     let user = await User.findOne({ email: normalizedEmail, role });
 
@@ -379,8 +390,9 @@ const verifyOtp = async (req, res) => {
       }
 
       isNew = true;
+      const unguessableSecret = crypto.randomBytes(32).toString('hex');
       const salt = await bcrypt.genSalt(10);
-      const passwordHash = await bcrypt.hash('otp-default-password', salt);
+      const passwordHash = await bcrypt.hash(unguessableSecret, salt);
       const newReferralCode = await generateReferralCode();
       let referrer = null;
       if (req.body.referralCode && req.body.referralCode.trim()) {

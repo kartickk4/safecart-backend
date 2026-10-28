@@ -168,12 +168,8 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 // 3. Global Rate Limiting Middleware
-const isLoadTestRequest = (req) => {
-  // Strictly prevent rate-limit bypasses in production
-  if (process.env.NODE_ENV === 'production') return false;
-  return process.env.NODE_ENV === 'test' || 
-         process.env.LOAD_TEST_MODE === 'true' || 
-         (req.headers['x-load-test-token'] && req.headers['x-load-test-token'] === (process.env.LOAD_TEST_TOKEN || 'securekaro_load_test_sandbox'));
+const isLoadTestRequest = () => {
+  return process.env.NODE_ENV === 'test';
 };
 
 const createRedisLimiterStore = (prefix) => {

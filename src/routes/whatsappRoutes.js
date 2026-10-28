@@ -23,12 +23,44 @@ router.get('/webhook', (req, res) => {
   return res.sendStatus(403);
 });
 
+const crypto = require('crypto');
+
+/**
+ * Validates Meta WhatsApp Webhook X-Hub-Signature-256 HMAC
+ */
+const verifyMetaSignature = (req) => {
+  const signature = req.headers['x-hub-signature-256'];
+  const appSecret = process.env.META_APP_SECRET;
+  if (!appSecret) return true; // Pass if app secret not configured in dev
+  if (!signature || !signature.startsWith('sha256=')) return false;
+
+  try {
+    const signatureHash = signature.slice(7);
+    const expectedHash = crypto
+      .createHmac('sha256', appSecret)
+      .update(req.rawBody || JSON.stringify(req.body))
+      .digest('hex');
+
+    const sigBuf = Buffer.from(signatureHash, 'hex');
+    const expBuf = Buffer.from(expectedHash, 'hex');
+    if (sigBuf.length !== expBuf.length) return false;
+    return crypto.timingSafeEqual(sigBuf, expBuf);
+  } catch (e) {
+    return false;
+  }
+};
+
 /**
  * POST /api/v1/whatsapp/webhook
  * Meta sends incoming buyer messages and delivery status updates here.
  * Always respond 200 immediately to avoid Meta retrying.
  */
 router.post('/webhook', (req, res) => {
+  if (!verifyMetaSignature(req)) {
+    console.warn('[WhatsApp Webhook] Rejected: Invalid X-Hub-Signature-256 HMAC');
+    return res.status(403).json({ error: 'Invalid webhook signature' });
+  }
+
   // Always acknowledge immediately (Meta requires < 20s response)
   res.sendStatus(200);
 

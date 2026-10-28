@@ -46,19 +46,6 @@ const protect = async (req, res, next) => {
 
       req.user = await User.findById(decoded.id).select('-passwordHash');
 
-      // Synthetic mock user bypass is strictly forbidden in production
-      if (process.env.NODE_ENV !== 'production' && !req.user && (process.env.LOAD_TEST_MODE === 'true' || req.headers['x-load-test-token'] === (process.env.LOAD_TEST_TOKEN || 'securekaro_load_test_sandbox'))) {
-        if (decoded.id === '64b000000000000000000001') {
-          req.user = {
-            _id: '64b000000000000000000001',
-            email: 'loadtest_user@securekaro.in',
-            fullName: 'Synthetic Load Test User',
-            role: 'User',
-            isSuspended: false
-          };
-        }
-      }
-
       if (!req.user) {
         return res.status(401).json({ error: 'Not authorized, user not found' });
       }

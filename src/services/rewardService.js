@@ -617,22 +617,36 @@ const withdrawCashback = async (userId, amount, method, payoutDetails, isMobileA
   remainingDeduction -= walletDeduction;
   const cashbackDeduction = Math.min(user.cashbackBalance || 0, remainingDeduction);
 
-  user.walletBalance = parseFloat(Math.max(0, directWalletCredits - walletDeduction).toFixed(2));
-  user.cashbackBalance = parseFloat(Math.max(0, (user.cashbackBalance || 0) - cashbackDeduction).toFixed(2));
-  user.totalWithdrawn = (user.totalWithdrawn || 0) + withdrawAmount;
+  // ATOMIC CONCURRENCY GUARD: Prevents double-spend and race conditions via atomic DB lock
+  const atomicQuery = {
+    _id: userId,
+    walletBalance: { $gte: walletDeduction },
+    cashbackBalance: { $gte: cashbackDeduction }
+  };
+
+  const atomicUpdates = {
+    $inc: {
+      walletBalance: -walletDeduction,
+      cashbackBalance: -cashbackDeduction,
+      totalWithdrawn: withdrawAmount
+    }
+  };
 
   if (method === 'UPI' && payoutDetails?.upiId) {
-    if (!user.bankDetails) user.bankDetails = {};
-    user.bankDetails.upiId = payoutDetails.upiId;
+    atomicUpdates.$set = { 'bankDetails.upiId': payoutDetails.upiId };
   } else if (method === 'BANK') {
-    if (!user.bankDetails) user.bankDetails = {};
-    user.bankDetails.accountHolderName = payoutDetails.accountHolderName;
-    user.bankDetails.accountNumber = payoutDetails.accountNumber;
-    user.bankDetails.ifscCode = payoutDetails.ifscCode;
-    if (payoutDetails.bankName) user.bankDetails.bankName = payoutDetails.bankName;
+    atomicUpdates.$set = {
+      'bankDetails.accountHolderName': payoutDetails.accountHolderName,
+      'bankDetails.accountNumber': payoutDetails.accountNumber,
+      'bankDetails.ifscCode': payoutDetails.ifscCode,
+      ...(payoutDetails.bankName ? { 'bankDetails.bankName': payoutDetails.bankName } : {})
+    };
   }
 
-  await user.save();
+  const updatedUser = await User.findOneAndUpdate(atomicQuery, atomicUpdates, { new: true });
+  if (!updatedUser) {
+    throw new Error('Withdrawal rejected: Insufficient balance or concurrent withdrawal request detected.');
+  }
 
   const withdrawalRecord = new Reward({
     userId: user._id,
@@ -686,7 +700,7 @@ const withdrawCashback = async (userId, amount, method, payoutDetails, isMobileA
     : `Bank Account ending in ...${(payoutDetails.accountNumber || '').slice(-4)}`;
 
   const speedText = method === 'UPI' ? 'near-instant UPI (<5 mins)' : 'fast 24/7 IMPS (30–60 mins)';
-  const remainingTotal = parseFloat(((user.cashbackBalance || 0) + (user.walletBalance || 0)).toFixed(2));
+  const remainingTotal = parseFloat(((updatedUser.cashbackBalance || 0) + (updatedUser.walletBalance || 0)).toFixed(2));
   await createNotification(
     user._id,
     'payments',
@@ -696,9 +710,9 @@ const withdrawCashback = async (userId, amount, method, payoutDetails, isMobileA
   );
 
   return {
-    user,
-    cashbackBalance: user.cashbackBalance,
-    walletBalance: user.walletBalance,
+    user: updatedUser,
+    cashbackBalance: updatedUser.cashbackBalance,
+    walletBalance: updatedUser.walletBalance,
     withdrawal: withdrawalRecord
   };
 };
