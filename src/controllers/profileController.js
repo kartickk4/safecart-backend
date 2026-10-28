@@ -313,7 +313,12 @@ const getReferralStats = async (req, res) => {
     // (i.e. referral credits were actually earned)
     const earnedReferrals = Math.floor((Number(user.totalReferralEarned) || 0) / 30);
 
-    const baseUrl = process.env.FRONTEND_URL?.split(',').find(u => u.includes('5173') || u.includes('3000') || u.includes('3001')) || 'http://localhost:3001';
+    const frontendUrls = (process.env.FRONTEND_URL || '').split(',').map(s => s.trim()).filter(Boolean);
+    const prodUrl = frontendUrls.find(u => u.includes('securekaro.in') || (!u.includes('localhost') && !u.includes('127.0.0.1') && u.startsWith('http')));
+    const devUrl = frontendUrls.find(u => u.includes('5173') || u.includes('3000') || u.includes('3001'));
+    const baseUrl = (process.env.NODE_ENV === 'production' || prodUrl)
+      ? (prodUrl || 'https://securekaro.in')
+      : (devUrl || 'https://securekaro.in');
 
     res.json({
       referralCode: user.referralCode,
