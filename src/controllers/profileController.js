@@ -311,7 +311,7 @@ const getReferralStats = async (req, res) => {
 
     // Count how many referred sellers have completed their first shipment
     // (i.e. referral credits were actually earned)
-    const earnedReferrals = Math.floor((Number(user.totalReferralEarned) || 0) / 40);
+    const earnedReferrals = Math.floor((Number(user.totalReferralEarned) || 0) / 30);
 
     const baseUrl = process.env.FRONTEND_URL?.split(',').find(u => u.includes('5173') || u.includes('3000') || u.includes('3001')) || 'http://localhost:3001';
 
@@ -325,7 +325,7 @@ const getReferralStats = async (req, res) => {
       totalReferred: referralCount,
       earnedReferrals,
       pendingReferrals: Math.max(0, referralCount - earnedReferrals),
-      rewardPerReferral: 40
+      rewardPerReferral: 30
     });
   } catch (error) {
     console.error('Referral Stats Error:', error);

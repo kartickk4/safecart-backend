@@ -214,7 +214,7 @@ const releaseEscrow = async (shipmentId, receiverId) => {
         // This is the referred seller's FIRST ever delivered & released shipment
         const referrer = await User.findById(sender.referredBy);
         if (referrer) {
-          const REFERRAL_REWARD = 40;
+          const REFERRAL_REWARD = 30;
           const balBefore = Number(referrer.walletBalance) || 0;
           const balAfter = parseFloat((balBefore + REFERRAL_REWARD).toFixed(2));
           referrer.walletBalance = balAfter;
@@ -240,13 +240,13 @@ const releaseEscrow = async (shipmentId, receiverId) => {
           await createNotification(
             referrer._id,
             'stars',
-            `🎉 Refer & Earn: +₹40 Cash Added to Wallet!`,
+            `🎉 Refer & Earn: +₹30 Cash Added to Wallet!`,
             `${sender.fullName} (your referral) just completed their first shipment delivery! ` +
-            `₹40 cash has been credited directly to your Wallet. You can withdraw it to UPI/Bank or use it to pay for courier shipments.`,
+            `₹30 cash has been credited directly to your Wallet. You can withdraw it to UPI/Bank or use it to pay for courier shipments.`,
             'reward'
           );
 
-          console.log(`[REFERRAL] ₹40 cash reward added to wallet for ${referrer.fullName} (referred: ${sender.fullName}, shipment: ${shipment.shipmentId})`);
+          console.log(`[REFERRAL] ₹30 cash reward added to wallet for ${referrer.fullName} (referred: ${sender.fullName}, shipment: ${shipment.shipmentId})`);
         }
       }
     } catch (refErr) {

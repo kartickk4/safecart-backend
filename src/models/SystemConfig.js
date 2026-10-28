@@ -84,6 +84,11 @@ const SystemConfigSchema = new mongoose.Schema({
     default: 2,
     min: 0
   },
+  referralRewardAmount: {
+    type: Number,
+    default: 30, // ₹30 per friend referral reward upon first delivery
+    min: 0
+  },
   undeliveredPenaltyReceiver: {
     type: Number,
     default: 40,
