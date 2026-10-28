@@ -42,7 +42,7 @@ const sendPaymentLinkWhatsApp = async ({ phone, receiverName, shipmentId, amount
 
   try {
     const response = await axios.post(
-      `https://graph.facebook.com/v18.0/${WA_PHONE_ID}/messages`,
+      `https://graph.facebook.com/v21.0/${WA_PHONE_ID}/messages`,
       {
         messaging_product: 'whatsapp',
         to: e164Phone,
@@ -100,7 +100,7 @@ const sendBookingConfirmationWhatsApp = async ({ phone, receiverName, shipmentId
 
   try {
     const response = await axios.post(
-      `https://graph.facebook.com/v18.0/${WA_PHONE_ID}/messages`,
+      `https://graph.facebook.com/v21.0/${WA_PHONE_ID}/messages`,
       {
         messaging_product: 'whatsapp',
         to: e164Phone,
@@ -147,7 +147,7 @@ const sendDispatchTrackingWhatsApp = async ({ phone, receiverName, shipmentId, c
 
   try {
     const response = await axios.post(
-      `https://graph.facebook.com/v18.0/${WA_PHONE_ID}/messages`,
+      `https://graph.facebook.com/v21.0/${WA_PHONE_ID}/messages`,
       {
         messaging_product: 'whatsapp',
         to: e164Phone,
@@ -195,7 +195,7 @@ const sendReverseCourierAssignedWhatsApp = async ({ phone, shipmentId, carrierNa
 
   try {
     const response = await axios.post(
-      `https://graph.facebook.com/v18.0/${WA_PHONE_ID}/messages`,
+      `https://graph.facebook.com/v21.0/${WA_PHONE_ID}/messages`,
       {
         messaging_product: 'whatsapp',
         to: e164Phone,
@@ -240,7 +240,7 @@ const sendPhotoReviewChoiceWhatsApp = async ({ phone, shipmentId, receiverName, 
 
   try {
     const response = await axios.post(
-      `https://graph.facebook.com/v18.0/${WA_PHONE_ID}/messages`,
+      `https://graph.facebook.com/v21.0/${WA_PHONE_ID}/messages`,
       {
         messaging_product: 'whatsapp',
         to: e164Phone,
