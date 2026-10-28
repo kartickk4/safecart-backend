@@ -223,15 +223,53 @@ const grantPrepaymentCashback = async (shipmentId, receiverIdentifier, options =
       return null;
     }
 
-    // Fixed ₹5 for paying via Payment Link (Option B)
+    // Check if buyer qualifies for Welcome / First-Order Cashback (₹50 for new buyers)
+    let isFirstOrder = false;
     let cashbackAmount = 5;
+    let rewardCategory = 'PREPAYMENT_REWARD';
+    let rewardDescription = `🎉 ₹${cashbackAmount} Instant Cashback for paying via Payment Link on #${shipment.shipmentId}`;
+    let notifTitle = `🎉 ₹${cashbackAmount} Payment Link Cashback Credited!`;
+    let notifBody = `You earned ₹${cashbackAmount} instant cashback for completing payment online via Payment Link for parcel ${shipment.shipmentId}. Your SecureKaro wallet balance is now ₹${(receiver.cashbackBalance || 0) + cashbackAmount}.`;
+
     try {
       const config = await SystemConfig.findOne({ configKey: 'GLOBAL_CONFIG' });
-      if (config?.paymentLinkCashbackAmount && Number(config.paymentLinkCashbackAmount) > 0) {
+      const welcomeActive = config?.welcomeFirstOrderCashbackEnabled !== false;
+      const welcomeAmt = config?.welcomeFirstOrderCashbackAmount !== undefined ? Number(config.welcomeFirstOrderCashbackAmount) : 50;
+
+      if (welcomeActive && welcomeAmt > 0) {
+        const existingWelcomeReward = await Reward.findOne({
+          userId: receiver._id,
+          category: 'WELCOME_FIRST_ORDER_CASHBACK'
+        });
+
+        if (!existingWelcomeReward) {
+          const previousPaidCount = await Shipment.countDocuments({
+            $or: [
+              { receiverPhone: shipment.receiverPhone },
+              { receiverId: receiver._id }
+            ],
+            receiverPaymentDone: true,
+            shipmentId: { $ne: shipment.shipmentId }
+          });
+
+          if (previousPaidCount === 0) {
+            isFirstOrder = true;
+            cashbackAmount = welcomeAmt;
+            rewardCategory = 'WELCOME_FIRST_ORDER_CASHBACK';
+            rewardDescription = `🎉 Welcome Offer: ₹${welcomeAmt} First-Order Cashback for your first purchase on #${shipment.shipmentId}`;
+            notifTitle = `🎉 Welcome Offer: ₹${welcomeAmt} First-Order Cashback Credited!`;
+            notifBody = `Welcome to SecureKaro! As a new buyer, you earned a special ₹${welcomeAmt} Welcome Cashback on your very first order #${shipment.shipmentId}. Your SecureKaro wallet balance is now ₹${(receiver.cashbackBalance || 0) + welcomeAmt}.`;
+          }
+        }
+      }
+
+      if (!isFirstOrder && config?.paymentLinkCashbackAmount && Number(config.paymentLinkCashbackAmount) > 0) {
         cashbackAmount = Number(config.paymentLinkCashbackAmount);
+        rewardDescription = `🎉 ₹${cashbackAmount} Instant Cashback for paying via Payment Link on #${shipment.shipmentId}`;
+        notifTitle = `🎉 ₹${cashbackAmount} Payment Link Cashback Credited!`;
       }
     } catch (cErr) {
-      // Fallback to default ₹5
+      console.warn('[Reward Service] Config lookup fallback:', cErr.message);
     }
 
     receiver.cashbackBalance = parseFloat(((receiver.cashbackBalance || 0) + cashbackAmount).toFixed(2));
@@ -242,11 +280,11 @@ const grantPrepaymentCashback = async (shipmentId, receiverIdentifier, options =
       userId: receiver._id,
       shipmentId: shipment.shipmentId,
       type: 'CASHBACK_EARNED',
-      category: 'PREPAYMENT_REWARD',
+      category: rewardCategory,
       role: receiver.role || 'Receiver',
       amount: cashbackAmount,
       status: 'CREDITED',
-      description: `🎉 ₹${cashbackAmount} Instant Cashback for paying via Payment Link on #${shipment.shipmentId}`
+      description: rewardDescription
     });
     await reward.save();
 
@@ -254,15 +292,15 @@ const grantPrepaymentCashback = async (shipmentId, receiverIdentifier, options =
       await createNotification(
         receiver._id,
         'card_giftcard',
-        `🎉 ₹${cashbackAmount} Payment Link Cashback Credited!`,
-        `You earned ₹${cashbackAmount} instant cashback for completing payment online via Payment Link for parcel ${shipment.shipmentId}. Your SecureKaro wallet balance is now ₹${receiver.cashbackBalance}.`,
+        notifTitle,
+        notifBody,
         'payment'
       );
     } catch (notifErr) {
       console.warn('[Reward Service] Notification error:', notifErr.message);
     }
 
-    console.log(`[Reward Service] Granted ₹${cashbackAmount} payment link cashback to ${receiver.fullName || receiver.phone}`);
+    console.log(`[Reward Service] Granted ₹${cashbackAmount} (${isFirstOrder ? 'WELCOME_FIRST_ORDER' : 'PAYMENT_LINK'}) cashback to ${receiver.fullName || receiver.phone}`);
 
     const minWithdrawal = 50;
     const neededForWithdrawal = Math.max(0, parseFloat((minWithdrawal - receiver.cashbackBalance).toFixed(2)));
@@ -270,10 +308,13 @@ const grantPrepaymentCashback = async (shipmentId, receiverIdentifier, options =
     return {
       success: true,
       amount: cashbackAmount,
+      isFirstOrder,
       totalCashbackBalance: receiver.cashbackBalance,
       minWithdrawal,
       neededForWithdrawal,
-      message: `🎉 ₹${cashbackAmount} instant cashback added to your SecureKaro Wallet for paying online!`
+      message: isFirstOrder
+        ? `🎉 Welcome to SecureKaro! ₹${cashbackAmount} First-Order Cashback credited directly to your Wallet!`
+        : `🎉 ₹${cashbackAmount} instant cashback added to your SecureKaro Wallet for paying online!`
     };
   } catch (error) {
     console.error('[Reward Service] Error granting prepayment cashback:', error);

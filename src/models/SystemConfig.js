@@ -58,6 +58,15 @@ const SystemConfigSchema = new mongoose.Schema({
     default: 6, // ₹6 maximum seller cashback per completed shipment
     min: 0
   },
+  welcomeFirstOrderCashbackAmount: {
+    type: Number,
+    default: 50, // Flat ₹50 Welcome Cashback for new buyers on 1st order
+    min: 0
+  },
+  welcomeFirstOrderCashbackEnabled: {
+    type: Boolean,
+    default: true
+  },
   paymentLinkCashbackAmount: {
     type: Number,
     default: 5, // Flat ₹5 for paying via Payment Link
