@@ -50,6 +50,7 @@ const agentRoutes = loadModule('routes/agentRoutes.js', 'agentRoutes.js');
 const adminRoutes = loadModule('routes/adminRoutes.js', 'adminRoutes.js');
 const whatsappRoutes = loadModule('routes/whatsappRoutes.js', 'whatsappRoutes.js');
 const youpiRoutes = loadModule('routes/youpiRoutes.js', 'youpiRoutes.js');
+const uploadRoutes = loadModule('routes/uploadRoutes.js', 'uploadRoutes.js');
 const { enforcePrivacyHeaders } = loadModule('middleware/cacheMiddleware.js', 'middleware/cacheMiddleware.js');
 
 const app = express();
@@ -312,6 +313,7 @@ app.use('/api/v1/agent', agentLimiter, agentRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/whatsapp', whatsappRoutes);
 app.use('/api/v1/youpi', youpiRoutes);
+app.use('/api/v1/upload', uploadRoutes);
 
 // Backward-compatibility and direct-route aliases (prevents 404 if /api/v1 is omitted)
 app.use('/auth', authLimiter, authRoutes);
@@ -325,6 +327,7 @@ app.use('/wallet', walletRoutes);
 app.use('/agent', agentRoutes);
 app.use('/admin', adminRoutes);
 app.use('/youpi', youpiRoutes);
+app.use('/upload', uploadRoutes);
 
 app.use(errorHandler);
 

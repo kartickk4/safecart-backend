@@ -1947,7 +1947,20 @@ const uploadParcelPhoto = async (req, res) => {
       }
     }
 
-    shipment.parcelPhotoUrl = trimmedPhoto;
+    let finalPhotoUrl = trimmedPhoto;
+    if (isDataUri) {
+      try {
+        const { uploadBase64ToR2 } = require('../services/r2Service');
+        const uploadRes = await uploadBase64ToR2(trimmedPhoto, 'parcels');
+        if (uploadRes && uploadRes.url) {
+          finalPhotoUrl = uploadRes.url;
+        }
+      } catch (r2Err) {
+        console.warn('[R2 AUTO-UPLOAD] Cloudflare R2 upload note:', r2Err.message);
+      }
+    }
+
+    shipment.parcelPhotoUrl = finalPhotoUrl;
     shipment.parcelPhotoUploadedAt = shipment.parcelPhotoUploadedAt || new Date();
 
     // Generate unique In-Box QR Token & 6-digit Delivery OTP once parcel photo is uploaded
