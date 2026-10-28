@@ -64,6 +64,47 @@ const handleFileUpload = async (req, res) => {
   }
 };
 
-module.exports = {
-  handleFileUpload
+/**
+ * @desc    Stream or serve a file stored in Cloudflare R2
+ * @route   GET /api/v1/upload/file/*
+ * @access  Public
+ */
+const handleFileServe = async (req, res) => {
+  try {
+    const rawKey = req.params[0] || req.params.key;
+    if (!rawKey) {
+      return res.status(400).json({ error: 'File key is required.' });
+    }
+
+    // Sanitize path traversal attempts
+    const safeKey = rawKey.replace(/\.\./g, '').replace(/^\/+/, '');
+    const { getObjectFromR2 } = require('../services/r2Service');
+
+    const s3Object = await getObjectFromR2(safeKey);
+
+    if (!s3Object || !s3Object.Body) {
+      return res.status(404).json({ error: 'File not found.' });
+    }
+
+    res.set({
+      'Content-Type': s3Object.ContentType || 'application/octet-stream',
+      'Content-Length': s3Object.ContentLength,
+      'ETag': s3Object.ETag,
+      'Cache-Control': 'public, max-age=31536000, immutable'
+    });
+
+    s3Object.Body.pipe(res);
+  } catch (error) {
+    if (error.name === 'NoSuchKey' || error.$metadata?.httpStatusCode === 404) {
+      return res.status(404).json({ error: 'File not found on Cloudflare R2.' });
+    }
+    console.error('[R2 FILE SERVE ERROR]:', error);
+    return res.status(500).json({ error: 'Unable to retrieve file.' });
+  }
 };
+
+module.exports = {
+  handleFileUpload,
+  handleFileServe
+};
+
