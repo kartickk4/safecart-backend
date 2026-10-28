@@ -6,7 +6,7 @@ const R2_ACCOUNT_ID = process.env.CLOUDFLARE_R2_ACCOUNT_ID || '07f17b1d03d298ffd
 const R2_ACCESS_KEY_ID = process.env.CLOUDFLARE_R2_ACCESS_KEY_ID || '657d0792ab51c1c02427ec154fb329be';
 const R2_SECRET_ACCESS_KEY = process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY || 'd1ad7f16d2035276ebd16f0abf401e73dc5a8f2de0e03d5e4af3e6efe24a7053';
 const R2_BUCKET_NAME = process.env.CLOUDFLARE_R2_BUCKET_NAME || 'securekaro-media';
-const R2_PUBLIC_URL = process.env.CLOUDFLARE_R2_PUBLIC_URL || 'https://pub-c3a68d201b4e4840bee2b7a3f5629552.r2.dev';
+const R2_PUBLIC_URL = process.env.CLOUDFLARE_R2_PUBLIC_URL || 'https://media.securekaro.in';
 
 // Initialize AWS S3 Client targeting Cloudflare R2
 const r2Client = new S3Client({
