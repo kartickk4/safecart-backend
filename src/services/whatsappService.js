@@ -18,15 +18,15 @@ const sendPaymentLinkWhatsApp = async ({ phone, receiverName, shipmentId, amount
   const e164Phone = digits.length === 10 ? `91${digits}` : (phone || '').toString().replace(/\D/g, '');
 
   const messageText =
-    `🛡️ *SecureKaro Escrow Payment Request*\n\n` +
+    `🛡️ *SecureKaro Order Payment Request*\n\n` +
     `Hello ${receiverName || 'there'}! 👋\n\n` +
     `*Shipment ID:* ${shipmentId}\n` +
     `*Item:* ${description || 'Parcel'}\n` +
     `*Amount to Pay:* ₹${Number(amount).toLocaleString('en-IN')}\n\n` +
-    `Your payment is secured in *RBI-regulated escrow*. ` +
-    `Funds are only released to the seller after you confirm delivery.\n\n` +
+    `Your order is protected under *SecureKaro Delivery Verification*. ` +
+    `Funds are safely disbursed to the seller only after successful delivery confirmation.\n\n` +
     `💳 *Pay Securely Here:*\n${linkUrl}\n\n` +
-    `_Powered by SecureKaro — India's Safest Escrow Shipping_`;
+    `_Powered by SecureKaro — India's Premier Courier Aggregator & Delivery Protection Platform_`;
 
   console.log(`[WHATSAPP] ${WA_ENABLED ? 'Sending' : 'SIMULATING'} payment link to +${e164Phone}`);
   console.log(`[WHATSAPP] Message:\n${messageText}`);
@@ -90,7 +90,7 @@ const sendBookingConfirmationWhatsApp = async ({ phone, receiverName, shipmentId
     `📬 *AWB Code:* ${awbCode}\n` +
     `⏱️ *Estimated Delivery:* ${eta}\n\n` +
     `Track your parcel anytime on SecureKaro.\n` +
-    `_Your payment is safe in escrow until delivery is confirmed._`;
+    `_Your payment is protected under verified delivery sign-off._`;
 
   console.log(`[WHATSAPP] ${WA_ENABLED ? 'Sending' : 'SIMULATING'} booking confirmation to +${e164Phone}`);
 
@@ -134,9 +134,9 @@ const sendDispatchTrackingWhatsApp = async ({ phone, receiverName, shipmentId, c
     `Your order *${shipmentId}*${description ? ` (${description})` : ''} has been dispatched with courier partner *${carrierName || 'Courier'}*.\n\n` +
     `📦 *Carrier:* ${carrierName || 'Courier Partner'}\n` +
     `🔢 *AWB / Tracking Code:* ${awbCode}\n` +
-    `🛡️ *Escrow Status:* Payment Protected in Safe Escrow\n\n` +
+    `🛡️ *Protection Status:* Payment Secured Under Verified Delivery\n\n` +
     `📍 *Live Real-Time Tracking (Zero Login Required):*\n${trackUrl}\n\n` +
-    `_Your payment remains locked securely in escrow until you inspect and confirm delivery._`;
+    `_Your payment remains safely protected until you inspect and confirm delivery._`;
 
   console.log(`[WHATSAPP] ${WA_ENABLED ? 'Sending' : 'SIMULATING'} dispatch tracking alert to +${e164Phone}`);
   console.log(`[WHATSAPP] Message:\n${messageText}`);
@@ -179,13 +179,13 @@ const sendReverseCourierAssignedWhatsApp = async ({ phone, shipmentId, carrierNa
   const slot = pickupWindow ? ` Scheduled Pickup Window: ${pickupWindow}.` : '';
 
   const messageText =
-    `🔄 *SecureKaro Escrow: Return Approved!*\n\n` +
+    `🔄 *SecureKaro: Return Approved!*\n\n` +
     `Your reverse courier has been automatically booked for Shipment *#${shipmentId}* with *${carrier}*.\n\n` +
     `📦 *Carrier:* ${carrier}\n` +
     `🔢 *Tracking ID:* ${trackingId}\n` +
     (slot ? `⏱️${slot}\n\n` : '\n') +
     `Please keep the item safely packed and sealed for collection.\n` +
-    `_Your refund is safeguarded in escrow._`;
+    `_Your refund is safeguarded under SecureKaro buyer protection._`;
 
   console.log(`[WHATSAPP] ${WA_ENABLED ? 'Sending' : 'SIMULATING'} reverse courier alert to +${e164Phone}`);
 
@@ -230,7 +230,7 @@ const sendPhotoReviewChoiceWhatsApp = async ({ phone, shipmentId, receiverName, 
     `📦 *SecureKaro: Shipment #${shipmentId}* has been booked.\n` +
     `🚚 *Carrier:* ${courier}${awbCode ? ` | AWB: ${awbCode}` : ''}\n\n` +
     `📸 *Safety Note:* Parcel & product photo verification is mandatory for this shipment before courier dispatch for your security.\n` +
-    `_Your payment remains secured in escrow._`;
+    `_Your payment remains secured under verified delivery protection._`;
 
   console.log(`[WHATSAPP] ${WA_ENABLED ? 'Sending' : 'SIMULATING'} photo review choice to +${e164Phone}`);
 

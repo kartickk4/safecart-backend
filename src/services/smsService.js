@@ -71,11 +71,11 @@ const sendPaymentLinkSms = async ({ phone, shipmentId, amount, description, carr
 
   let paymentLine = '';
   if (linkUrl && linkUrl.trim()) {
-    paymentLine = `🔒 Pay safely into escrow: ${linkUrl}\n\n`;
+    paymentLine = `🔒 Pay safely with Delivery Protection: ${linkUrl}\n\n`;
   } else if (paymentMode === 'cod') {
     paymentLine = `💵 Mode: Cash on Delivery (COD) — ₹${formattedAmount} payable on delivery.\n\n`;
   } else {
-    paymentLine = `🔒 Pay safely into escrow: ${baseUrl}/pay/${shipmentId}\n\n`;
+    paymentLine = `🔒 Pay safely with Delivery Protection: ${baseUrl}/pay/${shipmentId}\n\n`;
   }
 
   const smsText = 
@@ -118,7 +118,7 @@ const sendReverseCourierAssignedSms = async ({ phone, shipmentId, carrierName, t
   const cleanPhone = (phone || '').toString().trim().replace(/\s+/g, '');
   const carrier = carrierName || 'Courier Partner';
   const slot = pickupWindow ? ` Scheduled Pickup Window: ${pickupWindow}.` : '';
-  const smsText = `SecureKaro Escrow: Return approved! Reverse courier automatically booked with ${carrier}. Tracking ID: ${trackingId}.${slot} Please keep the item packed and sealed for collection.`;
+  const smsText = `SecureKaro: Return approved! Reverse courier automatically booked with ${carrier}. Tracking ID: ${trackingId}.${slot} Please keep the item packed and sealed for collection.`;
 
   console.log(`[SMS POLICY ENFORCED] SMS suppressed for Reverse Courier ${trackingId}. Routing to WhatsApp.`);
 
@@ -193,7 +193,7 @@ const sendDispatchTrackingSms = async ({ phone, shipmentId, receiverName, carrie
   const smsText =
     `SecureKaro: Order #${shipmentId} has been dispatched via ${courier} (AWB: ${awbCode}).\n` +
     `Track parcel in real time: ${trackUrl}\n` +
-    `Payment protected in escrow.`;
+    `Payment protected under verified delivery sign-off.`;
 
   console.log(`[SMS POLICY ENFORCED] SMS suppressed for Dispatch Tracking #${shipmentId}. Routing to WhatsApp.`);
 
