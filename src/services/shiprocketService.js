@@ -475,7 +475,7 @@ const createOrderInShiprocket = async (shipment, senderUser) => {
       order_date: nowStr,
       pickup_location: pickupLocation,
       channel_id: '',
-      comment: `SecureKaro Escrow Protected Order #${shipment.shipmentId}`,
+      comment: `SecureKaro Protected Order #${shipment.shipmentId}`,
 
       // Billing Information (Used for invoices & Shiprocket automated bots)
       billing_customer_name: receiverName,

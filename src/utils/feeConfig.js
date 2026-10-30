@@ -18,7 +18,7 @@ const LOW_VALUE_THRESHOLD = 0;    // Not applicable
  * @returns {{ fee: number, rate: number, note: string }}
  */
 const calculateServiceFee = (orderAmount) => {
-  return { fee: 0, rate: 0, note: 'SecureKaro escrow is 100% free — no platform fee' };
+  return { fee: 0, rate: 0, note: 'SecureKaro delivery protection is 100% free — no platform fee' };
 };
 
 /**

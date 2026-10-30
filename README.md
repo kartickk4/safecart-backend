@@ -1,6 +1,6 @@
-﻿# SecureKaro Escrow & Logistics Backend API
+﻿# SecureKaro Logistics & Delivery Protection Backend API
 
-Express & MongoDB REST API server powering the SecureKaro Escrow and Logistics platform.
+Express & MongoDB REST API server powering the SecureKaro Logistics and Delivery Protection platform.
 
 ## 🚀 API Endpoints
 
@@ -9,10 +9,10 @@ Express & MongoDB REST API server powering the SecureKaro Escrow and Logistics p
 - **`POST /api/v1/auth/send-otp`**: Dispatch SMS OTP.
 - **`POST /api/v1/auth/verify-otp`**: Verify dynamic 6-digit OTP code.
 - **`GET /api/v1/profile`**: Get user profile & bank payout details.
-- **`GET /api/v1/shipments`**: List all escrow shipments.
-- **`POST /api/v1/shipments`**: Book new escrow shipment.
-- **`POST /api/v1/shipments/:id/fund`**: Lock payment in escrow vault.
-- **`PUT /api/v1/shipments/:id/release`**: Release escrow payment to seller upon delivery.
+- **`GET /api/v1/shipments`**: List all shipments.
+- **`POST /api/v1/shipments`**: Book new shipment.
+- **`POST /api/v1/shipments/:id/fund`**: Secure payment in protected vault.
+- **`PUT /api/v1/shipments/:id/release`**: Release order payment to seller upon delivery sign-off.
 - **`GET /api/v1/tracking/:awb`**: Fetch live courier milestone updates (TrackCourier).
 - **`POST /api/v1/claims`**: File dispute claim with proof evidence links.
 

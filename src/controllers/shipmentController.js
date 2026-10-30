@@ -251,7 +251,7 @@ const createShipment = async (req, res) => {
       return res.status(403).json({ 
         error: 'Phone verification required',
         code: 'PHONE_VERIFICATION_REQUIRED',
-        message: 'Mobile number verification is mandatory before creating shipments on SecureKaro. Please verify your phone number via OTP to ensure secure escrow coordination.'
+        message: 'Mobile number verification is mandatory before creating shipments on SecureKaro. Please verify your phone number via OTP to ensure secure delivery coordination.'
       });
     }
 
@@ -331,7 +331,7 @@ const createShipment = async (req, res) => {
         code: 'NEGATIVE_WALLET_BLOCKED',
         walletBalance: currentWalletBal,
         dueAmount: Math.abs(currentWalletBal),
-        message: `Your seller wallet balance is negative (-₹${Math.abs(currentWalletBal).toFixed(2)}). COD and Offline Paid shipment bookings are suspended until your outstanding dues are cleared. Please recharge your wallet via UPI or fulfill prepaid escrow orders to unlock COD and offline shipping.`
+        message: `Your seller wallet balance is negative (-₹${Math.abs(currentWalletBal).toFixed(2)}). COD and Offline Paid shipment bookings are suspended until your outstanding dues are cleared. Please recharge your wallet via UPI or fulfill prepaid delivery-protected orders to unlock COD and offline shipping.`
       });
     }
 
@@ -1173,7 +1173,7 @@ const releaseShipment = async (req, res) => {
 
     // Verify caller is the receiver
     if (!isAuthorizedReceiver(req.user, shipment)) {
-      return res.status(403).json({ error: 'Only the receiver can release these escrow funds' });
+      return res.status(403).json({ error: 'Only the receiver can release these order funds' });
     }
 
     const updatedShipment = await escrow.releaseEscrow(id, req.user._id);
@@ -1290,7 +1290,7 @@ const requestReturn = async (req, res) => {
 
     if (effectiveType === 'full_refund' && !hasValidBank) {
       return res.status(400).json({
-        error: 'Mandatory bank details missing. Please enter and save your Bank Account or UPI ID to receive your escrow refund.'
+        error: 'Mandatory bank details missing. Please enter and save your Bank Account or UPI ID to receive your order refund.'
       });
     }
 
@@ -1488,7 +1488,7 @@ const confirmDeliveryHandler = async (req, res) => {
       const isClosed = shipment.returnWindowClosed || shipment.status === 'Released' || shipment.returnWindowChoice === 'ImmediateClose';
       const isExpired = shipment.returnWindowExpiresAt && new Date() >= new Date(shipment.returnWindowExpiresAt);
       const windowDetail = isClosed
-        ? 'Return window is closed and escrow funds have been released.'
+        ? 'Return window is closed and order payment has been released.'
         : isExpired
           ? 'The 24-hour return window has expired.'
           : `24-hour return window is currently active until ${new Date(shipment.returnWindowExpiresAt).toLocaleString('en-IN')}.`;
@@ -1887,7 +1887,7 @@ const refusePhotoReview = async (req, res) => {
     await shipment.save();
 
     res.json({
-      message: 'Parcel photo verification is mandatory for all shipments to guarantee escrow safety.',
+      message: 'Parcel photo verification is mandatory for all shipments to guarantee delivery protection safety.',
       shipment,
       statusAdvanced: false
     });
@@ -2570,7 +2570,7 @@ const publicQrConfirm = async (req, res) => {
         success: true,
         isReplacement: true,
         action: 'confirm',
-        message: 'Replacement parcel delivery confirmed via In-Box QR & SMS OTP! Escrow funds released to the seller.',
+        message: 'Replacement parcel delivery confirmed via In-Box QR & SMS OTP! Order funds released to the seller.',
         shipmentId: shipment.shipmentId,
         description: shipment.description
       });
@@ -2716,7 +2716,7 @@ const publicQrConfirm = async (req, res) => {
       const isClosed = shipment.returnWindowClosed || shipment.status === 'Released' || shipment.returnWindowChoice === 'ImmediateClose';
       const isExpired = shipment.returnWindowExpiresAt && new Date() >= new Date(shipment.returnWindowExpiresAt);
       const windowDetail = isClosed
-        ? 'Return window is closed and escrow funds have been released.'
+        ? 'Return window is closed and order payment has been released.'
         : isExpired
           ? 'The 24-hour return window has expired.'
           : `24-hour return window is currently active until ${new Date(shipment.returnWindowExpiresAt).toLocaleString('en-IN')}.`;
@@ -2773,10 +2773,10 @@ const publicQrConfirm = async (req, res) => {
       let journey = await CarrierJourney.findOne({ shipmentId: shipment.shipmentId });
       if (journey) {
         journey.milestones.push({
-          status: confirmChoice === 'confirm_and_close' ? 'Delivered & Confirmed (Escrow Released)' : 'Delivered & Confirmed (24h Return Window Active)',
+          status: confirmChoice === 'confirm_and_close' ? 'Delivered & Confirmed (Payment Released)' : 'Delivered & Confirmed (24h Return Window Active)',
           location: 'Receiver Address',
           detail: confirmChoice === 'confirm_and_close'
-            ? 'Receiver verified SMS OTP via QR sign-off and closed return window. Escrow released to supplier.'
+            ? 'Receiver verified SMS OTP via QR sign-off and closed return window. Payment released to supplier.'
             : 'Receiver verified SMS OTP via QR sign-off. 24-hour return window is active.',
           time: new Date()
         });
@@ -2792,7 +2792,7 @@ const publicQrConfirm = async (req, res) => {
         'check_circle',
         `Delivery Confirmed: ${shipment.shipmentId}`,
         confirmChoice === 'confirm_and_close'
-          ? `Receiver confirmed delivery of "${shipment.description}" via QR scan + SMS OTP. Escrow funds released!`
+          ? `Receiver confirmed delivery of "${shipment.description}" via QR scan + SMS OTP. Payment released!`
           : `Receiver confirmed delivery of "${shipment.description}" via QR scan + SMS OTP. 24-hour return window is now active.`,
         'confirmed',
         shipment.shipmentId
@@ -2820,7 +2820,7 @@ const publicQrConfirm = async (req, res) => {
       action: 'confirm',
       choice: confirmChoice,
       message: confirmChoice === 'confirm_and_close'
-        ? 'Delivery confirmed and return window closed! Escrow funds released to the seller.'
+        ? 'Delivery confirmed and return window closed! Payment released to the seller.'
         : 'Delivery confirmed! The seller has been notified and your 24-hour return window is now active.',
       shipmentId: shipment.shipmentId,
       receiverName: shipment.receiverName,
@@ -2900,7 +2900,7 @@ const exportUserShipments = async (req, res) => {
         { label: 'Gross Sale Value (INR)', getter: s => Number(s.amount || 0).toFixed(2) },
         { label: 'Payment Mode', key: 'paymentMode' },
         { label: 'Delivery Status', key: 'status' },
-        { label: 'Escrow Status', key: 'escrowStage' },
+        { label: 'Fulfillment Stage', key: 'escrowStage' },
         { label: 'Courier Partner', key: 'carrierSlug' },
         { label: 'Carrier AWB Code', key: 'awbCode' },
         { label: 'Platform Gateway Fee (INR)', getter: s => Number(s.gatewayFeeDeducted || 0).toFixed(2) },

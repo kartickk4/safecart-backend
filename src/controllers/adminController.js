@@ -656,7 +656,7 @@ const forceReleaseEscrow = async (req, res) => {
     }
 
     if (shipment.escrowStage === 6 && shipment.status === 'Released') {
-      return res.status(400).json({ error: 'Escrow principal has already been disbursed' });
+      return res.status(400).json({ error: 'Order payment has already been disbursed' });
     }
 
     const principal = Number(shipment.amount) || 0;
@@ -686,7 +686,7 @@ const forceReleaseEscrow = async (req, res) => {
       { shipmentId: shipment.shipmentId, status: 'Under Review' },
       { 
         status: 'Rejected',
-        arbitratorNotes: `Force released by Admin: ${reason || 'Decision in favor of merchant. Escrow disbursed.'}` 
+        arbitratorNotes: `Force released by Admin: ${reason || 'Decision in favor of merchant. Payment disbursed.'}` 
       }
     );
 
@@ -705,7 +705,7 @@ const forceReleaseEscrow = async (req, res) => {
         supplier._id,
         'payments',
         `Admin Force-Release Cleared: ${shipment.shipmentId}`,
-        `Administrative resolution: Escrow funds of ${formattedAmount} for order #${shipment.shipmentId} have been disbursed to your wallet. Reason: ${reason || 'Executive release approved'}.`,
+        `Administrative resolution: Funds of ${formattedAmount} for order #${shipment.shipmentId} have been disbursed to your wallet. Reason: ${reason || 'Executive release approved'}.`,
         'payment',
         shipment.shipmentId
       );
@@ -716,8 +716,8 @@ const forceReleaseEscrow = async (req, res) => {
       await createNotification(
         receiver._id,
         'info',
-        `Escrow Settled: ${shipment.shipmentId}`,
-        `Order #${shipment.shipmentId} escrow (${formattedAmount}) was finalized and disbursed to the merchant after administrative review. Reason: ${reason || 'Resolution complete'}.`,
+        `Order Settled: ${shipment.shipmentId}`,
+        `Order #${shipment.shipmentId} funds (${formattedAmount}) were finalized and disbursed to the merchant after administrative review. Reason: ${reason || 'Resolution complete'}.`,
         'confirmed',
         shipment.shipmentId
       );
@@ -725,12 +725,12 @@ const forceReleaseEscrow = async (req, res) => {
 
     res.json({
       success: true,
-      message: `Escrow for #${shipment.shipmentId} successfully force-released (${formattedAmount})`,
+      message: `Payment for #${shipment.shipmentId} successfully force-released (${formattedAmount})`,
       shipment
     });
   } catch (error) {
     console.error('Admin ForceReleaseEscrow Error:', error);
-    res.status(500).json({ error: 'Failed to force release escrow', details: error.message });
+    res.status(500).json({ error: 'Failed to force release payment', details: error.message });
   }
 };
 
@@ -804,7 +804,7 @@ const forceRefundEscrow = async (req, res) => {
         receiver._id,
         'verified',
         `Admin Force-Refund Cleared: ${shipment.shipmentId}`,
-        `Administrative resolution: Full escrow refund of ${formattedAmount} for order #${shipment.shipmentId} has been credited to your wallet balance. Reason: ${reason || 'Claim approved'}.`,
+        `Administrative resolution: Full refund of ${formattedAmount} for order #${shipment.shipmentId} has been credited to your wallet balance. Reason: ${reason || 'Claim approved'}.`,
         'payment',
         shipment.shipmentId
       );
@@ -815,21 +815,21 @@ const forceRefundEscrow = async (req, res) => {
       shipment.senderId,
       'alert',
       `Order Refunded: ${shipment.shipmentId}`,
-      `Order #${shipment.shipmentId} escrow (${formattedAmount}) was refunded to the buyer following administrative intervention. Reason: ${reason || 'Claim upheld'}.`,
+      `Order #${shipment.shipmentId} payment (${formattedAmount}) was refunded to the buyer following administrative intervention. Reason: ${reason || 'Claim upheld'}.`,
       'alert',
       shipment.shipmentId
     );
 
     res.json({
       success: true,
-      message: `Escrow for #${shipment.shipmentId} successfully refunded (${formattedAmount})`,
+      message: `Payment for #${shipment.shipmentId} successfully refunded (${formattedAmount})`,
       shipment,
       refundedAmount: principal,
       creditedToWallet: !!receiver
     });
   } catch (error) {
     console.error('Admin ForceRefundEscrow Error:', error);
-    res.status(500).json({ error: 'Failed to force refund escrow', details: error.message });
+    res.status(500).json({ error: 'Failed to force refund payment', details: error.message });
   }
 };
 
@@ -939,7 +939,7 @@ const resolveDispute = async (req, res) => {
         shipment.senderId,
         'gavel',
         `Dispute Resolved in Your Favor: ${shipment.shipmentId}`,
-        `Platform arbitrator ruled in your favor for #${shipment.shipmentId}. Escrow of ₹${principal} released to your wallet. Notes: ${notes}`,
+        `Platform arbitrator ruled in your favor for #${shipment.shipmentId}. Payment of ₹${principal} released to your wallet. Notes: ${notes}`,
         'payment',
         shipment.shipmentId
       );
@@ -1006,7 +1006,7 @@ const resolveDispute = async (req, res) => {
         shipment.senderId,
         'gavel',
         `Dispute Decision: ${shipment.shipmentId}`,
-        `Claim #${claim.claimId} on parcel #${shipment.shipmentId} was upheld in favor of the buyer. Escrow funds refunded. Notes: ${notes}`,
+        `Claim #${claim.claimId} on parcel #${shipment.shipmentId} was upheld in favor of the buyer. Order funds refunded. Notes: ${notes}`,
         'alert',
         shipment.shipmentId
       );
@@ -1577,17 +1577,17 @@ const toggleShipmentLock = async (req, res) => {
     await shipment.save();
 
     await logAudit(req, lock ? 'LOCK_ESCROW' : 'UNLOCK_ESCROW', 'Shipment', shipment.shipmentId, {
-      reason: reason || (lock ? 'Escrow frozen by admin' : 'Escrow unlocked by admin')
+      reason: reason || (lock ? 'Order protection locked by admin' : 'Order protection unlocked by admin')
     });
 
     res.json({
       success: true,
-      message: `Escrow ${lock ? 'locked' : 'unlocked'} for shipment ${shipment.shipmentId}`,
+      message: `Protection ${lock ? 'locked' : 'unlocked'} for shipment ${shipment.shipmentId}`,
       shipment
     });
   } catch (error) {
     console.error('Admin toggleShipmentLock error:', error);
-    res.status(500).json({ error: 'Failed to toggle escrow lock', details: error.message });
+    res.status(500).json({ error: 'Failed to toggle protection lock', details: error.message });
   }
 };
 
@@ -2664,7 +2664,7 @@ const exportData = async (req, res) => {
           { label: 'Status', key: 'status' },
           { label: 'Amount (INR)', key: 'amount' },
           { label: 'Payment Mode', key: 'paymentMode' },
-          { label: 'Escrow Stage', key: 'escrowStage' },
+          { label: 'Fulfillment Stage', key: 'escrowStage' },
           { label: 'Carrier', key: 'carrierSlug' },
           { label: 'AWB', key: 'awbCode' },
           { label: 'Sender Name', getter: s => s.senderId?.fullName || '' },

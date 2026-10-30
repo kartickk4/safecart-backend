@@ -1,7 +1,7 @@
 {
   "name": "securekaro-backend",
   "version": "1.0.0",
-  "description": "Node.js Express MongoDB Escrow Backend",
+  "description": "Node.js Express MongoDB Logistics & Delivery Protection Backend",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

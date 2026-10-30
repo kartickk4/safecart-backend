@@ -78,7 +78,7 @@ const fileClaim = async (req, res) => {
       req.user._id,
       'gavel',
       `Dispute Filed — ${claimId}`,
-      `Dispute successfully initiated for shipment ${shipmentId}. Escrow locked.`,
+      `Dispute successfully initiated for shipment ${shipmentId}. Order payment locked.`,
       'alert'
     );
 

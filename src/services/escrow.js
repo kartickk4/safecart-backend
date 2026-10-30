@@ -43,11 +43,11 @@ const releaseEscrow = async (shipmentId, receiverId) => {
 
   // Validate shipment state
   if (shipment.escrowStage === 6) {
-    throw new Error('Escrow funds have already been released');
+    throw new Error('Order payment has already been released');
   }
 
   if (shipment.escrowStage === -1) {
-    throw new Error('Escrow is locked due to an active dispute claim');
+    throw new Error('Order payment is locked due to an active dispute claim');
   }
 
   // Calculate days held
@@ -113,7 +113,7 @@ const releaseEscrow = async (shipmentId, receiverId) => {
         type: 'credit',
         amount: netPayout,
         source: 'escrow_settlement',
-        description: `Escrow payout released for shipment ${shipment.shipmentId}`,
+        description: `Order payout released for shipment ${shipment.shipmentId}`,
         balanceBefore: balBefore,
         balanceAfter: sender.walletBalance,
         metadata: { shipmentId: shipment.shipmentId }
@@ -141,7 +141,7 @@ const releaseEscrow = async (shipmentId, receiverId) => {
       beneficiary_id: sender.cashfreeBeneficiaryId || `BEN_${sender._id.toString()}`,
       amount: netPayout,
       transfer_mode: selectedMode, // IMPS ensures 30-60 min settlement (24/7) vs 1-2 day NEFT batch processing
-      remarks: `SecureKaro Escrow Release - Order ${shipment.shipmentId}`,
+      remarks: `SecureKaro Payout - Order ${shipment.shipmentId}`,
       beneficiary_details: {
         account_number: sender.bankDetails?.accountNumber || '',
         ifsc: sender.bankDetails?.ifscCode || '',
@@ -171,7 +171,7 @@ const releaseEscrow = async (shipmentId, receiverId) => {
     // Notify sender that funds are payout-cleared minus courier freight & COD handling only
     const formattedCourier = courierFreight > 0 ? `, Courier Freight: -₹${courierFreight}` : '';
     const formattedCod = codHandlingFee > 0 ? `, COD Handling: -₹${codHandlingFee}` : '';
-    let payoutMsg = `Payment of ${formattedNet} for shipment ${shipment.shipmentId} has been released to your wallet (Gross: ${formattedAmount}${formattedCourier}${formattedCod}). Escrow service is FREE — no platform fee deducted.`;
+    let payoutMsg = `Payment of ${formattedNet} for shipment ${shipment.shipmentId} has been released to your wallet (Gross: ${formattedAmount}${formattedCourier}${formattedCod}). Delivery protection service is FREE — no platform fee deducted.`;
     
     if (sender.bankDetails && sender.bankDetails.accountNumber) {
       payoutMsg += ` Funds ready for withdrawal to A/C ending in ...${sender.bankDetails.accountNumber.slice(-4)} via 24/7 IMPS (30–60 min settlement).`;
@@ -184,7 +184,7 @@ const releaseEscrow = async (shipmentId, receiverId) => {
     await createNotification(
       sender._id,
       'payments',
-      `Escrow Payout Released — ${shipment.shipmentId}`,
+      `Order Payout Released — ${shipment.shipmentId}`,
       payoutMsg,
       'payment'
     );
@@ -194,7 +194,7 @@ const releaseEscrow = async (shipmentId, receiverId) => {
     await createNotification(
       receiver._id,
       'verified',
-      `Escrow Settled — ${shipment.shipmentId}`,
+      `Order Settled — ${shipment.shipmentId}`,
       `Parcel ${shipment.shipmentId} return period concluded. Principal (${formattedAmount}) disbursed to supplier.`,
       'confirmed'
     );
@@ -283,7 +283,7 @@ const lockEscrow = async (shipmentId, claimUser) => {
     shipment.senderId,
     'gavel',
     `Dispute Claim Filed: ${shipment.shipmentId}`,
-    `The receiver has locked the escrow of ${formattedAmount} and filed a claim. Funds are frozen until resolution.`,
+    `The receiver has filed a dispute claim on order payment of ${formattedAmount}. Funds are frozen until resolution.`,
     'alert'
   );
 
@@ -305,7 +305,7 @@ const cancelEscrow = async (shipmentId, userId, reason = 'Cancelled by user') =>
   }
 
   if (shipment.status === 'Released') {
-    throw new Error('Cannot cancel a shipment whose escrow funds have already been released');
+    throw new Error('Cannot cancel a shipment whose order payment has already been released');
   }
 
   if (['In Transit', 'Reached Destination Hub', 'Out for Delivery', 'Delivered'].includes(shipment.status)) {
@@ -328,7 +328,7 @@ const cancelEscrow = async (shipmentId, userId, reason = 'Cancelled by user') =>
     shipment.senderId,
     'cancel',
     `Shipment Cancelled: ${shipment.shipmentId}`,
-    `Order ${shipment.shipmentId} was cancelled. ${wasFunded ? `Escrow deposit of ${formattedAmount} refunded.` : ''} Reason: ${reason}`,
+    `Order ${shipment.shipmentId} was cancelled. ${wasFunded ? `Payment deposit of ${formattedAmount} refunded.` : ''} Reason: ${reason}`,
     'alert'
   );
 
@@ -346,7 +346,7 @@ const cancelEscrow = async (shipmentId, userId, reason = 'Cancelled by user') =>
         type: 'credit',
         amount: refundAmt,
         source: 'refund',
-        description: `Escrow refund credited for cancelled shipment ${shipment.shipmentId}`,
+        description: `Refund credited for cancelled shipment ${shipment.shipmentId}`,
         balanceBefore: balBefore,
         balanceAfter: receiver.walletBalance,
         metadata: { shipmentId: shipment.shipmentId }
@@ -358,7 +358,7 @@ const cancelEscrow = async (shipmentId, userId, reason = 'Cancelled by user') =>
       receiver._id,
       'cancel',
       `Shipment Cancelled: ${shipment.shipmentId}`,
-      `Escrow order ${shipment.shipmentId} (${formattedAmount}) was cancelled.${wasFunded ? ` Full refund of ${formattedAmount} credited to your wallet.` : ''} Reason: ${reason}`,
+      `Order ${shipment.shipmentId} (${formattedAmount}) was cancelled.${wasFunded ? ` Full refund of ${formattedAmount} credited to your wallet.` : ''} Reason: ${reason}`,
       'alert'
     );
   }
@@ -498,7 +498,7 @@ const refundUndeliveredEscrow = async (shipmentId, reason = 'Carrier reported de
         'payments',
         `Delivery Failed — Full Refund Processed: ${shipment.shipmentId}`,
         `Shipment ${shipment.shipmentId} was undelivered (${reason}). ` +
-        `100% of your escrow principal (${formattedPrincipal}) has been refunded to your wallet with zero deduction.${warnMsg}`,
+        `100% of your payment principal (${formattedPrincipal}) has been refunded to your wallet with zero deduction.${warnMsg}`,
         'payment'
       );
     }
@@ -544,7 +544,7 @@ const refundUndeliveredEscrow = async (shipmentId, reason = 'Carrier reported de
         'local_shipping',
         `Shipment Undelivered: ${shipment.shipmentId}`,
         `Carrier marked shipment ${shipment.shipmentId} as undelivered (${reason}). ` +
-        `Escrow funds (${formattedPrincipal}) have been refunded to the receiver.`,
+        `Order funds (${formattedPrincipal}) have been refunded to the receiver.`,
         'alert'
       );
     }
@@ -587,7 +587,7 @@ const requestReturnEscrow = async (
   }
 
   if (shipment.status === 'Released') {
-    throw new Error('Cannot request return after escrow funds have been released');
+    throw new Error('Cannot request return after order payment has been released');
   }
 
   if (['Cancelled', 'Returned & Refunded', 'Return Requested', 'Return In Transit'].includes(shipment.status) || shipment.returnRequested) {
@@ -656,9 +656,9 @@ const requestReturnEscrow = async (
 
   // Supplier notification — varies by return type
   const supplierNotifMap = {
-    full_refund: `Buyer applied for a FULL REFUND for parcel #${shipment.shipmentId} (Reason: ${reason}). Please assign the reverse courier partner & tracking ID in Return Orders. Escrow of ${formattedAmount} is frozen.`,
-    replacement: `Buyer applied for a REPLACEMENT for parcel #${shipment.shipmentId} (Reason: ${reason}). Please review and approve/reject this request in Return Orders. Escrow of ${formattedAmount} is frozen.`,
-    partial_discount: `Buyer applied for a PARTIAL DISCOUNT/REFUND for parcel #${shipment.shipmentId} (Reason: ${reason}). Buyer uploaded defect photo — review it in Return Orders and set a discount offer price. Escrow of ${formattedAmount} is frozen.`
+    full_refund: `Buyer applied for a FULL REFUND for parcel #${shipment.shipmentId} (Reason: ${reason}). Please assign the reverse courier partner & tracking ID in Return Orders. Order payment of ${formattedAmount} is frozen.`,
+    replacement: `Buyer applied for a REPLACEMENT for parcel #${shipment.shipmentId} (Reason: ${reason}). Please review and approve/reject this request in Return Orders. Order payment of ${formattedAmount} is frozen.`,
+    partial_discount: `Buyer applied for a PARTIAL DISCOUNT/REFUND for parcel #${shipment.shipmentId} (Reason: ${reason}). Buyer uploaded defect photo — review it in Return Orders and set a discount offer price. Order payment of ${formattedAmount} is frozen.`
   };
 
   await createNotification(
@@ -918,8 +918,8 @@ const confirmReturnReceivedEscrow = async (shipmentId) => {
         await createNotification(
           supplier._id,
           'payments',
-          `Replacement Complete: Escrow Released — ${shipment.shipmentId}`,
-          `Defective item for ${shipment.shipmentId} arrived at your warehouse. Replacement complete! Escrow principal (${formattedPrincipal}) has been credited to your wallet.`,
+          `Replacement Complete: Payment Released — ${shipment.shipmentId}`,
+          `Defective item for ${shipment.shipmentId} arrived at your warehouse. Replacement complete! Principal (${formattedPrincipal}) has been credited to your wallet.`,
           'payment',
           shipment.shipmentId
         );
@@ -940,7 +940,7 @@ const confirmReturnReceivedEscrow = async (shipmentId) => {
     return {
       shipment,
       isReplacement: true,
-      message: `Old item received! Replacement complete and escrow payment of ${formattedPrincipal} disbursed to supplier.`
+      message: `Old item received! Replacement complete and payment of ${formattedPrincipal} disbursed to supplier.`
     };
   }
 
@@ -1013,7 +1013,7 @@ const confirmReturnReceivedEscrow = async (shipmentId) => {
           type: 'credit',
           amount: refundAmt,
           source: 'refund',
-          description: `Return processed: Escrow refund credited for ${shipment.shipmentId}`,
+          description: `Return processed: Refund credited for ${shipment.shipmentId}`,
           balanceBefore: balBefore,
           balanceAfter: receiver.walletBalance,
           metadata: { shipmentId: shipment.shipmentId }
@@ -1022,7 +1022,7 @@ const confirmReturnReceivedEscrow = async (shipmentId) => {
       await createNotification(
         receiver._id,
         'payments',
-        `Return Processed: Escrow Refunded — ${shipment.shipmentId}`,
+        `Return Processed: Payment Refunded — ${shipment.shipmentId}`,
         `Returned parcel ${shipment.shipmentId} was received by supplier. Principal (${formattedPrincipal}) has been refunded to your wallet.`,
         'payment',
         shipment.shipmentId
@@ -1034,7 +1034,7 @@ const confirmReturnReceivedEscrow = async (shipmentId) => {
         supplier._id,
         'wallet',
         `Return Complete: Package Received — ${shipment.shipmentId}`,
-        `Returned package ${shipment.shipmentId} arrived at your warehouse. Escrow refund processed to receiver.`,
+        `Returned package ${shipment.shipmentId} arrived at your warehouse. Payment refund processed to receiver.`,
         'confirmed',
         shipment.shipmentId
       );
@@ -1087,7 +1087,7 @@ const confirmReturnReceivedEscrow = async (shipmentId) => {
       supplier._id,
       'wallet',
       `Return Processed: Reverse Shipping Deducted — ${shipment.shipmentId}`,
-      `Returned package ${shipment.shipmentId} arrived at your warehouse. Escrow refund of ${formattedPrincipal} processed to buyer. Reverse courier shipping fee of ${formattedRevFreight} (${shipment.returnCarrierName || 'Courier'} - AWB: ${shipment.returnAwbCode || 'N/A'}) has been charged and deducted from your seller wallet.`,
+      `Returned package ${shipment.shipmentId} arrived at your warehouse. Refund of ${formattedPrincipal} processed to buyer. Reverse courier shipping fee of ${formattedRevFreight} (${shipment.returnCarrierName || 'Courier'} - AWB: ${shipment.returnAwbCode || 'N/A'}) has been charged and deducted from your seller wallet.`,
       'confirmed',
       shipment.shipmentId,
       'RETURN_ORDERS'
@@ -1102,7 +1102,7 @@ const confirmReturnReceivedEscrow = async (shipmentId) => {
       journey.milestones.push({
         status: 'Return Received & Settled',
         location: `${shipment.city ? shipment.city.split('->')[0].trim() : 'Supplier'} Warehouse`,
-        detail: `Returned package inspected and received at supplier warehouse. Escrow principal (${formattedPrincipal}) refunded to buyer. Reverse shipping fee (₹${revCourierFreight}) charged to seller.`,
+        detail: `Returned package inspected and received at supplier warehouse. Principal (${formattedPrincipal}) refunded to buyer. Reverse shipping fee (₹${revCourierFreight}) charged to seller.`,
         time: new Date()
       });
       await journey.save();
@@ -1137,7 +1137,7 @@ const confirmDelivery = async (shipmentId, receiverId, { choice = 'keep_open_24h
     const isClosed = shipment.returnWindowClosed || shipment.status === 'Released' || shipment.returnWindowChoice === 'ImmediateClose';
     const isExpired = shipment.returnWindowExpiresAt && new Date() >= new Date(shipment.returnWindowExpiresAt);
     const windowDetail = isClosed
-      ? 'Return window is closed and escrow funds have been released.'
+      ? 'Return window is closed and order payment has been released.'
       : isExpired
         ? 'The 24-hour return window has expired.'
         : `24-hour return window is currently active until ${new Date(shipment.returnWindowExpiresAt).toLocaleString('en-IN')}.`;
@@ -1145,7 +1145,7 @@ const confirmDelivery = async (shipmentId, receiverId, { choice = 'keep_open_24h
   }
 
   if (shipment.escrowStage === -1 || shipment.status === 'Locked') {
-    throw new Error('Cannot confirm parcel while escrow is locked under an active dispute claim');
+    throw new Error('Cannot confirm parcel while payment is locked under an active dispute claim');
   }
 
   const CarrierJourney = require('../models/CarrierJourney');
@@ -1166,7 +1166,7 @@ const confirmDelivery = async (shipmentId, receiverId, { choice = 'keep_open_24h
       journey.milestones.push({
         status: 'Delivered & Confirmed (Return Window Closed)',
         location: 'Receiver Address',
-        detail: 'Receiver confirmed delivery and closed the return window. Escrow funds released to supplier.',
+        detail: 'Receiver confirmed delivery and closed the return window. Payment released to supplier.',
         time: new Date()
       });
       await journey.save();
@@ -1175,7 +1175,7 @@ const confirmDelivery = async (shipmentId, receiverId, { choice = 'keep_open_24h
     return {
       shipment: result.shipment,
       settlement: result.settlement,
-      message: 'Parcel confirmed and return window closed. Escrow funds released successfully!'
+      message: 'Parcel confirmed and return window closed. Payment released successfully!'
     };
   }
 
@@ -1283,7 +1283,7 @@ const closeReturnRequest = async (shipmentId, receiverId) => {
 
     return {
       shipment: releaseRes.shipment,
-      message: 'Return request closed. 24-hour return window had expired, so escrow funds have now been released.'
+      message: 'Return request closed. 24-hour return window had expired, so order funds have now been released.'
     };
   }
 
@@ -1299,7 +1299,7 @@ const closeReturnRequest = async (shipmentId, receiverId) => {
       receiver._id,
       'verified',
       `Return Request Closed: ${shipment.shipmentId}`,
-      `You closed the return request for parcel #${shipment.shipmentId}. Escrow remains protected until return window conclusion.`,
+      `You closed the return request for parcel #${shipment.shipmentId}. Payment remains protected until return window conclusion.`,
       'confirmed',
       shipment.shipmentId
     );
@@ -1341,7 +1341,7 @@ const closeReturnWindow = async (shipmentId, receiverId) => {
 
   return {
     shipment: result.shipment,
-    message: 'Return window closed early. Escrow funds released to supplier successfully!'
+    message: 'Return window closed early. Order funds released to supplier successfully!'
   };
 };
 
@@ -1750,7 +1750,7 @@ const approveReplacement = async (shipmentId, supplierId, courierData = {}) => {
       `Replacement Approved — Defective Item Pickup Scheduled`,
       `Your replacement request for #${shipment.shipmentId} has been approved.\n\n` +
       `🔄 Old item pickup: ${revName} will collect the defective product from you (AWB: ${revAwb}) during ${revPickupWindow}. Please keep it packed and ready.\n\n` +
-      `Once the seller receives and inspects the returned item at their warehouse, your new replacement item will be dispatched. Your payment remains 100% protected in escrow.`,
+      `Once the seller receives and inspects the returned item at their warehouse, your new replacement item will be dispatched. Your payment remains 100% protected.`,
       'confirmed',
       shipment.shipmentId
     );
@@ -1966,9 +1966,9 @@ const confirmReplacementDelivery = async (shipmentId, receiverId) => {
     let journey = await CarrierJourney.findOne({ shipmentId: shipment.shipmentId });
     if (journey) {
       journey.milestones.push({
-        status: 'Replacement Confirmed by Buyer — Escrow Released',
+        status: 'Replacement Confirmed by Buyer — Payment Released',
         location: `${shipment.city ? shipment.city.split('->')[1]?.trim() : 'Buyer'} Location`,
-        detail: `Buyer confirmed receipt of replacement product. Escrow payment of ${formattedPrincipal} disbursed to seller.`,
+        detail: `Buyer confirmed receipt of replacement product. Payment of ${formattedPrincipal} disbursed to seller.`,
         time: new Date()
       });
       await journey.save();
@@ -1991,8 +1991,8 @@ const confirmReplacementDelivery = async (shipmentId, receiverId) => {
     await createNotification(
       supplier._id,
       'payments',
-      `Replacement Completed & Escrow Released — ${shipment.shipmentId}`,
-      `Buyer confirmed delivery of the replacement product! Escrow payment of ${formattedPrincipal} has been released to your wallet.`,
+      `Replacement Completed & Payment Released — ${shipment.shipmentId}`,
+      `Buyer confirmed delivery of the replacement product! Payment of ${formattedPrincipal} has been released to your wallet.`,
       'payment',
       shipment.shipmentId
     );
@@ -2001,7 +2001,7 @@ const confirmReplacementDelivery = async (shipmentId, receiverId) => {
   return {
     success: true,
     shipment,
-    message: `Replacement delivery confirmed! Order successfully completed and escrow payment of ${formattedPrincipal} released to seller.`
+    message: `Replacement delivery confirmed! Order successfully completed and payment of ${formattedPrincipal} released to seller.`
   };
 };
 

@@ -115,7 +115,7 @@ const buildSummaryConfirmation = (session, data, user) => {
   }
   const sel = session.selectedCarrier || quotes[0];
   const isCod = (data.paymentMode === 'cod');
-  const modeText = isCod ? '🚚 Cash on Delivery (COD)' : '💳 Prepaid Escrow';
+  const modeText = isCod ? '🚚 Cash on Delivery (COD)' : '💳 Prepaid (Delivery Protected)';
   const rtoText = isCod
     ? '⚠️ Not Available for COD (Prepaid Only)'
     : (data.rtoProtectionEnabled ? '🛡️ Enabled (₹40 Seller Relief)' : 'Disabled');
@@ -136,7 +136,7 @@ const buildSummaryConfirmation = (session, data, user) => {
     `🚚 *Carrier:* ${sel.name} — ${fmt(sel.price)} · ${sel.eta}\n\n` +
     (isCod 
       ? `*Note for COD:*\n• Courier collects ${fmt(data.amount)} cash/UPI from buyer at delivery\n• Courier fee (${fmt(sel.price)}) + COD handling (₹40) settled via wallet\n• No buyer payment link will be sent ✅\n\n`
-      : `*Note for Prepaid Escrow:*\n• Buyer pays via secure Escrow link sent via WhatsApp & SMS\n• Courier pickup is auto-booked once payment is locked\n• Funds released to sender after delivery is confirmed ✅\n\n`) +
+      : `*Note for Prepaid (Delivery Protected):*\n• Buyer pays via secure payment link sent via WhatsApp & SMS\n• Courier pickup is auto-booked once payment is confirmed\n• Funds released to sender after delivery is confirmed ✅\n\n`) +
     `Type *"confirm"* to book, or *"edit"* to change something.`
   );
 };
@@ -199,7 +199,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
         `Here is what I can do for you:\n` +
         `• 📦 *Book a Shipment* — Type parcel details in one go or step-by-step\n` +
         `• 🔍 *Live Tracking* — Type *"track SPL-..."* or ask for your latest order status\n` +
-        `• 💰 *Wallet & Payouts* — Ask *"what is my balance?"* to view available & escrow funds\n` +
+        `• 💰 *Wallet & Payouts* — Ask *"what is my balance?"* to view available & protected pipeline funds\n` +
         `• 🔄 *Replacement Guide* — Ask *"how does replacement work?"* for our 4-step verified flow\n` +
         `• 🛡️ *RTO & Dispute Protection* — Ask about rejected deliveries, damage claims or defect discounts\n` +
         `• 🎁 *Referral Rewards* — Ask *"my referral code"* to check credits & invite merchants\n\n` +
@@ -239,13 +239,13 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
     }
 
     if (!shipment) {
-      intelligentReply = `🔍 *No Shipments Found:*\n\nI couldn't locate any matching shipment records in your account.\n\nType *"Book shipment"* to create your first verified escrow delivery!`;
+      intelligentReply = `🔍 *No Shipments Found:*\n\nI couldn't locate any matching shipment records in your account.\n\nType *"Book shipment"* to create your first verified delivery!`;
     } else {
       const s = shipment;
       const isCod = s.paymentMode === 'cod';
       const stageNames = {
         1: 'Awaiting Payment',
-        2: 'Payment Locked (Escrow)',
+        2: 'Payment Secured',
         3: 'In Transit / Pickup Scheduled',
         4: 'Delivered (24h Inspection Window)',
         5: 'Funds Released to Seller',
@@ -258,7 +258,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
         `• *Current Status:* *${s.status}* (${stageText})\n` +
         `• *Receiver:* ${s.receiverName} (${s.receiverPhone})\n` +
         `• *Destination:* ${s.city || s.receiverPincode || 'In Transit'}\n` +
-        `• *Item & Value:* ${s.description || 'General Merchandise'} — ${fmt(s.amount)} (${isCod ? '🚚 COD' : '💳 Prepaid Escrow'})\n` +
+        `• *Item & Value:* ${s.description || 'General Merchandise'} — ${fmt(s.amount)} (${isCod ? '🚚 COD' : '💳 Prepaid (Delivery Protected)'})\n` +
         `• *Carrier Partner:* ${s.carrierSlug ? s.carrierSlug.toUpperCase() : 'Delhivery'} | *AWB:* \`${s.awbCode || 'Pending Pickup'}\`\n`;
 
       if (s.pickupSlot) {
@@ -266,7 +266,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
       }
 
       if (s.status === 'Awaiting Payment' && s.paymentLink) {
-        card += `\n🔗 *Buyer Payment Link:*\n${s.paymentLink}\n_(Buyer can pay via UPI or card to lock escrow funds)_\n`;
+        card += `\n🔗 *Buyer Payment Link:*\n${s.paymentLink}\n_(Buyer can pay via UPI or card to secure order payment)_\n`;
       }
 
       if (s.returnStatus && s.returnStatus !== 'None') {
@@ -301,10 +301,10 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
     intelligentReply =
       `💰 *Your Live Wallet & Earnings Summary:*\n\n` +
       `💼 *Available Withdrawable Balance:* *${fmt(available)}*\n` +
-      `🔒 *Locked in Active Escrow:* *${fmt(lockedEscrow)}* (${activeEscrowShipments.length} in-transit orders)\n` +
+      `🔒 *Active In-Transit Pipeline:* *${fmt(lockedEscrow)}* (${activeEscrowShipments.length} in-transit orders)\n` +
       `📈 *Lifetime Total Withdrawn:* *${fmt(withdrawn)}*\n\n` +
       `⚡ *How Cashfree Payouts Work:*\n` +
-      `• Once a parcel is delivered and the 24-hour buyer inspection window ends, escrow funds auto-credit to your Available Balance.\n` +
+      `• Once a parcel is delivered and the 24-hour buyer inspection window ends, order funds auto-credit to your Available Balance.\n` +
       `• Navigate to the *Wallet* tab in the left menu and tap *Withdraw Funds* for instant IMPS / UPI bank payout.`;
   }
 
@@ -320,7 +320,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
         if (o.status === 'Disputed') flag = '🚨 Action Needed: Dispute in Review';
         else if (o.status === 'Return Requested') flag = '↩️ Action Needed: Return Requested';
         else if (o.status === 'Replacement Requested') flag = '🔄 Action Needed: Replacement Requested';
-        else if (o.status === 'Awaiting Payment') flag = '⏳ Awaiting Buyer Escrow Payment';
+        else if (o.status === 'Awaiting Payment') flag = '⏳ Awaiting Buyer Payment';
         else if (o.status === 'Pending Pickup') flag = '📦 Courier Pickup Scheduled';
         else if (o.status === 'Delivered') flag = '🎉 Delivered (Inspection Active)';
 
@@ -339,7 +339,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
       `1️⃣ *Step 1 — Buyer Request:*\nBuyer initiates the replacement request with photos/video demonstrating the defect or sizing mismatch.\n\n` +
       `2️⃣ *Step 2 — Reverse Courier Pickup:*\nOur automated system schedules a reverse courier to pick up the defective item from the buyer and route it back to your warehouse.\n\n` +
       `3️⃣ *Step 3 — Seller Inspection & Confirmation:*\nYou receive the old parcel, verify that it matches the original item, and click *'Confirm Old Item Received & Approve Replacement'* in the portal.\n\n` +
-      `4️⃣ *Step 4 — New Replacement Delivered:*\nYou dispatch the replacement unit. When delivered, buyer verifies it, and the escrow funds are safely released to you! ✅\n\n` +
+      `4️⃣ *Step 4 — New Replacement Delivered:*\nYou dispatch the replacement unit. When delivered, buyer verifies it, and the order funds are safely released to you! ✅\n\n` +
       `💡 *Why this protects you:* You NEVER send a replacement blind before inspecting the returned parcel first!`;
   }
 
@@ -349,7 +349,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
       `⚡ *Defect Partial Discount — Save Reverse Courier Costs:*\n\n` +
       `If a buyer reports a minor issue (stitching flaw, slight cosmetic scratch, or minor sizing):\n\n` +
       `• A physical return would cost you ₹80–₹150 in reverse shipping, plus courier transit wear.\n` +
-      `• Instead, SecureKaro allows you to offer a *Partial Discount (e.g. 15% – 30%)* directly through Escrow.\n` +
+      `• Instead, SecureKaro allows you to offer a *Partial Discount (e.g. 15% – 30%)* directly through SecureKaro.\n` +
       `• *Buyer Accepts in 1-Click:* The discount is refunded to the buyer immediately, and the remaining balance is paid directly to your wallet.\n` +
       `• Result: Sale is saved, zero reverse shipping fees, and zero return transit risk! 🎯`;
   }
@@ -358,17 +358,17 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
   else if (/\b(rto|undelivered|courier return)\b|reject(ed|s|ion)?|refus(ed|es|al)?/i.test(msg)) {
     intelligentReply =
       `🛡️ *SecureKaro Smart RTO & Undelivered Protection:*\n\n` +
-      `• *Prepaid Escrow Orders:* When RTO Protection is enabled, SecureKaro credits *₹40 seller relief compensation* directly to your wallet if a courier marks the parcel RTO due to buyer rejection.\n` +
+      `• *Prepaid Protected Orders:* When RTO Protection is enabled, SecureKaro credits *₹40 seller relief compensation* directly to your wallet if a courier marks the parcel RTO due to buyer rejection.\n` +
       `• *Delivery Verification:* Couriers are required to attempt delivery up to 3 times with OTP and geo-tagged proof.\n` +
       `• *Anti-Fraud Network:* Buyers who serially reject 3+ parcels across our merchant network are blacklisted and charged a fair-play deposit on future orders.\n` +
-      `• *Note on COD:* RTO relief is exclusively for Prepaid Escrow orders since prepaid buyers have committed financial escrow.`;
+      `• *Note on COD:* RTO relief is exclusively for Prepaid Protected orders since prepaid buyers have committed verified payment.`;
   }
 
   // 9. Escrow 24-Hour Inspection Window & Safety Rules
   else if (/\b(escrow|how does escrow work|24 hours|24h window|inspection window|when will i get paid|release payment|payout time)\b/i.test(msg)) {
     intelligentReply =
-      `🔒 *How SecureKaro Escrow Protects Merchants & Buyers:*\n\n` +
-      `1. *Advance Lock:* Buyer pays into 100% RBI-compliant Cashfree Escrow before courier pickup.\n` +
+      `🔒 *How SecureKaro Delivery Protection Safeguards Merchants & Buyers:*\n\n` +
+      `1. *Advance Lock:* Buyer pays securely online with delivery protection before courier pickup.\n` +
       `2. *Safe Transit:* Funds remain locked while Delhivery/DTDC/Shadowfax delivers the parcel.\n` +
       `3. *24-Hour Inspection Window:* Once marked 'Delivered', the buyer has 24 hours to inspect the package.\n` +
       `4. *Auto-Release:* The buyer can click 'Confirm & Release' anytime for instant payout. If they don't report an issue within 24 hours, SecureKaro *automatically releases 100% of the funds* into your merchant wallet!\n` +
@@ -383,7 +383,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
       `1️⃣ *Always Record Unboxing Video:* When receiving any return parcel from the courier executive, film an uncut 360° unboxing video showing the shipping label and parcel contents.\n` +
       `2️⃣ *Raise a Dispute in SecureKaro:* Go to the shipment in your portal, open details, and click *'Raise Dispute / File Claim'*.\n` +
       `3️⃣ *Upload Evidence:* Attach photos of the package and your unboxing video link.\n` +
-      `4️⃣ *Arbitration & Compensation:* Our arbitration team compares carrier origin/return weight manifests. When fraud is verified, the buyer's claim is denied and the seller is fully compensated from the escrow!`;
+      `4️⃣ *Arbitration & Compensation:* Our arbitration team compares carrier origin/return weight manifests. When fraud is verified, the buyer's claim is denied and the seller is fully compensated from the protection reserve!`;
   }
 
   // 11. Referral Code & Refer & Earn
@@ -412,7 +412,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
       `• 📱 *Direct Merchant Desk / WhatsApp:* *+91 98765 43210*\n` +
       `• 📧 *Email Support Desk:* *support@securekaro.app*\n` +
       `• ⏰ *Operating Hours:* Mon - Sat: 9:00 AM – 9:00 PM IST\n\n` +
-      `Our officers have full override access to unlock stuck escrow, expedite courier pickups, and review return unboxing disputes directly.`;
+      `Our officers have full override access to release held payouts, expedite courier pickups, and review return unboxing disputes directly.`;
 
     if (session.step > STEPS.GREETING && session.step < STEPS.DONE) {
       const stepInfo = getStepDescription(session.step);
@@ -427,7 +427,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
       `🤝 *I am here to solve it! What kind of issue are you facing?*\n\n` +
       `1️⃣ 🔄 *Replacement or Returns:* Buyer requested a replacement, exchange, or return?\n` +
       `2️⃣ 🚚 *Courier Delivery or RTO:* Delivery delayed, courier marked rejection, or pickup pending?\n` +
-      `3️⃣ 💰 *Wallet & Escrow Payout:* Funds not credited, or questions on Cashfree withdrawal?\n` +
+      `3️⃣ 💰 *Wallet & Order Payout:* Funds not credited, or questions on Cashfree withdrawal?\n` +
       `4️⃣ ⚡ *Defect Partial Discount:* Want to offer a 15%–30% discount to avoid return shipping fees?\n` +
       `5️⃣ 🚨 *Buyer Dispute or Fraud:* Wrong item returned or unboxing proof dispute?\n\n` +
       `Please tell me what happened (or provide your tracking ID e.g. *SPL-...*) and I will resolve it with you!`;
@@ -576,7 +576,7 @@ const handleChat = async (req, res) => {
             break;
           }
           if (!data.paymentMode) {
-            agentReply = `💰 Amount saved! ✅\n\n*What is the payment mode?*\n1. 💳 *Prepaid Escrow*\n2. 🚚 *COD (Cash on Delivery)*`;
+            agentReply = `💰 Amount saved! ✅\n\n*What is the payment mode?*\n1. 💳 *Prepaid (Delivery Protected)*\n2. 🚚 *COD (Cash on Delivery)*`;
             session.step = STEPS.PAYMENT_MODE;
             break;
           }
@@ -780,9 +780,9 @@ const handleChat = async (req, res) => {
         agentReply =
           `💰 Order Value: *${fmt(amount)}* saved ✅\n\n` +
           `*What is the payment mode for this shipment?*\n\n` +
-          `1. 💳 *Prepaid Escrow* — Buyer pays via secure Escrow link. Courier pickup is auto-booked once payment is locked and paid to sender after delivery is confirmed\n` +
+          `1. 💳 *Prepaid (Delivery Protected)* — Buyer pays via secure link. Courier pickup is auto-booked once payment is confirmed and paid to sender after delivery is confirmed\n` +
           `2. 🚚 *Cash on Delivery (COD)* — Courier collects payment from buyer at delivery\n\n` +
-          `_Reply "1" for Prepaid Escrow or "2" for COD._`;
+          `_Reply "1" for Prepaid or "2" for COD._`;
         session.step = STEPS.PAYMENT_MODE;
         break;
       }
@@ -793,7 +793,7 @@ const handleChat = async (req, res) => {
         if (!mode) {
           agentReply = 
             `⚠️ Please select a valid payment mode:\n\n` +
-            `• Reply *"1"* or *"prepaid"* for Prepaid Escrow\n` +
+            `• Reply *"1"* or *"prepaid"* for Prepaid\n` +
             `• Reply *"2"* or *"cod"* for Cash on Delivery (COD)`;
           break;
         }
@@ -802,7 +802,7 @@ const handleChat = async (req, res) => {
 
         if (isCod) {
           data.rtoProtectionEnabled = false; // RTO Protection is strictly unavailable for COD
-          const modeNote = `💵 Payment Mode: *Cash on Delivery (COD)* ✅\n_(RTO Protection is not available for COD orders — exclusive to Prepaid Escrow)_\n\n`;
+          const modeNote = `💵 Payment Mode: *Cash on Delivery (COD)* ✅\n_(RTO Protection is not available for COD orders — exclusive to Prepaid Protected)_\n\n`;
 
           if (session.isEditing || isReadyToConfirm(data)) {
             session.isEditing = false;
@@ -839,7 +839,7 @@ const handleChat = async (req, res) => {
           if (session.isEditing || isReadyToConfirm(data)) {
             session.isEditing = false;
             session.editingField = '';
-            agentReply = `💳 Payment Mode: *Prepaid Escrow* ✅\n\n` + buildSummaryConfirmation(session, data, user);
+            agentReply = `💳 Payment Mode: *Prepaid (Delivery Protected)* ✅\n\n` + buildSummaryConfirmation(session, data, user);
             session.step = STEPS.CONFIRMATION;
             break;
           }
@@ -847,7 +847,7 @@ const handleChat = async (req, res) => {
           // Prepaid initial questionnaire: ask for RTO Protection!
           session.step = STEPS.RTO_PROTECTION;
           agentReply =
-            `💳 Payment Mode: *Prepaid Escrow* ✅\n\n` +
+            `💳 Payment Mode: *Prepaid (Delivery Protected)* ✅\n\n` +
             `🛡️ *Enable Smart RTO & Undelivered Protection?*\n\n` +
             `If the buyer refuses or fails to accept delivery:\n` +
             `• SecureKaro compensates you *₹40* relief per rejected parcel\n` +
@@ -989,12 +989,12 @@ const handleChat = async (req, res) => {
           session.step = STEPS.PAYMENT_MODE;
           session.isEditing = true;
           session.editingField = 'mode';
-          agentReply = `Sure! What is the new *payment mode*? (Reply *"1"* for Prepaid Escrow or *"2"* for COD):`;
+          agentReply = `Sure! What is the new *payment mode*? (Reply *"1"* for Prepaid or *"2"* for COD):`;
           break;
         }
         if (lowerMsg === 'rto' || lowerMsg === 'edit rto' || lowerMsg === 'toggle rto') {
           if (data.paymentMode === 'cod') {
-            agentReply = `⚠️ RTO Protection is not available for COD orders (exclusive to Prepaid Escrow shipments).\n\nTo enable RTO Protection, first switch payment mode to Prepaid Escrow by typing *"edit mode"*.`;
+            agentReply = `⚠️ RTO Protection is not available for COD orders (exclusive to Prepaid Protected shipments).\n\nTo enable RTO Protection, first switch payment mode to Prepaid by typing *"edit mode"*.`;
             break;
           }
           data.rtoProtectionEnabled = !data.rtoProtectionEnabled;
@@ -1107,7 +1107,7 @@ const handleChat = async (req, res) => {
           session.step = STEPS.PAYMENT_MODE;
           session.isEditing = true;
           session.editingField = 'mode';
-          agentReply = `Sure! What is the new *payment mode*? (Reply *"1"* for Prepaid Escrow or *"2"* for COD):`;
+          agentReply = `Sure! What is the new *payment mode*? (Reply *"1"* for Prepaid or *"2"* for COD):`;
           break;
         }
         if (msg === 'weight' || msg === 'dims' || msg === 'dimensions' || msg === 'parcel' || msg === 'edit weight' || msg === 'edit dims' || msg === 'edit dimensions') {
@@ -1157,7 +1157,7 @@ const handleChat = async (req, res) => {
         }
         if (msg === 'rto' || msg === 'edit rto' || msg === 'toggle rto') {
           if (data.paymentMode === 'cod') {
-            agentReply = `⚠️ RTO Protection is not available for COD orders (exclusive to Prepaid Escrow shipments).\n\nTo enable RTO Protection, first switch payment mode to Prepaid by typing *"edit mode"*.`;
+            agentReply = `⚠️ RTO Protection is not available for COD orders (exclusive to Prepaid Protected shipments).\n\nTo enable RTO Protection, first switch payment mode to Prepaid by typing *"edit mode"*.`;
           } else {
             data.rtoProtectionEnabled = !data.rtoProtectionEnabled;
             agentReply = `🛡️ RTO Protection updated to: *${data.rtoProtectionEnabled ? 'Active' : 'Disabled'}* ✅\n\n` + buildSummaryConfirmation(session, data, user);
@@ -1258,7 +1258,7 @@ const handleChat = async (req, res) => {
               `🚫 *COD / Offline Shipping Suspended — Negative Wallet Balance*\n\n` +
               `Your seller wallet balance is negative (*-₹${Math.abs(availableWallet).toFixed(2)}*).\n\n` +
               `COD and Offline Paid shipment bookings are suspended until outstanding dues are cleared.\n\n` +
-              `💡 *How to unlock:* Switch this order to *Prepaid Escrow* by replying *"edit mode"*, or recharge your wallet in the *Wallet* tab.`;
+              `💡 *How to unlock:* Switch this order to *Prepaid* by replying *"edit mode"*, or recharge your wallet in the *Wallet* tab.`;
             break;
           }
 
@@ -1403,7 +1403,7 @@ const handleChat = async (req, res) => {
               `📦 *Auto-Scheduled Pickup Slot:* ${pickupResult.pickupSlot}\n` +
               `🏷️ *Pickup Reference:* ${pickupResult.pickupToken}\n` +
               `👤 *Assigned Executive:* ${pickupResult.executive?.name} (${pickupResult.executive?.phone})\n` +
-              `💰 *Escrow Amount:* ${fmt(data.amount)}\n` +
+              `💰 *Order Amount:* ${fmt(data.amount)}\n` +
               `📱 *Payment link sent to ${data.receiverName}* via WhatsApp & SMS\n` +
               `📍 *Delivery Address:* ${data.receiverAddress}\n` +
               `⚖️ *Package:* ${data.weightKg} kg (${data.lengthCm || 15}×${data.widthCm || 10}×${data.heightCm || 5} cm)\n\n` +
