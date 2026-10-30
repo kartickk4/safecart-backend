@@ -1399,7 +1399,7 @@ const handleChat = async (req, res) => {
               `✅ *Shipment Booked & Courier Pickup Auto-Scheduled!*\n\n` +
               `🆔 *Shipment ID:* ${shipmentId}\n` +
               `🚚 *Cheapest Carrier:* ${carrierBadge} (Delivery Charge: ₹${rateBadge})\n` +
-              `🌐 *Powered by Shiprocket API:* Lowest rate auto-assigned across all courier partners.\n` +
+              `🌐 *Smart Courier Routing:* Lowest rate auto-assigned across all courier partners.\n` +
               `📦 *Auto-Scheduled Pickup Slot:* ${pickupResult.pickupSlot}\n` +
               `🏷️ *Pickup Reference:* ${pickupResult.pickupToken}\n` +
               `👤 *Assigned Executive:* ${pickupResult.executive?.name} (${pickupResult.executive?.phone})\n` +

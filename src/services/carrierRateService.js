@@ -312,7 +312,7 @@ async function fetchLiveShiprocketRates(fromPincode, toPincode, weightKg = 0.5, 
         eta: c.etd ? `Delivery by ${c.etd}` : (c.estimated_delivery_days ? `In ${c.estimated_delivery_days} Days` : '2 Days'),
         rating: parseFloat(c.rating) || 4.5,
         mode: c.is_surface ? 'Surface' : 'Air',
-        apiSource: 'Shiprocket Live API',
+        apiSource: 'Shiprocket Live Network',
         zone: `${getZone(fromPincode)}-${getZone(toPincode)}`,
         serviceType: `${c.is_surface ? 'Surface' : 'Air'} Express (Live Shiprocket Rate)`
       };

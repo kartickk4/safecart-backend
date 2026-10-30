@@ -201,7 +201,7 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
     shipment.pickupLocationAddress = pickupAddressStr;
     shipment.pickupRateComparison = comparison;
     const isNimbus = String(assignedCarrierSlug || '').startsWith('nimbus_');
-    shipment.pickupAggregator = isNimbus ? 'NimbusPost Multi-Carrier API' : 'Shiprocket Multi-Carrier API';
+    shipment.pickupAggregator = isNimbus ? 'NimbusPost Multi-Carrier Network' : 'Shiprocket Multi-Carrier Network';
 
     // Hybrid Dispatch: Push order to NimbusPost or Shiprocket based on the selected courier
     if (isNimbus) {

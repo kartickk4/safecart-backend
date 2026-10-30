@@ -552,7 +552,7 @@ const createOrderInShiprocket = async (shipment, senderUser) => {
 
       shipment.shiprocketOrderId = srOrderId || null;
       shipment.shiprocketShipmentId = srShipmentId || null;
-      shipment.pickupAggregator = 'Shiprocket Multi-Carrier API';
+      shipment.pickupAggregator = 'Shiprocket Multi-Carrier Network';
 
       // 3. AUTOMATIC ZERO-TOUCH DISPATCH: Assign courier, generate live AWB & schedule pickup
       const senderPincode = (

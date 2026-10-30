@@ -149,8 +149,8 @@ async function fetchLiveNimbusRates(fromPincode, toPincode, weightKg = 0.5, dime
         eta,
         rating: parseFloat(c.rating) || 4.7,
         mode: isSurface ? 'Surface' : 'Air',
-        apiSource: 'NimbusPost Live API',
-        serviceType: `${courierDisplayName} via NimbusPost Live API`
+        apiSource: 'NimbusPost Live Network',
+        serviceType: `${courierDisplayName} via NimbusPost Logistics`
       };
     });
   } catch (err) {
