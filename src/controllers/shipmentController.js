@@ -1109,54 +1109,60 @@ const dispatchShipment = async (req, res) => {
     const rawPhone = (shipment.receiverPhone || '').replace(/\D/g, '');
     const trackUrl = `${frontendBase}/track/${shipment.shipmentId}${rawPhone ? `?phone=${rawPhone.slice(-10)}` : ''}`;
 
-    // Automatically dispatch tracking alert to Receiver via WhatsApp
-    try {
-      await whatsappService.sendDispatchTrackingWhatsApp({
-        phone: shipment.receiverPhone,
-        receiverName: shipment.receiverName,
-        shipmentId: shipment.shipmentId,
-        carrierName: shipment.carrierSlug?.toUpperCase() || 'Courier Partner',
-        awbCode: shipment.awbCode,
-        trackUrl,
-        description: shipment.description
-      });
-    } catch (waErr) {
-      console.error('[DISPATCH] WhatsApp notification failed (non-blocking):', waErr.message);
-    }
-
-    // Automatically dispatch tracking alert to Receiver via SMS
-    try {
-      await smsService.sendDispatchTrackingSms({
-        phone: shipment.receiverPhone,
-        shipmentId: shipment.shipmentId,
-        receiverName: shipment.receiverName,
-        carrierSlug: shipment.carrierSlug,
-        awbCode: shipment.awbCode,
-        trackUrl
-      });
-    } catch (smsErr) {
-      console.error('[DISPATCH] SMS notification failed (non-blocking):', smsErr.message);
-    }
-
-    // In-app notification for receiver if registered on SecureKaro
-    if (rawPhone.length >= 10) {
+    // ASYNC BACKGROUND TASK: Offload WhatsApp, SMS, and in-app alerts to background
+    // This allows the HTTP response to return to the user in <50ms without waiting for telecom gateways.
+    setImmediate(async () => {
+      // Automatically dispatch tracking alert to Receiver via WhatsApp
       try {
-        const receiverUser = await User.findOne({
-          phone: new RegExp(rawPhone.slice(-10) + '$')
+        await whatsappService.sendDispatchTrackingWhatsApp({
+          phone: shipment.receiverPhone,
+          receiverName: shipment.receiverName,
+          shipmentId: shipment.shipmentId,
+          carrierName: shipment.carrierSlug?.toUpperCase() || 'Courier Partner',
+          awbCode: shipment.awbCode,
+          trackUrl,
+          description: shipment.description
         });
-        if (receiverUser && receiverUser._id) {
-          await createNotification(
-            receiverUser._id,
-            'local_shipping',
-            `Parcel Dispatched: ${shipment.shipmentId}`,
-            `Your parcel has been dispatched with ${shipment.carrierSlug?.toUpperCase() || 'courier'} (AWB: ${shipment.awbCode}). Track live: ${trackUrl}`,
-            'shipping'
-          );
-        }
-      } catch (notifErr) {
-        console.error('[DISPATCH] In-app receiver notification failed (non-blocking):', notifErr.message);
+      } catch (waErr) {
+        console.error('[DISPATCH] WhatsApp notification failed (non-blocking):', waErr.message);
       }
-    }
+  
+      // Automatically dispatch tracking alert to Receiver via SMS
+      try {
+        await smsService.sendDispatchTrackingSms({
+          phone: shipment.receiverPhone,
+          shipmentId: shipment.shipmentId,
+          receiverName: shipment.receiverName,
+          carrierSlug: shipment.carrierSlug,
+          awbCode: shipment.awbCode,
+          trackUrl
+        });
+      } catch (smsErr) {
+        console.error('[DISPATCH] SMS notification failed (non-blocking):', smsErr.message);
+      }
+  
+      // In-app notification for receiver if registered on SecureKaro
+      if (rawPhone.length >= 10) {
+        try {
+          const receiverUser = await User.findOne({
+            phone: new RegExp(rawPhone.slice(-10) + '$')
+          });
+          if (receiverUser && receiverUser._id) {
+            await createNotification(
+              receiverUser._id,
+              'local_shipping',
+              `Parcel Dispatched: ${shipment.shipmentId}`,
+              `Your parcel has been dispatched with ${shipment.carrierSlug?.toUpperCase() || 'courier'} (AWB: ${shipment.awbCode}). Track live: ${trackUrl}`,
+              'shipping'
+            );
+          }
+        } catch (notifErr) {
+          console.error('[DISPATCH] In-app receiver notification failed (non-blocking):', notifErr.message);
+        }
+      }
+  
+  
+    });
 
     res.json({
       message: 'Courier tracking details registered successfully',
