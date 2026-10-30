@@ -1,4 +1,5 @@
 const axios = require('axios');
+const crypto = require('crypto');
 
 const CASHFREE_SECRET_KEY = process.env.CASHFREE_SECRET_KEY || '';
 const CASHFREE_APP_ID = process.env.CASHFREE_APP_ID || '';
@@ -177,18 +178,127 @@ const requestPayout = async ({
 
 /**
  * Cryptographically verifies inbound Cashfree webhook signatures using timing-safe HMAC-SHA256
+ * Supports optional timestamp anti-replay verification (10 minutes window)
  */
-const verifyCashfreeWebhookSignature = (rawBody, signature, timestamp) => {
-  if (!CASHFREE_SECRET_KEY || !signature) return false;
+const verifyCashfreeWebhookSignature = (rawBody, signature, timestamp, options = {}) => {
+  const secret = options.secretKey || CASHFREE_SECRET_KEY;
+  if (!secret || !signature) return false;
+
+  // Anti-replay timestamp check if timestamp provided
+  if (timestamp) {
+    const tsNumber = Number(timestamp);
+    const tsEpoch = isNaN(tsNumber) ? new Date(timestamp).getTime() : (tsNumber < 10000000000 ? tsNumber * 1000 : tsNumber);
+    if (!isNaN(tsEpoch)) {
+      const REPLAY_WINDOW_MS = (options.replayWindowSeconds || 600) * 1000; // 10 mins
+      if (Math.abs(Date.now() - tsEpoch) > REPLAY_WINDOW_MS) {
+        console.warn(`[Cashfree Webhook Security] Replay attack prevented: timestamp ${timestamp} exceeds window.`);
+        return false;
+      }
+    }
+  }
+
   try {
-    const data = timestamp ? `${timestamp}${rawBody}` : rawBody;
-    const expected = crypto.createHmac('sha256', CASHFREE_SECRET_KEY).update(data).digest('base64');
+    const bodyStr = typeof rawBody === 'string' ? rawBody : (Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : JSON.stringify(rawBody));
+    const data = timestamp ? `${timestamp}${bodyStr}` : bodyStr;
+    const expected = crypto.createHmac('sha256', secret).update(data).digest('base64');
     const expectedBuf = Buffer.from(expected);
     const signatureBuf = Buffer.from(signature);
     if (expectedBuf.length !== signatureBuf.length) return false;
     return crypto.timingSafeEqual(expectedBuf, signatureBuf);
   } catch (e) {
+    console.error('[Cashfree Webhook HMAC Error]:', e.message);
     return false;
+  }
+};
+
+/**
+ * Server-to-server payment status verification with Cashfree PG
+ * Queries Cashfree official orders endpoint directly to prevent client-side payment spoofing.
+ *
+ * @param {Object} params
+ * @param {string} params.orderId - Cashfree order ID
+ * @param {number} params.expectedAmount - Expected amount in INR
+ * @param {string} [params.paymentId] - Specific payment ID to verify
+ * @param {string} [params.expectedCurrency='INR'] - Expected currency
+ * @returns {Promise<{ verified: boolean, payment?: Object, error?: string, isMock?: boolean }>}
+ */
+const verifyPaymentWithGateway = async ({ orderId, expectedAmount, paymentId, expectedCurrency = 'INR' }) => {
+  // If Cashfree API credentials are not set, check if mock payments are explicitly permitted in non-prod
+  if (!CASHFREE_APP_ID || !CASHFREE_SECRET_KEY) {
+    if (process.env.NODE_ENV !== 'production' && process.env.ALLOW_MOCK_PAYMENTS === 'true') {
+      console.warn(`[Cashfree Gateway Security] ALLOW_MOCK_PAYMENTS active in ${process.env.NODE_ENV || 'dev'} — simulating successful payment for ${orderId}`);
+      return {
+        verified: true,
+        isMock: true,
+        payment: {
+          order_id: orderId,
+          payment_id: paymentId || `MOCK_PAY_${Date.now()}`,
+          payment_amount: Number(expectedAmount),
+          payment_currency: expectedCurrency,
+          payment_status: 'SUCCESS'
+        }
+      };
+    }
+    return {
+      verified: false,
+      error: 'Payment gateway credentials not configured on server and mock payments are disabled.'
+    };
+  }
+
+  try {
+    const cleanOrderId = encodeURIComponent(String(orderId).trim());
+    const response = await axios.get(`${BASE_URL}/orders/${cleanOrderId}/payments`, {
+      headers: {
+        'x-client-id': CASHFREE_APP_ID,
+        'x-client-secret': CASHFREE_SECRET_KEY,
+        'x-api-version': '2023-08-01'
+      },
+      timeout: 10000
+    });
+
+    const payments = Array.isArray(response.data) ? response.data : [];
+    if (payments.length === 0) {
+      return { verified: false, error: 'No payments found for this order on gateway.' };
+    }
+
+    // Find successful payment matching paymentId or any successful payment for this order
+    const successfulPayment = payments.find(p => {
+      const statusMatches = String(p.payment_status || '').toUpperCase() === 'SUCCESS';
+      if (!statusMatches) return false;
+      if (paymentId && p.cf_payment_id) {
+        return String(p.cf_payment_id) === String(paymentId) || String(p.payment_id) === String(paymentId);
+      }
+      return true;
+    });
+
+    if (!successfulPayment) {
+      return { verified: false, error: 'No successful payment record found for this order.' };
+    }
+
+    // Verify amount match (with minor 0.01 tolerance for floating point)
+    const paidAmount = Number(successfulPayment.payment_amount);
+    const expected = Number(expectedAmount);
+    if (Math.abs(paidAmount - expected) > 0.05) {
+      console.warn(`[Cashfree Gateway Security] Amount mismatch! Paid: ₹${paidAmount}, Expected: ₹${expected}`);
+      return { verified: false, error: `Amount mismatch: gateway recorded ₹${paidAmount}, expected ₹${expected}.` };
+    }
+
+    // Verify currency match
+    const paidCurrency = String(successfulPayment.payment_currency || 'INR').toUpperCase();
+    if (paidCurrency !== expectedCurrency.toUpperCase()) {
+      return { verified: false, error: `Currency mismatch: gateway recorded ${paidCurrency}, expected ${expectedCurrency}.` };
+    }
+
+    return {
+      verified: true,
+      payment: successfulPayment,
+      isMock: false
+    };
+
+  } catch (error) {
+    const errMsg = error.response?.data?.message || error.message;
+    console.error(`[Cashfree Gateway Verification Error for order ${orderId}]:`, errMsg);
+    return { verified: false, error: `Gateway verification request failed: ${errMsg}` };
   }
 };
 
@@ -196,5 +306,6 @@ module.exports = {
   createPaymentLink,
   getPaymentLinkDetails,
   requestPayout,
-  verifyCashfreeWebhookSignature
+  verifyCashfreeWebhookSignature,
+  verifyPaymentWithGateway
 };

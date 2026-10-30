@@ -940,6 +940,32 @@ const publicPayShipment = async (req, res) => {
   }
 };
 
+// In-memory idempotency guard for Cashfree webhooks (24h TTL)
+const processedCashfreeEventIds = new Map();
+const CASHFREE_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+
+const isCashfreeEventProcessed = (eventId) => {
+  if (!eventId) return false;
+  const ts = processedCashfreeEventIds.get(eventId);
+  if (!ts) return false;
+  if (Date.now() - ts > CASHFREE_IDEMPOTENCY_TTL_MS) {
+    processedCashfreeEventIds.delete(eventId);
+    return false;
+  }
+  return true;
+};
+
+const markCashfreeEventProcessed = (eventId) => {
+  if (!eventId) return;
+  processedCashfreeEventIds.set(eventId, Date.now());
+  if (processedCashfreeEventIds.size > 20000) {
+    const cutoff = Date.now() - CASHFREE_IDEMPOTENCY_TTL_MS;
+    for (const [id, ts] of processedCashfreeEventIds.entries()) {
+      if (ts < cutoff) processedCashfreeEventIds.delete(id);
+    }
+  }
+};
+
 /**
  * @desc    Payment gateway webhook (Cashfree / PhonePe / Easebuzz)
  * @route   POST /api/v1/shipments/webhook/payment
@@ -948,18 +974,61 @@ const publicPayShipment = async (req, res) => {
 const paymentWebhookHandler = async (req, res) => {
   try {
     const event = req.body;
-    console.log('[Shipment Payment Webhook] Received payment event:', event?.type || 'event');
+    console.log('[Shipment Payment Webhook] Inbound payment event received:', event?.type || 'event');
 
-    // SECURITY: Verify Cashfree webhook HMAC signature if header is present
+    // 1. SECURITY: Cryptographic HMAC Signature Verification (Cashfree)
     const signature = req.headers['x-webhook-signature'];
     const timestamp = req.headers['x-webhook-timestamp'];
-    if (signature && process.env.CASHFREE_SECRET_KEY) {
+    const hasSecret = Boolean(process.env.CASHFREE_SECRET_KEY);
+    const isMockBypass = process.env.NODE_ENV !== 'production' && !hasSecret;
+
+    if (!isMockBypass) {
+      if (!signature) {
+        console.warn('[Shipment Webhook Security] Rejected: Missing required x-webhook-signature header');
+        return res.status(401).json({ error: 'Missing webhook signature' });
+      }
       const rawPayload = req.rawBody ? req.rawBody.toString('utf8') : JSON.stringify(req.body);
       const isValid = cashfreeService.verifyCashfreeWebhookSignature(rawPayload, signature, timestamp);
-      if (!isValid && process.env.NODE_ENV === 'production') {
-        console.warn('[Shipment Webhook] Invalid HMAC signature received — rejecting webhook.');
+      if (!isValid) {
+        console.warn('[Shipment Webhook Security] Rejected: Invalid HMAC signature');
         return res.status(401).json({ error: 'Invalid webhook signature' });
       }
+    }
+
+    // 2. Idempotency & Replay Prevention
+    const eventId = String(
+      event?.event_id || 
+      event?.data?.payment?.cf_payment_id || 
+      event?.data?.order?.order_id || 
+      event?.payment_id || 
+      ''
+    );
+    if (eventId && isCashfreeEventProcessed(eventId)) {
+      console.log(`[Shipment Webhook Security] Duplicate event ignored (idempotent): ${eventId}`);
+      return res.status(200).json({ status: 'OK', note: 'Event already processed' });
+    }
+
+    // 3. Status Verification: Ensure payment actually SUCCEEDED
+    const eventType = String(event?.type || '').toUpperCase();
+    const paymentStatus = String(
+      event?.data?.payment?.payment_status || 
+      event?.data?.order?.order_status || 
+      event?.status || 
+      ''
+    ).toUpperCase();
+
+    const isSuccessEvent = eventType.includes('SUCCESS') || paymentStatus === 'SUCCESS' || paymentStatus === 'PAID';
+    if (!isSuccessEvent) {
+      console.log(`[Shipment Webhook] Non-success payment event acknowledged (type: ${eventType}, status: ${paymentStatus})`);
+      if (eventId) markCashfreeEventProcessed(eventId);
+      return res.status(200).json({ status: 'OK', note: 'Non-success event acknowledged' });
+    }
+
+    // 4. Currency Verification: Must be INR
+    const currency = String(event?.data?.payment?.payment_currency || event?.data?.order?.order_currency || 'INR').toUpperCase();
+    if (currency !== 'INR') {
+      console.warn(`[Shipment Webhook Security] Currency mismatch: ${currency} !== INR`);
+      return res.status(400).json({ error: 'Invalid currency' });
     }
 
     const targetRef = event?.data?.order?.order_id || 
@@ -978,15 +1047,32 @@ const paymentWebhookHandler = async (req, res) => {
         ]
       });
 
-      if (shipment && !shipment.receiverPaymentDone) {
-        await executeOrderPaymentAndCourierBooking(shipment, {
-          transactionRef: event?.data?.payment?.cf_payment_id || event?.payment_id || `WH_${Date.now()}`,
-          gateway: 'gateway_webhook'
-        });
-        console.log(`[Shipment Payment Webhook] Successfully booked courier for ${shipment.shipmentId}`);
+      if (shipment) {
+        // 5. Amount Cross-Verification: Prevent underpayment exploits
+        const paidAmount = Number(
+          event?.data?.payment?.payment_amount || 
+          event?.data?.order?.order_amount || 
+          event?.amount || 
+          0
+        );
+        const expectedAmount = Number(shipment.escrowAmount || shipment.totalAmount || shipment.itemPrice || 0);
+
+        if (expectedAmount > 0 && paidAmount > 0 && Math.abs(paidAmount - expectedAmount) > 1.0) {
+          console.warn(`[Shipment Webhook Security Alert] Amount mismatch for ${shipment.shipmentId}: Paid ₹${paidAmount}, expected ₹${expectedAmount}`);
+          return res.status(400).json({ error: 'Payment amount mismatch' });
+        }
+
+        if (!shipment.receiverPaymentDone) {
+          await executeOrderPaymentAndCourierBooking(shipment, {
+            transactionRef: event?.data?.payment?.cf_payment_id || event?.payment_id || `WH_${Date.now()}`,
+            gateway: 'cashfree_webhook'
+          });
+          console.log(`[Shipment Payment Webhook] Successfully verified payment and booked courier for ${shipment.shipmentId}`);
+        }
       }
     }
 
+    if (eventId) markCashfreeEventProcessed(eventId);
     res.status(200).json({ status: 'OK' });
   } catch (error) {
     console.error('[Shipment Payment Webhook] Error:', error);

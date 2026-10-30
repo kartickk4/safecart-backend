@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const User = require('../models/User');
 const WalletTransaction = require('../models/WalletTransaction');
+const cashfreeService = require('../services/cashfreeService');
 
 /**
  * @desc    Create a payment order for recharging seller wallet
@@ -107,14 +108,32 @@ const verifyPayment = async (req, res) => {
       });
     }
 
-    // 2. Fetch current balance snapshot
+    // 2. Gateway Verification: Never trust client-side claims alone
+    const normalizedGateway = (gateway || 'cashfree').toLowerCase();
+    if (normalizedGateway === 'cashfree') {
+      const verification = await cashfreeService.verifyPaymentWithGateway({
+        orderId: orderId || effectivePaymentId,
+        paymentId: effectivePaymentId,
+        expectedAmount: calculatedTotal || numAmount,
+        expectedCurrency: 'INR'
+      });
+
+      if (!verification.verified) {
+        console.warn(`[Wallet Recharge Security] Payment verification failed for user ${req.user._id}: ${verification.error}`);
+        return res.status(400).json({
+          error: verification.error || 'Payment verification failed with gateway. Wallet was not credited.'
+        });
+      }
+    }
+
+    // 3. Fetch current balance snapshot
     const userSnapshot = await User.findById(req.user._id);
     if (!userSnapshot) {
       return res.status(404).json({ error: 'User not found.' });
     }
     const balanceBefore = parseFloat((Number(userSnapshot.walletBalance) || 0).toFixed(2));
 
-    // 3. Atomic credit to User wallet to prevent race condition lost updates
+    // 4. Atomic credit to User wallet to prevent race condition lost updates
     const user = await User.findOneAndUpdate(
       { _id: req.user._id },
       { $inc: { walletBalance: numAmount } },
