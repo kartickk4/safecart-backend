@@ -160,18 +160,30 @@ const getShipments = async (req, res) => {
       query = { $or: queryConditions };
     }
 
+    // Server-Side High-Efficiency Pagination
+    const totalCount = await Shipment.countDocuments(query);
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = req.query.limit 
+      ? Math.min(100, Math.max(1, parseInt(req.query.limit, 10))) 
+      : (req.query.page ? 20 : 0);
+
     let shipmentQuery = Shipment.find(query)
       .select('-parcelPhoto -defectPhoto')
       .sort({ createdAt: -1 });
 
-    if (req.query.limit || req.query.page) {
-      const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-      const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    if (limit > 0) {
       const skip = (page - 1) * limit;
       shipmentQuery = shipmentQuery.skip(skip).limit(limit);
     }
 
     const shipments = await shipmentQuery.lean();
+
+    const totalPages = limit > 0 ? Math.ceil(totalCount / limit) : 1;
+    res.setHeader('X-Total-Count', String(totalCount));
+    res.setHeader('X-Total-Pages', String(totalPages));
+    res.setHeader('X-Current-Page', String(page));
+    res.setHeader('X-Per-Page', String(limit || totalCount));
+
     res.json(shipments);
   } catch (error) {
     console.error('Get Shipments Error:', error);
