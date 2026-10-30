@@ -311,7 +311,7 @@ const sendOtp = async (req, res) => {
     });
 
     try {
-      await smsService.sendSmsOtp(normalizedPhone, otpCode);
+      await smsService.sendSmsOtp(normalizedPhone, otpCode, 'SIGNUP_AUTH');
     } catch (smsErr) {
       console.warn('[SMS SERVICE Dispatch Warning]:', smsErr.message);
     }
@@ -647,7 +647,7 @@ const forgotPassword = async (req, res) => {
     let smsDispatched = false;
     if (phoneToSendSms) {
       try {
-        await smsService.sendSmsOtp(phoneToSendSms, otpCode);
+        await smsService.sendSmsOtp(phoneToSendSms, otpCode, 'PASSWORD_RESET');
         smsDispatched = true;
       } catch (smsErr) {
         console.warn('[FORGOT PASSWORD] SMS OTP dispatch warning:', smsErr.message);

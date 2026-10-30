@@ -262,10 +262,106 @@ const sendPhotoReviewChoiceWhatsApp = async ({ phone, shipmentId, receiverName, 
   }
 };
 
+/**
+ * Sends a delivery confirmation sign-off OTP via WhatsApp to the receiver.
+ */
+const sendDeliveryOtpWhatsApp = async ({ phone, receiverName, shipmentId, otp, isReplacement }) => {
+  const digits = (phone || '').toString().replace(/\D/g, '').slice(-10);
+  const e164Phone = digits.length === 10 ? `91${digits}` : (phone || '').toString().replace(/\D/g, '');
+
+  const parcelType = isReplacement ? 'Replacement Parcel' : 'Parcel';
+  const messageText =
+    `🔐 *SecureKaro — Delivery Verification OTP*\n\n` +
+    `Hello ${receiverName || 'there'}! 👋\n\n` +
+    `Your OTP for confirming delivery of *${parcelType} #${shipmentId}* is:\n\n` +
+    `*${otp}*\n\n` +
+    `⏱️ Valid for *10 minutes*.\n` +
+    `⚠️ Please enter this OTP on the delivery verification screen ONLY after physically inspecting your package.\n\n` +
+    `_Powered by SecureKaro Delivery Protection_`;
+
+  console.log(`[WHATSAPP] ${WA_ENABLED ? 'Sending' : 'SIMULATING'} delivery OTP to +${e164Phone}`);
+
+  if (!WA_ENABLED) {
+    return { success: true, mode: 'simulated', phone: e164Phone, messageText, otp };
+  }
+
+  try {
+    const response = await axios.post(
+      `https://graph.facebook.com/v21.0/${WA_PHONE_ID}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        to: e164Phone,
+        type: 'text',
+        text: { body: messageText }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${WA_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      }
+    );
+    return { success: true, mode: 'live', phone: e164Phone, messageId: response.data?.messages?.[0]?.id };
+  } catch (err) {
+    console.warn('[WHATSAPP] Delivery OTP API note:', err.response?.data || err.message);
+    return { success: false, mode: 'failed', error: err.response?.data?.error?.message || err.message };
+  }
+};
+
+/**
+ * Sends payout released notification via WhatsApp.
+ */
+const sendPayoutReleasedWhatsApp = async ({ phone, senderName, shipmentId, amount, netPayout, method }) => {
+  const digits = (phone || '').toString().replace(/\D/g, '').slice(-10);
+  const e164Phone = digits.length === 10 ? `91${digits}` : (phone || '').toString().replace(/\D/g, '');
+
+  const messageText =
+    `💰 *SecureKaro — Payout Released!*\n\n` +
+    `Hello ${senderName || 'Merchant'}! 🎉\n\n` +
+    `Order *#${shipmentId}* delivery has been confirmed and verified.\n\n` +
+    `💵 *Order Value:* ₹${Number(amount || 0).toLocaleString('en-IN')}\n` +
+    `✅ *Net Payout Released:* ₹${Number(netPayout || amount || 0).toLocaleString('en-IN')}\n` +
+    `🏦 *Credited To:* ${method || 'Merchant Wallet Balance'}\n\n` +
+    `You can withdraw your funds anytime to your registered bank account or UPI ID.\n\n` +
+    `_Thank you for shipping with SecureKaro!_`;
+
+  console.log(`[WHATSAPP] ${WA_ENABLED ? 'Sending' : 'SIMULATING'} payout notification to +${e164Phone}`);
+
+  if (!WA_ENABLED) {
+    return { success: true, mode: 'simulated', phone: e164Phone, messageText };
+  }
+
+  try {
+    const response = await axios.post(
+      `https://graph.facebook.com/v21.0/${WA_PHONE_ID}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        to: e164Phone,
+        type: 'text',
+        text: { body: messageText }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${WA_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      }
+    );
+    return { success: true, mode: 'live', phone: e164Phone, messageId: response.data?.messages?.[0]?.id };
+  } catch (err) {
+    console.warn('[WHATSAPP] Payout WhatsApp error:', err.response?.data || err.message);
+    return { success: false, mode: 'failed', error: err.message };
+  }
+};
+
 module.exports = { 
   sendPaymentLinkWhatsApp, 
   sendBookingConfirmationWhatsApp,
   sendDispatchTrackingWhatsApp,
   sendReverseCourierAssignedWhatsApp,
-  sendPhotoReviewChoiceWhatsApp
+  sendPhotoReviewChoiceWhatsApp,
+  sendDeliveryOtpWhatsApp,
+  sendPayoutReleasedWhatsApp
 };

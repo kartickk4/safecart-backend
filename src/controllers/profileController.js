@@ -405,7 +405,7 @@ const sendPhoneVerificationOtp = async (req, res) => {
     const smsService = loadMod('services', 'smsService');
     try {
       if (smsService && smsService.sendSmsOtp) {
-        await smsService.sendSmsOtp(normalizedPhone, otpCode);
+        await smsService.sendSmsOtp(normalizedPhone, otpCode, 'BANK_DETAILS_UPDATE');
       }
     } catch (smsErr) {
       console.warn('[SMS Dispatch Warning]:', smsErr.message);

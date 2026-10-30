@@ -2409,13 +2409,25 @@ const publicQrSendOtp = async (req, res) => {
       shipment.replacementDeliveryOtpUsed = false;
       await shipment.save();
 
-      const phoneForSms = cleanStored.length === 10 ? cleanStored : cleanInput;
-      await smsService.sendSmsOtp(phoneForSms, otp);
+      const phoneForWa = cleanStored.length === 10 ? cleanStored : cleanInput;
+      try {
+        if (whatsappService && whatsappService.sendDeliveryOtpWhatsApp) {
+          await whatsappService.sendDeliveryOtpWhatsApp({
+            phone: phoneForWa,
+            receiverName: shipment.receiverName,
+            shipmentId: shipment.shipmentId,
+            otp,
+            isReplacement: true
+          });
+        }
+      } catch (waErr) {
+        console.warn('[Delivery OTP WhatsApp error]:', waErr.message);
+      }
 
       return res.json({
         success: true,
         isReplacement: true,
-        message: `Replacement delivery OTP sent to your registered mobile ending in ${cleanStored.slice(-4)}. Valid for 10 minutes.`,
+        message: `Replacement delivery OTP sent to your WhatsApp on number ending in ${cleanStored.slice(-4)}. Valid for 10 minutes.`,
         shipment: {
           shipmentId: shipment.shipmentId,
           receiverName: shipment.receiverName,
@@ -2451,8 +2463,20 @@ const publicQrSendOtp = async (req, res) => {
     await shipment.save();
 
     // ── Send SMS ─────────────────────────────────────────────────────────────
-    const phoneForSms = cleanStored.length === 10 ? cleanStored : cleanInput;
-    await smsService.sendSmsOtp(phoneForSms, otp);
+    const phoneForWa = cleanStored.length === 10 ? cleanStored : cleanInput;
+    try {
+      if (whatsappService && whatsappService.sendDeliveryOtpWhatsApp) {
+        await whatsappService.sendDeliveryOtpWhatsApp({
+          phone: phoneForWa,
+          receiverName: shipment.receiverName,
+          shipmentId: shipment.shipmentId,
+          otp,
+          isReplacement: false
+        });
+      }
+    } catch (waErr) {
+      console.warn('[Delivery OTP WhatsApp error]:', waErr.message);
+    }
 
     console.log(`[QR OTP] Sent OTP ${otp} to receiver of shipment ${shipment.shipmentId}`);
 

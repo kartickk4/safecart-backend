@@ -6,16 +6,33 @@ const axios = require('axios');
  * @param {string} phone - Target phone number (any format — we extract last 10 digits)
  * @param {string} otpCode - 6-digit OTP code to send
  */
-const sendSmsOtp = async (phone, otpCode) => {
+/**
+ * Strict SMS Delivery Policy:
+ * Under TRAI non-DLT constraints, Phone SMS is EXCLUSIVELY reserved for:
+ *  1. 'SIGNUP_AUTH'         - User sign-up / mobile phone verification OTP
+ *  2. 'PASSWORD_RESET'      - Forgot password / reset password OTP
+ *  3. 'BANK_DETAILS_UPDATE' - Bank account / UPI ID profile update OTP
+ *
+ * ALL other notifications (Order payment links, courier booking, tracking, 
+ * delivery verification OTPs, returns & payouts) are routed EXCLUSIVELY via WhatsApp.
+ */
+const ALLOWED_SMS_PURPOSES = ['SIGNUP_AUTH', 'PASSWORD_RESET', 'BANK_DETAILS_UPDATE'];
+
+const sendSmsOtp = async (phone, otpCode, purpose = 'SIGNUP_AUTH') => {
+  if (!ALLOWED_SMS_PURPOSES.includes(purpose)) {
+    console.warn(`[SMS POLICY ENFORCED] SMS suppressed for unauthorized purpose: '${purpose}'. Only Sign-Up, Password Reset, and Bank Details OTPs are delivered via Phone SMS. All other messages route through WhatsApp.`);
+    return { success: false, suppressed: true, reason: 'unauthorized_sms_purpose', otpCode };
+  }
+
   const fast2smsKey = process.env.FAST2SMS_API_KEY;
   const cleanPhone = (phone || '').toString().replace(/\D/g, '').slice(-10);
 
-  console.log(`[SMS OTP] Sending OTP ${otpCode} to +91${cleanPhone}`);
+  console.log(`[SMS OTP - ${purpose}] Sending OTP ${otpCode} to +91${cleanPhone}`);
 
   // Fallback: if no API key configured, log OTP so developers can test locally
   if (!fast2smsKey) {
-    console.warn(`[SMS OTP FALLBACK] No FAST2SMS_API_KEY set. OTP for +91${cleanPhone}: ${otpCode}`);
-    return { success: true, mode: 'fallback_no_key', otpCode };
+    console.warn(`[SMS OTP FALLBACK] No FAST2SMS_API_KEY set. OTP for +91${cleanPhone} [${purpose}]: ${otpCode}`);
+    return { success: true, mode: 'fallback_no_key', otpCode, purpose };
   }
 
   if (cleanPhone.length !== 10) {
@@ -34,18 +51,18 @@ const sendSmsOtp = async (phone, otpCode) => {
       timeout: 10000
     });
 
-    console.log(`[SMS OTP] Fast2SMS response for +91${cleanPhone}:`, response.data?.message || response.data);
+    console.log(`[SMS OTP - ${purpose}] Fast2SMS response for +91${cleanPhone}:`, response.data?.message || response.data);
     return {
       success: true,
       mode: 'fast2sms',
       phone: cleanPhone,
       otpCode,
+      purpose,
       requestId: response.data?.request_id
     };
   } catch (error) {
     const errMsg = error.response?.data?.message || error.message;
-    console.warn(`[SMS OTP] Fast2SMS delivery error for +91${cleanPhone}:`, errMsg);
-    // Still return the OTP so the auth flow does not break if SMS fails
+    console.warn(`[SMS OTP - ${purpose}] Fast2SMS delivery error for +91${cleanPhone}:`, errMsg);
     return { success: false, mode: 'fast2sms_error', otpCode, error: errMsg };
   }
 };

@@ -188,6 +188,22 @@ const releaseEscrow = async (shipmentId, receiverId) => {
       payoutMsg,
       'payment'
     );
+    // Instant WhatsApp Notification for Merchant Payout
+    try {
+      const whatsappService = require('./whatsappService');
+      if (whatsappService && whatsappService.sendPayoutReleasedWhatsApp && sender.phone) {
+        await whatsappService.sendPayoutReleasedWhatsApp({
+          phone: sender.phone,
+          senderName: sender.fullName,
+          shipmentId: shipment.shipmentId,
+          amount: shipment.amount,
+          netPayout,
+          method: sender.bankDetails?.accountNumber ? `Bank A/C (... ${sender.bankDetails.accountNumber.slice(-4)})` : (sender.bankDetails?.upiId ? `UPI (${sender.bankDetails.upiId})` : 'Wallet Balance')
+        });
+      }
+    } catch (waErr) {
+      console.warn('[Payout WhatsApp Notice Warning]:', waErr.message);
+    }
   }
 
   if (receiver) {
