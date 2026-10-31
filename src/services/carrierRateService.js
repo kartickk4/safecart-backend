@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { fetchLiveNimbusRates, getRealisticNimbusQuotes } = require('./nimbuspostService');
+const { fetchDirectDelhiveryRate } = require('./delhiveryService');
 const { cacheManager } = require('./cacheManager');
 
 // Pincode-to-zone mapping (first 3 digits of 6-digit pincode)
@@ -364,29 +365,117 @@ const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dime
   });
 
   return cacheManager.getOrSet(rateCacheKey, async () => {
-    // Concurrently fetch rates from both aggregators
-    const [shiprocketSettled, nimbusSettled] = await Promise.allSettled([
-      fetchLiveShiprocketRates(cleanFrom, cleanTo, normalizedWeight, dimensions, isCod, declaredValue, isSecureShipment),
-      fetchLiveNimbusRates(cleanFrom, cleanTo, normalizedWeight, dimensions, isCod, declaredValue, isSecureShipment)
+    // Concurrently fetch rates from Direct Delhivery, NimbusPost, and Shiprocket
+    const [delhiverySettled, nimbusSettled, shiprocketSettled] = await Promise.allSettled([
+      fetchDirectDelhiveryRate({
+        fromPincode: cleanFrom,
+        toPincode: cleanTo,
+        weightKg: normalizedWeight,
+        dimensions,
+        isCod,
+        declaredValue,
+        isSecureShipment
+      }),
+      fetchLiveNimbusRates(cleanFrom, cleanTo, normalizedWeight, dimensions, isCod, declaredValue, isSecureShipment),
+      fetchLiveShiprocketRates(cleanFrom, cleanTo, normalizedWeight, dimensions, isCod, declaredValue, isSecureShipment)
     ]);
 
-    let shiprocketQuotes = shiprocketSettled.status === 'fulfilled' && shiprocketSettled.value ? shiprocketSettled.value : null;
-    if (!shiprocketQuotes || shiprocketQuotes.length === 0) {
-      shiprocketQuotes = getCarrierRates(cleanFrom, cleanTo, normalizedWeight, dimensions, isReverse, isCod, declaredValue, isSecureShipment);
-    }
+    const directDelhiveryQuote = (delhiverySettled.status === 'fulfilled' && delhiverySettled.value) 
+      ? delhiverySettled.value 
+      : null;
 
-    let nimbusQuotes = nimbusSettled.status === 'fulfilled' && nimbusSettled.value ? nimbusSettled.value : null;
+    let nimbusQuotes = (nimbusSettled.status === 'fulfilled' && nimbusSettled.value) 
+      ? nimbusSettled.value 
+      : null;
     if (!nimbusQuotes || nimbusQuotes.length === 0) {
       nimbusQuotes = getRealisticNimbusQuotes(cleanFrom, cleanTo, normalizedWeight, isCod, declaredValue, isSecureShipment);
     }
 
-    // Merge quotes from both aggregators
-    const combinedQuotes = [...shiprocketQuotes, ...nimbusQuotes];
+    let shiprocketQuotes = (shiprocketSettled.status === 'fulfilled' && shiprocketSettled.value) 
+      ? shiprocketSettled.value 
+      : null;
+    if (!shiprocketQuotes || shiprocketQuotes.length === 0) {
+      shiprocketQuotes = getCarrierRates(cleanFrom, cleanTo, normalizedWeight, dimensions, isReverse, isCod, declaredValue, isSecureShipment);
+    }
 
-    // Sort cheapest first
+    // --- DELHIVERY RATE ARBITRAGE (Direct Delhivery vs NimbusPost Delhivery) ---
+    // Separate Delhivery quotes from other carriers in NimbusPost
+    const nimbusDelhiveryQuotes = [];
+    const nonDelhiveryNimbusQuotes = [];
+
+    for (const q of nimbusQuotes) {
+      const isDelhivery = (q.baseSlug === 'delhivery') || 
+                          (q.slug && q.slug.toLowerCase().includes('delhivery')) ||
+                          (q.name && q.name.toLowerCase().includes('delhivery')) ||
+                          (q.courierPartner && q.courierPartner.toLowerCase().includes('delhivery'));
+      if (isDelhivery) {
+        nimbusDelhiveryQuotes.push(q);
+      } else {
+        nonDelhiveryNimbusQuotes.push(q);
+      }
+    }
+
+    // Compare Direct Delhivery with Nimbus Delhivery and pick whichever is lower
+    let winningDelhiveryQuote = null;
+
+    if (directDelhiveryQuote && nimbusDelhiveryQuotes.length > 0) {
+      nimbusDelhiveryQuotes.sort((a, b) => a.price - b.price);
+      const cheapestNimbusDelhivery = nimbusDelhiveryQuotes[0];
+
+      if (directDelhiveryQuote.price <= cheapestNimbusDelhivery.price) {
+        // Direct Delhivery is cheaper or equal
+        const savings = Math.max(0, parseFloat((cheapestNimbusDelhivery.price - directDelhiveryQuote.price).toFixed(2)));
+        directDelhiveryQuote.rateSavings = savings;
+        directDelhiveryQuote.savingsBadge = savings > 0 
+          ? `Direct Delhivery (Save ₹${savings} vs Nimbus)` 
+          : 'Direct Delhivery (Lowest Rate)';
+        directDelhiveryQuote.isArbitrageWinner = true;
+        directDelhiveryQuote.arbitrageSource = 'delhivery_direct';
+        winningDelhiveryQuote = directDelhiveryQuote;
+        console.log(`[Delhivery Arbitrage] Direct Delhivery selected (₹${directDelhiveryQuote.price} <= Nimbus ₹${cheapestNimbusDelhivery.price}). Saved ₹${savings}`);
+      } else {
+        // NimbusPost Delhivery is cheaper!
+        const savings = Math.max(0, parseFloat((directDelhiveryQuote.price - cheapestNimbusDelhivery.price).toFixed(2)));
+        cheapestNimbusDelhivery.rateSavings = savings;
+        cheapestNimbusDelhivery.savingsBadge = savings > 0 
+          ? `Nimbus Delhivery Promo (Save ₹${savings} vs Direct)` 
+          : 'Nimbus Delhivery (Lowest Rate)';
+        cheapestNimbusDelhivery.isArbitrageWinner = true;
+        cheapestNimbusDelhivery.arbitrageSource = 'nimbuspost';
+        winningDelhiveryQuote = cheapestNimbusDelhivery;
+        console.log(`[Delhivery Arbitrage] Nimbus Delhivery selected (₹${cheapestNimbusDelhivery.price} < Direct ₹${directDelhiveryQuote.price}). Saved ₹${savings}`);
+      }
+    } else if (directDelhiveryQuote) {
+      directDelhiveryQuote.savingsBadge = 'Direct Delhivery Live';
+      directDelhiveryQuote.isArbitrageWinner = true;
+      directDelhiveryQuote.arbitrageSource = 'delhivery_direct';
+      winningDelhiveryQuote = directDelhiveryQuote;
+    } else if (nimbusDelhiveryQuotes.length > 0) {
+      nimbusDelhiveryQuotes.sort((a, b) => a.price - b.price);
+      winningDelhiveryQuote = nimbusDelhiveryQuotes[0];
+      winningDelhiveryQuote.savingsBadge = 'Nimbus Delhivery';
+      winningDelhiveryQuote.isArbitrageWinner = true;
+      winningDelhiveryQuote.arbitrageSource = 'nimbuspost';
+    }
+
+    // Filter out duplicate Delhivery entries from Shiprocket to keep only the single best winning Delhivery rate
+    const nonDelhiveryShiprocketQuotes = shiprocketQuotes.filter(q => {
+      const isDelhivery = (q.baseSlug === 'delhivery') || 
+                          (q.slug && q.slug.toLowerCase().includes('delhivery'));
+      return !isDelhivery;
+    });
+
+    // Merge quotes: winning Delhivery rate + other Nimbus carriers + other Shiprocket carriers
+    const combinedQuotes = [
+      ...(winningDelhiveryQuote ? [winningDelhiveryQuote] : []),
+      ...nonDelhiveryNimbusQuotes,
+      ...nonDelhiveryShiprocketQuotes
+    ];
+
+    // Sort all carrier quotes cheapest first
     combinedQuotes.sort((a, b) => a.price - b.price);
 
-    // Clear previous lowest flags and set the recommended cheapest carrier
+    // Clear previous lowest flags and set the recommended cheapest carrier overall
     combinedQuotes.forEach(q => {
       q.isLowest = false;
       q.isRecommended = false;

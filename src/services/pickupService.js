@@ -200,11 +200,32 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
     shipment.pickupAgentPhone = executive.phone;
     shipment.pickupLocationAddress = pickupAddressStr;
     shipment.pickupRateComparison = comparison;
+    const isDelhiveryDirect = String(assignedCarrierSlug || '') === 'delhivery_direct';
     const isNimbus = String(assignedCarrierSlug || '').startsWith('nimbus_');
-    shipment.pickupAggregator = isNimbus ? 'NimbusPost Multi-Carrier Network' : 'Shiprocket Multi-Carrier Network';
+    shipment.pickupAggregator = isDelhiveryDirect 
+      ? 'Delhivery Direct Production Network' 
+      : (isNimbus ? 'NimbusPost Multi-Carrier Network' : 'Shiprocket Multi-Carrier Network');
 
-    // Hybrid Dispatch: Push order to NimbusPost or Shiprocket based on the selected courier
-    if (isNimbus) {
+    // Multi-Gateway Dispatch: Route to Delhivery Direct, NimbusPost, or Shiprocket
+    if (isDelhiveryDirect) {
+      try {
+        const { createDelhiveryDirectOrder } = require('./delhiveryService');
+        const dlRes = await createDelhiveryDirectOrder(shipment, sender);
+        if (dlRes?.awbCode) {
+          shipment.awbCode = dlRes.awbCode;
+          shipment.delhiveryWaybill = dlRes.awbCode;
+          pickupToken = `DLV-${dlRes.awbCode}`;
+          shipment.pickupToken = pickupToken;
+          assignedCarrierName = 'Delhivery Express (Direct)';
+          if (dlRes.labelUrl) {
+            shipment.shippingLabelUrl = dlRes.labelUrl;
+          }
+          console.log(`✅ [Delhivery Direct Dispatch] Successfully booked waybill: ${dlRes.awbCode} for ${shipment.shipmentId}`);
+        }
+      } catch (dlErr) {
+        console.warn('[DELHIVERY DIRECT SYNC NOTICE]:', dlErr.message);
+      }
+    } else if (isNimbus) {
       try {
         if (typeof createOrderInNimbusPost === 'function') {
           const npRes = await createOrderInNimbusPost(shipment, sender);
