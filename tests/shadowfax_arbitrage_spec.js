@@ -38,8 +38,8 @@ async function runTest(name, fn) {
     assert.strictEqual(res.pincode, '700001');
   });
 
-  // Test 2: Live Shadowfax Direct Rate Calculation with ₹2 discount offset
-  await runTest('T2: Shadowfax Direct live rate calculation returns valid quote with ₹2 discount', async () => {
+  // Test 2: Live Shadowfax Direct Rate Calculation with ₹5 discount offset
+  await runTest('T2: Shadowfax Direct live rate calculation returns valid quote with ₹5 discount', async () => {
     const quote = await fetchDirectShadowfaxRate({
       fromPincode: '700001',
       toPincode: '110001',
@@ -51,7 +51,7 @@ async function runTest(name, fn) {
     assert.strictEqual(quote.slug, 'shadowfax_direct');
     assert.strictEqual(quote.baseSlug, 'shadowfax');
     assert.ok(quote.price > 0, `Price should be positive, got ${quote.price}`);
-    assert.strictEqual(quote.discountOffset, 2.00);
+    assert.strictEqual(quote.discountOffset, 5.00);
     assert.strictEqual(quote.isDirectShadowfax, true);
     console.log(`     Live Direct Shadowfax Rate (0.5kg 700001 -> 110001): ₹${quote.price} (Original ₹${quote.originalRate})`);
   });
@@ -87,3 +87,4 @@ async function runTest(name, fn) {
     process.exit(1);
   }
 })();
+

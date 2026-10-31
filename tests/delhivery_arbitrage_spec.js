@@ -39,7 +39,7 @@ async function runTest(name, fn) {
   });
 
   // Test 2: Live Delhivery Direct Rate Calculation
-  await runTest('T2: Delhivery Direct live rate calculation returns valid quote with ₹2 discount', async () => {
+  await runTest('T2: Delhivery Direct live rate calculation returns valid quote with ₹5 discount', async () => {
     const quote = await fetchDirectDelhiveryRate({
       fromPincode: '700001',
       toPincode: '110001',
@@ -51,7 +51,7 @@ async function runTest(name, fn) {
     assert.strictEqual(quote.slug, 'delhivery_direct');
     assert.strictEqual(quote.baseSlug, 'delhivery');
     assert.ok(quote.price > 0, `Price should be positive, got ${quote.price}`);
-    assert.strictEqual(quote.discountOffset, 2.00);
+    assert.strictEqual(quote.discountOffset, 5.00);
     assert.strictEqual(quote.isDirectDelhivery, true);
     console.log(`     Live Direct Delhivery Rate (0.5kg 700001 -> 110001): ₹${quote.price} (Original ₹${quote.originalRate})`);
   });

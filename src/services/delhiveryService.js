@@ -18,7 +18,7 @@ const CLIENT_NAME = process.env.DELHIVERY_CLIENT_NAME || 'SECUREKARO';
 
 /**
  * Fetch live shipping rates directly from Delhivery Invoice Charges API.
- * Applies the SecureKaro ₹2 seller rate offset.
+ * Applies the SecureKaro ₹5 seller rate offset.
  *
  * @param {Object} params
  * @param {string} params.fromPincode - Origin / Pickup pincode (6 digits)
@@ -95,8 +95,8 @@ const fetchDirectDelhiveryRate = async ({
       return null;
     }
 
-    // Apply platform ₹2 seller rate offset
-    const discountedPrice = Math.max(35, parseFloat((totalDelhiveryCost - 2).toFixed(2)));
+    // Apply platform ₹5 seller rate offset
+    const discountedPrice = Math.max(35, parseFloat((totalDelhiveryCost - 5).toFixed(2)));
     const freightCharge = parseFloat((data.charge_DL || (totalDelhiveryCost * 0.75)).toFixed(2));
     const codCharge = isCod ? parseFloat((data.charge_COD || 54.00).toFixed(2)) : 0;
     const gstAmount = data.tax_data 
@@ -120,7 +120,7 @@ const fetchDirectDelhiveryRate = async ({
       price: discountedPrice,
       exactRate: discountedPrice,
       originalRate: totalDelhiveryCost,
-      discountOffset: 2.00,
+      discountOffset: 5.00,
       freightCharge,
       codCharge,
       gstAmount,

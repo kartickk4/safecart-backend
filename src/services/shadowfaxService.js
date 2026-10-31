@@ -82,7 +82,7 @@ const checkShadowfaxServiceability = async (pincode, service = 'seller_pickup') 
 
 /**
  * Fetch live rate quote directly from Shadowfax Direct API
- * Applies SecureKaro ₹2 seller rate offset.
+ * Applies SecureKaro ₹5 seller rate offset.
  *
  * @param {Object} params
  * @param {string} params.fromPincode - Origin pickup pincode
@@ -143,8 +143,8 @@ const fetchDirectShadowfaxRate = async ({
   const gstAmount = parseFloat((rawFreight * 0.18).toFixed(2));
   const totalBase = parseFloat((rawFreight + codCharge + gstAmount).toFixed(2));
 
-  // Apply SecureKaro ₹2 seller rate offset
-  const finalPrice = Math.max(30, parseFloat((totalBase - 2.00).toFixed(2)));
+  // Apply SecureKaro ₹5 seller rate offset
+  const finalPrice = Math.max(30, parseFloat((totalBase - 5.00).toFixed(2)));
   const weightSlabText = `${effectiveKg} K.G`;
 
   return {
@@ -162,7 +162,7 @@ const fetchDirectShadowfaxRate = async ({
     price: finalPrice,
     exactRate: finalPrice,
     originalRate: totalBase,
-    discountOffset: 2.00,
+    discountOffset: 5.00,
     freightCharge: rawFreight,
     codCharge,
     gstAmount,
@@ -298,3 +298,4 @@ module.exports = {
   fetchDirectShadowfaxRate,
   createShadowfaxDirectOrder
 };
+
