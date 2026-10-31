@@ -201,12 +201,15 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
     shipment.pickupLocationAddress = pickupAddressStr;
     shipment.pickupRateComparison = comparison;
     const isDelhiveryDirect = String(assignedCarrierSlug || '') === 'delhivery_direct';
+    const isShadowfaxDirect = String(assignedCarrierSlug || '') === 'shadowfax_direct';
     const isNimbus = String(assignedCarrierSlug || '').startsWith('nimbus_');
     shipment.pickupAggregator = isDelhiveryDirect 
       ? 'Delhivery Direct Production Network' 
+      : isShadowfaxDirect
+      ? 'Shadowfax Direct Production Network'
       : (isNimbus ? 'NimbusPost Multi-Carrier Network' : 'Shiprocket Multi-Carrier Network');
 
-    // Multi-Gateway Dispatch: Route to Delhivery Direct, NimbusPost, or Shiprocket
+    // Multi-Gateway Dispatch: Route to Delhivery Direct, Shadowfax Direct, NimbusPost, or Shiprocket
     if (isDelhiveryDirect) {
       try {
         const { createDelhiveryDirectOrder } = require('./delhiveryService');
@@ -224,6 +227,24 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
         }
       } catch (dlErr) {
         console.warn('[DELHIVERY DIRECT SYNC NOTICE]:', dlErr.message);
+      }
+    } else if (isShadowfaxDirect) {
+      try {
+        const { createShadowfaxDirectOrder } = require('./shadowfaxService');
+        const sfRes = await createShadowfaxDirectOrder(shipment, sender);
+        if (sfRes?.awbCode) {
+          shipment.awbCode = sfRes.awbCode;
+          shipment.shadowfaxAwb = sfRes.awbCode;
+          pickupToken = `SFX-${sfRes.awbCode}`;
+          shipment.pickupToken = pickupToken;
+          assignedCarrierName = 'Shadowfax Technologies (Direct)';
+          if (sfRes.labelUrl) {
+            shipment.shippingLabelUrl = sfRes.labelUrl;
+          }
+          console.log(`✅ [Shadowfax Direct Dispatch] Successfully booked AWB: ${sfRes.awbCode} for ${shipment.shipmentId}`);
+        }
+      } catch (sfErr) {
+        console.warn('[SHADOWFAX DIRECT SYNC NOTICE]:', sfErr.message);
       }
     } else if (isNimbus) {
       try {
