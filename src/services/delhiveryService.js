@@ -81,7 +81,7 @@ const fetchDirectDelhiveryRate = async ({
         'Authorization': `Token ${DELHIVERY_API_KEY}`,
         'Content-Type': 'application/json'
       },
-      timeout: 7000
+      timeout: 15000
     });
 
     const chargesArray = Array.isArray(res.data) ? res.data : [];
@@ -159,7 +159,7 @@ const checkDelhiveryServiceability = async (pincode) => {
       headers: {
         'Authorization': `Token ${DELHIVERY_API_KEY}`
       },
-      timeout: 5000
+      timeout: 15000
     });
 
     const deliveryCodes = res.data?.delivery_codes;
