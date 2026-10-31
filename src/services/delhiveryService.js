@@ -184,6 +184,80 @@ const checkDelhiveryServiceability = async (pincode) => {
   }
 };
 
+const registeredWarehouses = new Set();
+
+/**
+ * Ensures the seller's doorstep pickup location is registered as a Client Warehouse in Delhivery HQ.
+ * Allows Delhivery delivery executives to navigate directly to the seller's house/shop anywhere in India.
+ *
+ * @param {Object} senderUser - Mongoose User document for the seller
+ * @param {Object} shipment - Mongoose Shipment document
+ * @returns {Promise<string>} Registered Delhivery warehouse nickname
+ */
+const ensureDelhiveryWarehouse = async (senderUser, shipment) => {
+  if (!DELHIVERY_API_KEY) return 'SECUREKARO_HQ';
+
+  const sellerPincode = String(
+    shipment.senderPincode ||
+    senderUser?.pickupAddress?.pincode ||
+    senderUser?.pincode ||
+    '700049'
+  ).replace(/\D/g, '').slice(0, 6);
+
+  const sellerIdSnippet = String(senderUser?._id || shipment?.senderId?._id || shipment?.senderId || 'SELLER').slice(-6).toUpperCase();
+  const warehouseName = `PKP_${sellerPincode}_${sellerIdSnippet}`;
+
+  if (registeredWarehouses.has(warehouseName)) {
+    return warehouseName;
+  }
+
+  let sellerAddress = (
+    shipment.senderAddress ||
+    senderUser?.pickupAddress?.street ||
+    senderUser?.address ||
+    'Seller Doorstep Warehouse'
+  ).trim();
+
+  if (sellerAddress.length < 10) {
+    sellerAddress = `${sellerAddress}, Doorstep Location`;
+  }
+
+  const sellerPhone = String(shipment.senderPhone || senderUser?.phone || '9999999999').replace(/\D/g, '').slice(-10);
+  const sellerEmail = senderUser?.email || `${sellerPhone}@securekaro.in`;
+  const sellerCity = shipment.senderCity || senderUser?.pickupAddress?.city || senderUser?.city || 'City';
+  const sellerState = shipment.senderState || senderUser?.pickupAddress?.state || senderUser?.state || 'State';
+
+  try {
+    const res = await axios.post(`${BASE_URL}/api/backend/clientwarehouse/create/`, {
+      name: warehouseName,
+      email: sellerEmail,
+      phone: sellerPhone,
+      address: sellerAddress,
+      city: sellerCity,
+      country: 'India',
+      pin: sellerPincode,
+      return_address: sellerAddress,
+      return_pin: sellerPincode,
+      return_city: sellerCity,
+      return_state: sellerState,
+      return_country: 'India'
+    }, {
+      headers: {
+        'Authorization': `Token ${DELHIVERY_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 8000
+    });
+    registeredWarehouses.add(warehouseName);
+    console.log(`✅ [Delhivery Warehouse]: Registered seller pickup warehouse in Delhivery HQ: ${warehouseName} (${sellerAddress}, Pin: ${sellerPincode})`);
+    return warehouseName;
+  } catch (err) {
+    // If warehouse already exists, Delhivery returns 400 with 'already exists' - reuse it
+    registeredWarehouses.add(warehouseName);
+    return warehouseName;
+  }
+};
+
 /**
  * Allocates a live official Delhivery tracking number (AWB / Waybill)
  * @param {number} [count=1] - Number of waybills to request
@@ -228,7 +302,10 @@ const createDelhiveryDirectOrder = async (shipment, senderUser) => {
     throw new Error('Failed to allocate live waybill from Delhivery');
   }
 
-  // 2. Format pickup (seller) and delivery (buyer) details
+  // 2. Ensure seller's doorstep warehouse is registered in Delhivery HQ
+  const warehouseName = await ensureDelhiveryWarehouse(senderUser, shipment);
+
+  // 3. Format pickup (seller) and delivery (buyer) details
   const pickupPincode = String(shipment.senderPincode || senderUser?.pickupAddress?.pincode || senderUser?.pincode || '700049').replace(/\D/g, '').slice(0, 6);
   const pickupAddress = (shipment.senderAddress || senderUser?.pickupAddress?.street || senderUser?.address || 'Seller Doorstep').trim();
   const pickupName = (shipment.senderName || senderUser?.businessName || senderUser?.fullName || 'SecureKaro Seller').trim();
@@ -246,6 +323,7 @@ const createDelhiveryDirectOrder = async (shipment, senderUser) => {
   const shipmentData = {
     shipments: [
       {
+        pickup_location: warehouseName,
         name: deliveryName,
         add: deliveryAddress,
         pin: deliveryPincode,
@@ -277,7 +355,7 @@ const createDelhiveryDirectOrder = async (shipment, senderUser) => {
       }
     ],
     pickup_location: {
-      name: pickupName,
+      name: warehouseName,
       add: pickupAddress,
       city: shipment.senderCity || '',
       pin_code: pickupPincode,
@@ -322,3 +400,4 @@ module.exports = {
   generateDelhiveryWaybill,
   createDelhiveryDirectOrder
 };
+
