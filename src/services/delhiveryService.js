@@ -139,6 +139,18 @@ const fetchDirectDelhiveryRate = async ({
       codCharge,
       surcharges: totalSurcharges,
       gstAmount,
+      breakdown: {
+        rawFreight: rawFreight,
+        discountedFreight: discountedFreight,
+        discount: 5.00,
+        lastMile: lmSurcharge,
+        fuelSurcharge: dieselCharge,
+        peakSurcharge: peakSurcharge,
+        codCharge: codCharge,
+        gstAmount: gstAmount,
+        totalWithoutDiscount: totalDelhiveryCost,
+        finalPrice: discountedPrice
+      },
       whatsappCharge: 0,
       secureShipmentCharge: 0,
       isSecureShipment,
