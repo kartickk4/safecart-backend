@@ -11,34 +11,38 @@ const axios = require('axios');
 const SHADOWFAX_API_KEY = process.env.SHADOWFAX_API_KEY || 'd39e81dc36f5f078836dee0f9b3a3ab5f1890aa3';
 const BASE_URL = process.env.SHADOWFAX_BASE_URL || 'https://dale.shadowfax.in';
 
-// Shadowfax Enterprise Direct Rate Card per 500g slab (INR)
-const SHADOWFAX_RATE_MATRIX = {
-  'metro-metro': 46.50,
-  'metro-tier2': 54.00,
-  'metro-tier3': 70.00,
-  'tier2-metro': 54.00,
-  'tier2-tier2': 62.00,
-  'tier2-tier3': 76.00,
-  'tier3-metro': 70.00,
-  'tier3-tier2': 76.00,
-  'tier3-tier3': 86.00
+// Shadowfax 360 Wallet User Official Flat Rate Card per 500g slab (INR)
+const SHADOWFAX_FLAT_RATES = {
+  'A': 39.00,   // Intracity (e.g. 700049 -> 700111)
+  'B': 49.00,   // Within Zone / Regional
+  'C_D': 59.00, // Metro & Rest of India
+  'E': 69.00    // Special Zone (NE, J&K, Kerala, Islands)
 };
 
-// Pincode zone classification helper
-const METRO_PINS = new Set([
-  '110','111','112','113', // Delhi NCR
-  '400','401','402','403','404','405','406','407','408','409','410','411', // Mumbai/Pune
-  '560','561','562','563', // Bangalore
-  '600','601','602','603', // Chennai
-  '500','501','502','503', // Hyderabad
-  '700','701','702','703'  // Kolkata
-]);
+// Pincode zone classification helper for Shadowfax 360
+function getShadowfaxZone(fromPin, toPin) {
+  const cleanFrom = String(fromPin || '').trim().slice(0, 6);
+  const cleanTo = String(toPin || '').trim().slice(0, 6);
+  const fromCityPrefix = cleanFrom.slice(0, 3);
+  const toCityPrefix = cleanTo.slice(0, 3);
+  const fromStatePrefix = cleanFrom.slice(0, 2);
+  const toStatePrefix = cleanTo.slice(0, 2);
 
-function getZone(pin) {
-  const prefix = String(pin || '').trim().slice(0, 3);
-  if (METRO_PINS.has(prefix)) return 'metro';
-  if (['380','302','226','452','208','395','800'].includes(prefix)) return 'tier2';
-  return 'tier3';
+  // Special Zones (North East: 78, 79; J&K/Ladakh: 19; Kerala: 67, 68, 69; Andaman: 744)
+  const SPECIAL_PREFIXES = ['78', '79', '19', '67', '68', '69', '744'];
+  if (SPECIAL_PREFIXES.some(p => cleanTo.startsWith(p) || cleanFrom.startsWith(p))) {
+    return 'E';
+  }
+  // Zone A: Intracity (Same city cluster)
+  if (fromCityPrefix === toCityPrefix) {
+    return 'A';
+  }
+  // Zone B: Within Zone / Same State
+  if (fromStatePrefix === toStatePrefix) {
+    return 'B';
+  }
+  // Zone C/D: Metro & Rest of India
+  return 'C_D';
 }
 
 /**
@@ -126,28 +130,25 @@ const fetchDirectShadowfaxRate = async ({
   }
 
   const weightSlabs = Math.max(1, Math.ceil(effectiveKg / 0.5));
-  const fromZone = getZone(cleanFrom);
-  const toZone = getZone(cleanTo);
-  const zoneKey = `${fromZone}-${toZone}`;
-
-  const baseRate = SHADOWFAX_RATE_MATRIX[zoneKey] || SHADOWFAX_RATE_MATRIX['tier3-tier3'];
+  const zone = getShadowfaxZone(cleanFrom, cleanTo);
+  const baseRate = SHADOWFAX_FLAT_RATES[zone] || 59.00;
   const rawFreight = parseFloat((baseRate * weightSlabs).toFixed(2));
-  // Apply SecureKaro ₹5 discount directly on freight charge
-  const discountedFreight = Math.max(10, parseFloat((rawFreight - 5.00).toFixed(2)));
+  
+  // Shadowfax 360 Wallet User Pricing: ZERO COD handling charges!
+  const codCharge = 0;
 
-  // COD handling fee
-  let codCharge = 0;
-  if (isCod) {
-    const val = parseFloat(declaredValue) || 2000;
-    codCharge = val >= 3000 ? 63.60 : 45.00;
-  }
-
+  // 18% GST on freight (exact amount charged to Shadowfax wallet)
   const gstAmount = parseFloat((rawFreight * 0.18).toFixed(2));
-  const totalBase = parseFloat((rawFreight + codCharge + gstAmount).toFixed(2));
+  const totalBase = parseFloat((rawFreight + gstAmount).toFixed(2));
 
-  // Apply SecureKaro ₹5 seller rate offset
-  const finalPrice = Math.max(30, parseFloat((totalBase - 5.00).toFixed(2)));
+  // Apply SecureKaro platform ₹5 discount directly on freight charge
+  const discountedFreight = Math.max(10, parseFloat((rawFreight - 5.00).toFixed(2)));
+  const finalPrice = Math.max(20, parseFloat((totalBase - 5.00).toFixed(2)));
   const weightSlabText = `${effectiveKg} K.G`;
+
+  const zoneLabel = zone === 'A' ? 'Zone A (Intracity)' :
+                    zone === 'B' ? 'Zone B (Within Zone)' :
+                    zone === 'E' ? 'Zone E (Special Zone)' : 'Zone C/D (Metro & ROI)';
 
   return {
     slug: 'shadowfax_direct',
@@ -157,7 +158,7 @@ const fetchDirectShadowfaxRate = async ({
     aggregatorName: 'Shadowfax Direct',
     courierPartner: `Shadowfax Technologies (Direct) ${weightSlabText}`,
     name: 'Shadowfax Technologies',
-    rawName: 'Shadowfax Direct Enterprise Express',
+    rawName: 'Shadowfax Direct 360 Express',
     minWeightKg: effectiveKg,
     minWeightGrams: Math.round(effectiveKg * 1000),
     weightSlab: weightSlabText,
@@ -167,18 +168,18 @@ const fetchDirectShadowfaxRate = async ({
     originalFreight: rawFreight,
     discountOffset: 5.00,
     freightCharge: discountedFreight,
-    codCharge,
+    codCharge: 0,
     gstAmount,
     whatsappCharge: 0,
     secureShipmentCharge: 0,
     isSecureShipment,
     isCod,
-    eta: (fromZone === 'metro' && toZone === 'metro') ? '1-2 Days (Express)' : '2-3 Days',
+    eta: zone === 'A' ? '1-2 Days (Express Intracity)' : '2-3 Days',
     rating: 4.7,
     mode: 'Surface Express',
-    apiSource: 'Shadowfax Direct Production API',
-    zone: zoneKey,
-    serviceType: isCod ? 'Shadowfax Direct COD' : 'Shadowfax Direct Surface',
+    apiSource: 'Shadowfax 360 Wallet Pricing',
+    zone: zoneLabel,
+    serviceType: isCod ? 'Shadowfax Direct COD (Free COD)' : 'Shadowfax Direct Express',
     isDirectShadowfax: true
   };
 };
