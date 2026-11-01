@@ -1835,10 +1835,7 @@ const dispatchReplacement = async (shipmentId, supplierId, courierData = {}) => 
   }
 
   // ── Dispatch on Pickup Scan: Generate fresh In-Box QR Token & 6-digit OTP ──
-  const crypto = require('crypto');
-  const repQrToken = crypto.randomBytes(20).toString('hex');
-  const repOtp = String(Math.floor(100000 + Math.random() * 900000));
-
+  // ── Replacement Dispatch: No photo required, no return QR code generated ──
   shipment.oldItemReceivedBySupplier     = true;
   shipment.oldItemReceivedAt             = shipment.oldItemReceivedAt || new Date();
   shipment.replacementItemDispatched     = true;
@@ -1846,12 +1843,10 @@ const dispatchReplacement = async (shipmentId, supplierId, courierData = {}) => 
   shipment.replacementCarrierSlug        = fwdSlug;
   shipment.replacementCarrierName        = fwdName;
   shipment.replacementAwbCode            = fwdAwb;
-  shipment.replacementQrToken            = repQrToken;
-  shipment.replacementQrGeneratedAt      = new Date();
-  shipment.replacementQrUsed             = false;
-  shipment.replacementDeliveryOtp        = repOtp;
-  shipment.replacementDeliveryOtpExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
-  shipment.replacementDeliveryOtpUsed    = false;
+  shipment.replacementQrToken            = ''; // No return QR code generated for replacement parcel
+  shipment.replacementQrUsed             = true;
+  shipment.returnAllowed                 = false; // Final resolution - no secondary return
+  shipment.photoReviewEnabled            = false; // No photo required for replacement parcel
   shipment.replacementDispatchedOnPickupScan = true;
   shipment.status                        = 'Replacement In Transit';
   await shipment.save();

@@ -10,7 +10,7 @@ const AgentSession = require('../models/AgentSession');
 const BulkJob = require('../models/BulkJob');
 const Shipment = require('../models/Shipment');
 const User = require('../models/User');
-const { getCarrierRates, getCarrierRatesAsync, getPincodeInfo } = require('../services/carrierRateService');
+const { getCarrierRates, getCarrierRatesAsync, getPincodeInfo, attachSmartBadges, getSmartRecommendation } = require('../services/carrierRateService');
 const { autoScheduleCourierPickup } = require('../services/pickupService');
 const { sendPaymentLinkWhatsApp, sendBookingConfirmationWhatsApp } = require('../services/whatsappService');
 const cashfreeService = require('../services/cashfreeService');
@@ -1999,7 +1999,15 @@ const getCarrierRatesHandler = async (req, res) => {
     const isSecure = isSecureShipment === true || isSecureShipment === 'true' || secureShipment === true || secureShipment === 'true' || isSecureShipment === 1;
     const dims = dimensions || (length && width && height ? { length, width, height } : null);
     const quotes = await getCarrierRatesAsync(fromPincode, toPincode, parseFloat(weightKg) || 0.5, dims, false, isCod, decVal, isSecure);
-    res.json({ quotes, fromZone: getPincodeInfo(fromPincode), toZone: getPincodeInfo(toPincode) });
+    const parsedWeight = parseFloat(weightKg) || 0.5;
+    const quotesWithBadges = attachSmartBadges(quotes, isCod, parsedWeight, decVal, toPincode);
+    const smartRecommendation = getSmartRecommendation(quotesWithBadges, isCod, parsedWeight, decVal, toPincode);
+    res.json({ 
+      quotes: quotesWithBadges, 
+      smartRecommendation,
+      fromZone: getPincodeInfo(fromPincode), 
+      toZone: getPincodeInfo(toPincode) 
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

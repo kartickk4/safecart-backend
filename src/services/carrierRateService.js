@@ -174,7 +174,8 @@ const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = nu
 
   const quotes = Object.entries(rates).map(([slug, baseRate]) => {
     const rawForwardPrice = parseFloat((baseRate * weightSlabs).toFixed(2));
-    const surcharge = isReverse ? parseFloat((REVERSE_SURCHARGE_PER_SLAB * weightSlabs).toFixed(2)) : 0;
+    const isSfx = slug.includes('shadowfax');
+    const surcharge = isReverse ? (isSfx ? 0 : parseFloat((REVERSE_SURCHARGE_PER_SLAB * weightSlabs).toFixed(2))) : 0;
     
     // COD Handling fee dynamically aligned with Shiprocket rate card for declared amount
     let codCharge = 0;
@@ -182,7 +183,7 @@ const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = nu
       const val = parseFloat(declaredValue) || 3000;
       if (slug.includes('delhivery')) codCharge = val >= 3000 ? 99.00 : 54.00;
       else if (slug.includes('xpressbees')) codCharge = val >= 3000 ? 75.00 : 48.00;
-      else if (slug.includes('shadowfax')) codCharge = val >= 3000 ? 63.60 : 52.00;
+      else if (slug.includes('shadowfax')) codCharge = 0; // Shadowfax 360: ₹0 COD handling fee
       else codCharge = Math.max(54.00, parseFloat((val * 0.03).toFixed(2)));
     }
 
@@ -191,7 +192,7 @@ const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = nu
     const whatsappCharge = (!isReverse) ? 5.00 : 0;
 
     const finalPrice = parseFloat((isReverse 
-      ? Math.max(55, rawForwardPrice + surcharge)
+      ? (isSfx ? Math.max(34, rawForwardPrice - 5) : Math.max(55, rawForwardPrice + surcharge))
       : (rawForwardPrice + codCharge + secureCharge + whatsappCharge)
     ).toFixed(2));
 
@@ -626,6 +627,180 @@ const getCheapestPickupCarrier = (fromPincode, toPincode, weightKg = 0.5, dimens
   };
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ODA (Out of Delivery Area) pincode detection
+// NE states: 785xxx–799xxx, J&K/Ladakh: 180xxx–194xxx, Andaman: 744xxx
+// ─────────────────────────────────────────────────────────────────────────────
+const ODA_PREFIXES = new Set([
+  // North-East India
+  '785','786','787','788','789','790','791','792','793','794','795','796','797','798','799',
+  // Jammu & Kashmir / Ladakh
+  '180','181','182','183','184','185','186','187','188','189','190','191','192','193','194',
+  // Andaman & Nicobar
+  '744',
+  // Lakshadweep
+  '682',
+]);
+
+function isODAPincode(pincode) {
+  const prefix = String(pincode || '').trim().substring(0, 3);
+  return ODA_PREFIXES.has(prefix);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Smart Routing Badges — attached to each rate card quote
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Attach smart routing badges to each quote in the rates array.
+ * Badges guide sellers to pick the cheapest/best option for their scenario.
+ *
+ * @param {Array} quotes - Array of carrier rate quotes
+ * @param {boolean} isCod - Whether order is COD
+ * @param {number} weightKg - Parcel weight
+ * @param {number} orderValue - Declared order value
+ * @param {string} toPin - Destination pincode
+ * @returns {Array} quotes with `badges` array and `smartScore` attached
+ */
+function attachSmartBadges(quotes, isCod = false, weightKg = 0.5, orderValue = 0, toPin = '') {
+  if (!Array.isArray(quotes) || quotes.length === 0) return quotes;
+
+  const isODA = isODAPincode(toPin);
+  const sorted = [...quotes].sort((a, b) => (a.totalCharge || a.price) - (b.totalCharge || b.price));
+  const cheapestTotal = sorted[0]?.totalCharge || sorted[0]?.price || 0;
+
+  return quotes.map(q => {
+    const badges = [];
+    const slug = (q.slug || q.baseSlug || q.aggregator || '').toLowerCase();
+    const name = (q.name || q.courierPartner || '').toLowerCase();
+    const isShadowfax = slug.includes('shadowfax') || name.includes('shadowfax');
+    const isNimbus = (q.aggregator || '').toLowerCase() === 'nimbuspost' || name.includes('nimbuspost');
+    const isIndiaPost = slug.includes('indiapost') || name.includes('india post');
+    const isBlueDart = slug.includes('bluedart') || name.includes('blue dart') || name.includes('bluedart');
+    const total = q.totalCharge || q.price || 0;
+    const isCheapest = Math.abs(total - cheapestTotal) < 0.5;
+
+    // 🏆 Best for COD — Shadowfax has ₹0 COD handling fee
+    if (isCod && isShadowfax) {
+      badges.push({ label: 'Best for COD', icon: '🏆', color: 'gold', reason: '₹0 COD handling fee' });
+    }
+
+    // 🛡️ RTO Shield — Shadowfax has ₹0 RTO charge
+    if (isShadowfax) {
+      badges.push({ label: 'RTO Shield', icon: '🛡️', color: 'green', reason: '₹0 RTO return charge' });
+    }
+
+    // 💰 Cheapest — Lowest total rate among all quotes
+    if (isCheapest) {
+      badges.push({ label: 'Lowest Rate', icon: '💰', color: 'blue', reason: 'Cheapest option available' });
+    }
+
+    // 📦 Best for Heavy — NimbusPost has better slab pricing for heavy parcels
+    if (isNimbus && weightKg > 3) {
+      badges.push({ label: 'Best for Heavy', icon: '📦', color: 'teal', reason: 'Best slab rates for heavy parcels' });
+    }
+
+    // 🗺️ Remote Coverage — India Post for ODA pincodes
+    if (isODA && isIndiaPost) {
+      badges.push({ label: 'Remote Area', icon: '🗺️', color: 'purple', reason: 'No ODA surcharge for NE/J&K' });
+    }
+
+    // 🔒 High Value Safe — BlueDart for high value orders
+    if (orderValue > 5000 && isBlueDart) {
+      badges.push({ label: 'High Value Safe', icon: '🔒', color: 'darkblue', reason: 'Best for high-value shipments' });
+    }
+
+    // ⚡ Platform Recommended — Shadowfax COD orders or cheapest prepaid
+    const isRecommended = isCod ? isShadowfax : isCheapest;
+
+    return {
+      ...q,
+      badges,
+      isRecommended: q.isRecommended || isRecommended,
+      smartScore: (isShadowfax && isCod ? 100 : 0) + (isCheapest ? 80 : 0) + badges.length * 5
+    };
+  }).sort((a, b) => b.smartScore - a.smartScore);
+}
+
+/**
+ * Get the smart routing recommendation for a shipment.
+ * Returns the best carrier slug + rationale.
+ *
+ * @param {Array} quotes - Rated carrier quotes
+ * @param {boolean} isCod - COD order?
+ * @param {number} weightKg - Weight in kg
+ * @param {number} orderValue - Order value (for high-value routing)
+ * @param {string} toPin - Destination pincode
+ * @returns {{ carrier: string, reason: string, badges: Array }}
+ */
+function getSmartRecommendation(quotes, isCod = false, weightKg = 0.5, orderValue = 0, toPin = '') {
+  if (!Array.isArray(quotes) || quotes.length === 0) {
+    return { carrier: null, reason: 'No quotes available', badges: [] };
+  }
+
+  // Rule 1: ODA pincode → India Post
+  if (isODAPincode(toPin)) {
+    const indiaPost = quotes.find(q => {
+      const s = (q.slug || q.baseSlug || '').toLowerCase();
+      const n = (q.name || q.courierPartner || '').toLowerCase();
+      return s.includes('indiapost') || n.includes('india post');
+    });
+    if (indiaPost) return {
+      carrier: indiaPost.slug || indiaPost.baseSlug,
+      reason: '🗺️ Remote/ODA area — India Post has no extra ODA surcharge for NE states / J&K / Andaman',
+      badges: [{ label: 'Remote Area', icon: '🗺️', color: 'purple' }]
+    };
+  }
+
+  // Rule 2: COD order → Shadowfax (₹0 COD + ₹0 RTO = maximum savings)
+  if (isCod) {
+    const shadowfax = quotes.find(q => {
+      const s = (q.slug || q.baseSlug || '').toLowerCase();
+      const n = (q.name || q.courierPartner || '').toLowerCase();
+      return s.includes('shadowfax') || n.includes('shadowfax');
+    });
+    if (shadowfax) return {
+      carrier: shadowfax.slug || shadowfax.baseSlug,
+      reason: '🏆 COD order — Shadowfax charges ₹0 COD fee + ₹0 RTO. Saves ₹50–₹100 vs other couriers.',
+      badges: [
+        { label: 'Best for COD', icon: '🏆', color: 'gold' },
+        { label: 'RTO Shield', icon: '🛡️', color: 'green' }
+      ]
+    };
+  }
+
+  // Rule 3: High-value prepaid (>₹5000) → BlueDart
+  if (!isCod && orderValue > 5000) {
+    const blueDart = quotes.find(q => {
+      const s = (q.slug || q.baseSlug || '').toLowerCase();
+      return s.includes('bluedart');
+    });
+    if (blueDart) return {
+      carrier: blueDart.slug || blueDart.baseSlug,
+      reason: '🔒 High-value order — BlueDart offers premium reliability and implicit shipment insurance.',
+      badges: [{ label: 'High Value Safe', icon: '🔒', color: 'darkblue' }]
+    };
+  }
+
+  // Rule 4: Heavy parcel (>3kg) → NimbusPost
+  if (weightKg > 3) {
+    const nimbus = quotes.find(q => (q.aggregator || '').toLowerCase() === 'nimbuspost');
+    if (nimbus) return {
+      carrier: nimbus.slug || nimbus.baseSlug,
+      reason: '📦 Heavy parcel — NimbusPost has better per-slab pricing for heavy shipments with no hidden surcharges.',
+      badges: [{ label: 'Best for Heavy', icon: '📦', color: 'teal' }]
+    };
+  }
+
+  // Rule 5: Default → Cheapest prepaid option
+  const sorted = [...quotes].sort((a, b) => (a.totalCharge || a.price) - (b.totalCharge || b.price));
+  const cheapest = sorted[0];
+  return {
+    carrier: cheapest.slug || cheapest.baseSlug,
+    reason: '💰 Cheapest prepaid option available for this pincode route.',
+    badges: [{ label: 'Lowest Rate', icon: '💰', color: 'blue' }]
+  };
+}
+
 module.exports = {
   getCarrierRates,
   getCarrierRatesAsync,
@@ -633,6 +808,9 @@ module.exports = {
   getPincodeInfo,
   getZone,
   getCheapestPickupCarrier,
-  getSupportedCouriersList
+  getSupportedCouriersList,
+  attachSmartBadges,
+  getSmartRecommendation,
+  isODAPincode,
 };
 

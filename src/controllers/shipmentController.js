@@ -8,7 +8,7 @@ const { createNotification } = require('../services/notification');
 const { grantDeliveryConfirmCashback, grantPrepaymentCashback } = require('../services/rewardService');
 const smsService = require('../services/smsService');
 const whatsappService = require('../services/whatsappService');
-const { getCarrierRates, getCarrierRatesAsync } = require('../services/carrierRateService');
+const { getCarrierRates, getCarrierRatesAsync, getSmartRecommendation, attachSmartBadges, isODAPincode } = require('../services/carrierRateService');
 const { autoScheduleCourierPickup } = require('../services/pickupService');
 const { calculateServiceFee, calculateSellerPayout } = require('../utils/feeConfig');
 const crypto = require('crypto');
@@ -486,9 +486,10 @@ const createShipment = async (req, res) => {
       codFeePaymentMethod: isCod ? codFeePaymentMethod : 'none',
       codFeePaidAt: isCod ? codFeePaidAt : undefined,
       codFeeTransactionRef: isCod ? codFeeTransactionRef : '',
-      photoReviewEnabled: true,
+      // Photo required ONLY when return option is enabled — protects seller from wrong-item claims
+      photoReviewEnabled: isReturnAllowed,
       photoReviewFee: 0,
-      photoReviewRequested: true,
+      photoReviewRequested: isReturnAllowed,
       photoReviewPaid: true,
       photoReviewRefused: false,
       rtoProtectionEnabled: (normalizedMode === 'prepaid') ? Boolean(rtoProtectionEnabled) : false,
@@ -1123,11 +1124,13 @@ const dispatchShipment = async (req, res) => {
       return res.status(400).json({ error: 'Please enter a valid courier tracking ID / AWB code' });
     }
 
-    // Enforce Parcel Photo upload for all shipments before dispatch
+    // ── Photo Before Dispatch: only required when seller enabled return option ──
+    // If returnAllowed = false → seller didn't enable returns → no photo needed → dispatch immediately
+    // If returnAllowed = true  → photo protects seller against "wrong item" claims
     const hasPhoto = (parcelPhotoUrl && parcelPhotoUrl.trim()) || (shipment.parcelPhotoUrl && shipment.parcelPhotoUrl.trim());
-    if (!hasPhoto) {
+    if (shipment.returnAllowed !== false && !hasPhoto) {
       return res.status(400).json({ 
-        error: 'Parcel & product photo is mandatory for all shipments before dispatch.' 
+        error: 'Parcel photo is required before dispatch because you enabled the Return option for this shipment. This photo protects you if the buyer claims a wrong item was delivered.' 
       });
     }
 
@@ -1468,9 +1471,33 @@ const approveReturn = async (req, res) => {
     }
 
     const { carrierSlug, carrierName, trackingId, notes, pickupWindow } = req.body || {};
+
+    // ── Smart Reverse Routing: auto-pick cheapest return carrier ──────────────
+    // Shadowfax = ₹0 RTO = free reverse pickup → always preferred
+    // Only runs when buyer selected full_refund or replacement (not partial_discount)
+    let smartReverseCarrier = null;
+    if (shipment.returnType !== 'partial_discount' && shipment.receiverPincode && shipment.senderPincode) {
+      try {
+        const reverseQuotes = await getCarrierRatesAsync(
+          shipment.receiverPincode,  // FROM: buyer sends item back from here
+          shipment.senderPincode,    // TO: seller's warehouse
+          shipment.parcelWeight || 0.5,
+          null,
+          true  // isReverse = true
+        );
+        if (reverseQuotes && reverseQuotes.length > 0) {
+          smartReverseCarrier = getSmartRecommendation(reverseQuotes, false, shipment.parcelWeight || 0.5, 0, shipment.receiverPincode);
+          // Save comparison for frontend display
+          shipment.returnCarrierComparison = reverseQuotes.slice(0, 5);
+        }
+      } catch (routingErr) {
+        console.warn('[approveReturn] Smart routing failed (non-blocking):', routingErr.message);
+      }
+    }
+
     const updatedShipment = await escrow.approveReturnEscrow(
       id,
-      { carrierSlug, carrierName, trackingId, notes, pickupWindow },
+      { carrierSlug: carrierSlug || smartReverseCarrier?.carrier, carrierName, trackingId, notes, pickupWindow },
       req.user._id
     );
     res.json({
@@ -1483,8 +1510,15 @@ const approveReturn = async (req, res) => {
       estimatedSavings: updatedShipment.returnEstimatedSavings,
       pickupWindow: updatedShipment.returnPickupWindow,
       trackingId: updatedShipment.returnAwbCode,
+      // Smart routing recommendation for frontend display
+      smartReverseRouting: smartReverseCarrier ? {
+        recommendedCarrier: smartReverseCarrier.carrier,
+        reason: smartReverseCarrier.reason,
+        badges: smartReverseCarrier.badges,
+        carrierComparison: shipment.returnCarrierComparison || []
+      } : null,
       message: updatedShipment.returnAutoBooked
-        ? `Return approved! Reverse courier automatically booked with ${updatedShipment.returnCarrierName} at lowest reverse rate (₹${updatedShipment.returnShippingRate || 55}). Reverse courier fee will be charged to seller account upon return delivery confirmation. Scheduled pickup: ${updatedShipment.returnPickupWindow}. Buyer notified.`
+        ? `Return approved! Reverse courier automatically booked with ${updatedShipment.returnCarrierName} at lowest reverse rate (₹${updatedShipment.returnShippingRate || 0}). ${smartReverseCarrier?.carrier?.includes('shadowfax') ? '🏆 Shadowfax selected — ₹0 RTO charge!' : ''} Buyer notified.`
         : `Return approved and reverse courier ${updatedShipment.returnCarrierName || 'partner'} assigned successfully. Receiver notified.`
     });
   } catch (error) {
@@ -1510,6 +1544,34 @@ const confirmReturnReceived = async (req, res) => {
     const isSupplierAuth = await isAuthorizedSenderOrSupplier(req.user, shipment);
     if (!isSupplierAuth) {
       return res.status(403).json({ error: 'Only the supplier can confirm receipt of a returned shipment' });
+    }
+
+    // For Replacement returns: If the forward replacement parcel hasn't been dispatched yet,
+    // confirming return receipt marks the defective package received at the warehouse and unlocks
+    // immediate forward dispatch of the new replacement item (without photo or return QR).
+    if (shipment.returnType === 'replacement' && !shipment.replacementItemDispatched) {
+      shipment.oldItemReceivedBySupplier = true;
+      shipment.oldItemReceivedAt = new Date();
+      await shipment.save();
+
+      try {
+        await createNotification(
+          shipment.senderId,
+          'swap_horizontal_circle',
+          `Old Item Received: ${shipment.shipmentId}`,
+          `Defective item for ${shipment.shipmentId} marked received at warehouse. Ready to dispatch replacement parcel.`,
+          'return',
+          shipment.shipmentId,
+          'RETURN_ORDERS'
+        );
+      } catch (_) {}
+
+      return res.json({
+        success: true,
+        readyForReplacementDispatch: true,
+        message: 'Defective item confirmed received at warehouse! Please dispatch the new replacement package to the buyer now (no photo or QR label required).',
+        shipment
+      });
     }
 
     const updatedShipment = await escrow.confirmReturnReceivedEscrow(id);
@@ -2278,9 +2340,10 @@ const getQrLabel = async (req, res) => {
     if (!isSupplierAuth) {
       return res.status(403).json({ error: 'Only the seller can access this QR label' });
     }
-    if (!shipment.parcelPhotoUrl || !shipment.parcelPhotoUrl.trim()) {
+    // Photo gate: only required when return is enabled (protects seller from wrong-item disputes)
+    if (shipment.returnAllowed !== false && (!shipment.parcelPhotoUrl || !shipment.parcelPhotoUrl.trim())) {
       return res.status(400).json({ 
-        error: 'Parcel review photo is mandatory. Upload parcel photo first to generate and access the In-Box QR Code.' 
+        error: 'Parcel photo is required to generate the QR label because you enabled the return option for this shipment.' 
       });
     }
 
