@@ -283,9 +283,10 @@ async function fetchLiveShiprocketRates(fromPincode, toPincode, weightKg = 0.5, 
       const uniqueSlug = `${baseSlug}_${c.courier_company_id || (c.is_surface ? 'surface' : 'air')}`;
       const baseRate = parseFloat(c.rate) || 0;
       const codCharge = parseFloat(c.cod_charges) || 0;
-      const freightCharge = parseFloat(c.freight_charge) || parseFloat((baseRate - codCharge).toFixed(2));
-      // Platform ₹5 seller rate offset from exact Shiprocket wallet charge
-      const finalRate = Math.max(30, parseFloat((baseRate - 5.00).toFixed(2)));
+      const rawFreight = parseFloat(c.freight_charge) || parseFloat((baseRate - codCharge).toFixed(2));
+      // Platform ₹5 seller discount applied directly on freight charge
+      const discountedFreight = Math.max(10, parseFloat((rawFreight - 5.00).toFixed(2)));
+      const finalRate = Math.max(30, parseFloat((discountedFreight + codCharge).toFixed(2)));
 
       const targetWeight = parseFloat(weightKg || 0.5);
       const weightSlabText = `${targetWeight} K.G`;
@@ -305,8 +306,9 @@ async function fetchLiveShiprocketRates(fromPincode, toPincode, weightKg = 0.5, 
         price: finalRate,
         exactRate: finalRate,
         originalRate: baseRate,
+        originalFreight: rawFreight,
         discountOffset: 5.00,
-        freightCharge: parseFloat(freightCharge.toFixed(2)),
+        freightCharge: discountedFreight,
         codCharge: parseFloat(codCharge.toFixed(2)),
         whatsappCharge: 0,
         secureShipmentCharge: 0,

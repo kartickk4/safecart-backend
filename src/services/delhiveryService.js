@@ -102,9 +102,10 @@ const fetchDirectDelhiveryRate = async ({
       return null;
     }
 
-    // Apply platform ₹5 seller rate offset from exact Delhivery wallet charge
+    // Apply platform ₹5 discount directly on freight charge
+    const rawFreight = parseFloat((data.charge_DL || 0).toFixed(2));
+    const discountedFreight = Math.max(10, parseFloat((rawFreight - 5.00).toFixed(2)));
     const discountedPrice = Math.max(30, parseFloat((totalDelhiveryCost - 5).toFixed(2)));
-    const freightCharge = parseFloat((data.charge_DL || 0).toFixed(2));
     const codCharge = isCod ? parseFloat((data.charge_COD || 0).toFixed(2)) : 0;
     const lmSurcharge = parseFloat((data.charge_LM || 0).toFixed(2));
     const peakSurcharge = parseFloat((data.charge_PEAK || 0).toFixed(2));
@@ -132,8 +133,9 @@ const fetchDirectDelhiveryRate = async ({
       price: discountedPrice,
       exactRate: discountedPrice,
       originalRate: totalDelhiveryCost,
+      originalFreight: rawFreight,
       discountOffset: 5.00,
-      freightCharge,
+      freightCharge: discountedFreight,
       codCharge,
       surcharges: totalSurcharges,
       gstAmount,

@@ -109,11 +109,12 @@ async function fetchLiveNimbusRates(fromPincode, toPincode, weightKg = 0.5, dime
     return data.map(c => {
       const baseSlug = mapNimbusCarrierToSlug(c.name || c.courier_name);
       const uniqueSlug = `nimbus_${baseSlug}_${c.id || c.courier_id || 'std'}`;
-      const freightRate = parseFloat(c.freight_charges ?? c.freight_charge ?? 0);
+      const rawFreightRate = parseFloat(c.freight_charges ?? c.freight_charge ?? 0);
       const codCharge = isCod ? parseFloat(c.cod_charges ?? 0) : 0;
-      const totalCharge = parseFloat(c.total_charges ?? (freightRate + codCharge));
-      // Platform ₹5 seller rate offset from exact NimbusPost wallet charge
-      const finalPrice = Math.max(30, parseFloat((totalCharge - 5.00).toFixed(2)));
+      const totalCharge = parseFloat(c.total_charges ?? (rawFreightRate + codCharge));
+      // Platform ₹5 seller discount applied directly on the freight charge
+      const discountedFreight = Math.max(10, parseFloat((rawFreightRate - 5.00).toFixed(2)));
+      const finalPrice = parseFloat((discountedFreight + codCharge).toFixed(2));
       const eta = c.edd ? `Delivery by ${c.edd}` : (c.estimated_delivery_days ? `In ${c.estimated_delivery_days} Days` : '3-4 Days');
 
       const minWeightGrams = parseInt(c.min_weight || c.chargeable_weight || 500);
@@ -141,8 +142,9 @@ async function fetchLiveNimbusRates(fromPincode, toPincode, weightKg = 0.5, dime
         price: finalPrice,
         exactRate: finalPrice,
         originalRate: totalCharge,
+        originalFreight: rawFreightRate,
         discountOffset: 5.00,
-        freightCharge: parseFloat(freightRate.toFixed(2)),
+        freightCharge: discountedFreight,
         codCharge: parseFloat(codCharge.toFixed(2)),
         whatsappCharge: 0,
         secureShipmentCharge: 0,
@@ -189,9 +191,9 @@ function getRealisticNimbusQuotes(fromPincode, toPincode, weightKg = 0.5, isCod 
 
   return Object.entries(nimbusBaseRates).map(([slug, basePerSlab]) => {
     const rawFreight = parseFloat((basePerSlab * weightSlabs).toFixed(2));
+    const discountedFreight = Math.max(10, parseFloat((rawFreight - 5.00).toFixed(2)));
     const codCharge = isCod ? 45.00 : 0;
-    const secureCharge = isSecureShipment ? 54.00 : 0;
-    const finalPrice = parseFloat((rawFreight + codCharge + secureCharge).toFixed(2));
+    const finalPrice = parseFloat((discountedFreight + codCharge).toFixed(2));
 
     return {
       slug: `nimbus_${slug}`,
@@ -202,10 +204,13 @@ function getRealisticNimbusQuotes(fromPincode, toPincode, weightKg = 0.5, isCod 
       courierPartner: names[slug],
       price: finalPrice,
       exactRate: finalPrice,
-      freightCharge: rawFreight,
+      originalRate: parseFloat((rawFreight + codCharge).toFixed(2)),
+      originalFreight: rawFreight,
+      discountOffset: 5.00,
+      freightCharge: discountedFreight,
       codCharge,
       whatsappCharge: 0,
-      secureShipmentCharge: secureCharge,
+      secureShipmentCharge: 0,
       isSecureShipment,
       isCod,
       eta: '2-4 Days',

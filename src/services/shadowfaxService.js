@@ -132,6 +132,8 @@ const fetchDirectShadowfaxRate = async ({
 
   const baseRate = SHADOWFAX_RATE_MATRIX[zoneKey] || SHADOWFAX_RATE_MATRIX['tier3-tier3'];
   const rawFreight = parseFloat((baseRate * weightSlabs).toFixed(2));
+  // Apply SecureKaro ₹5 discount directly on freight charge
+  const discountedFreight = Math.max(10, parseFloat((rawFreight - 5.00).toFixed(2)));
 
   // COD handling fee
   let codCharge = 0;
@@ -162,8 +164,9 @@ const fetchDirectShadowfaxRate = async ({
     price: finalPrice,
     exactRate: finalPrice,
     originalRate: totalBase,
+    originalFreight: rawFreight,
     discountOffset: 5.00,
-    freightCharge: rawFreight,
+    freightCharge: discountedFreight,
     codCharge,
     gstAmount,
     whatsappCharge: 0,
