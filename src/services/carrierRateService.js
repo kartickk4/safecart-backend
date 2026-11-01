@@ -284,9 +284,8 @@ async function fetchLiveShiprocketRates(fromPincode, toPincode, weightKg = 0.5, 
       const baseRate = parseFloat(c.rate) || 0;
       const codCharge = parseFloat(c.cod_charges) || 0;
       const freightCharge = parseFloat(c.freight_charge) || parseFloat((baseRate - codCharge).toFixed(2));
-      const whatsappCharge = parseFloat(c.whatsapp_charges) || 5.00;
-      const secureCharge = isSecureShipment ? 54.00 : 0;
-      const finalRate = parseFloat((baseRate + secureCharge + whatsappCharge).toFixed(2));
+      // Platform ₹5 seller rate offset from exact Shiprocket wallet charge
+      const finalRate = Math.max(30, parseFloat((baseRate - 5.00).toFixed(2)));
 
       const targetWeight = parseFloat(weightKg || 0.5);
       const weightSlabText = `${targetWeight} K.G`;
@@ -305,10 +304,12 @@ async function fetchLiveShiprocketRates(fromPincode, toPincode, weightKg = 0.5, 
         isCloseToWeight: true,
         price: finalRate,
         exactRate: finalRate,
+        originalRate: baseRate,
+        discountOffset: 5.00,
         freightCharge: parseFloat(freightCharge.toFixed(2)),
         codCharge: parseFloat(codCharge.toFixed(2)),
-        whatsappCharge: whatsappCharge,
-        secureShipmentCharge: secureCharge,
+        whatsappCharge: 0,
+        secureShipmentCharge: 0,
         isSecureShipment,
         isCod,
         eta: c.etd ? `Delivery by ${c.etd}` : (c.estimated_delivery_days ? `In ${c.estimated_delivery_days} Days` : '2 Days'),

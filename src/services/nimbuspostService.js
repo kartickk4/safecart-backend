@@ -112,8 +112,8 @@ async function fetchLiveNimbusRates(fromPincode, toPincode, weightKg = 0.5, dime
       const freightRate = parseFloat(c.freight_charges ?? c.freight_charge ?? 0);
       const codCharge = isCod ? parseFloat(c.cod_charges ?? 0) : 0;
       const totalCharge = parseFloat(c.total_charges ?? (freightRate + codCharge));
-      const secureCharge = isSecureShipment ? 54.00 : 0;
-      const finalPrice = parseFloat((totalCharge + secureCharge).toFixed(2));
+      // Platform ₹5 seller rate offset from exact NimbusPost wallet charge
+      const finalPrice = Math.max(30, parseFloat((totalCharge - 5.00).toFixed(2)));
       const eta = c.edd ? `Delivery by ${c.edd}` : (c.estimated_delivery_days ? `In ${c.estimated_delivery_days} Days` : '3-4 Days');
 
       const minWeightGrams = parseInt(c.min_weight || c.chargeable_weight || 500);
@@ -140,10 +140,12 @@ async function fetchLiveNimbusRates(fromPincode, toPincode, weightKg = 0.5, dime
         isCloseToWeight,
         price: finalPrice,
         exactRate: finalPrice,
+        originalRate: totalCharge,
+        discountOffset: 5.00,
         freightCharge: parseFloat(freightRate.toFixed(2)),
         codCharge: parseFloat(codCharge.toFixed(2)),
         whatsappCharge: 0,
-        secureShipmentCharge: secureCharge,
+        secureShipmentCharge: 0,
         isSecureShipment,
         isCod,
         eta,

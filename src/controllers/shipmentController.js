@@ -357,11 +357,29 @@ const createShipment = async (req, res) => {
     let codFeeTransactionRef = '';
 
     if (isCod) {
-      deliveryCharge = Number(req.body.deliveryCharge) || selectedCarrierRate || 40;
       codCharge = (req.body.codCharge !== undefined && !isNaN(Number(req.body.codCharge)) && Number(req.body.codCharge) >= 0)
         ? Number(req.body.codCharge)
-        : 40;
-      totalCodFees = Math.round(Number(deliveryCharge) + Number(codCharge));
+        : 0;
+
+      if (req.body.totalCharge !== undefined && !isNaN(Number(req.body.totalCharge)) && Number(req.body.totalCharge) > 0) {
+        totalCodFees = Math.round(Number(req.body.totalCharge));
+        deliveryCharge = req.body.freightCharge !== undefined
+          ? Number(req.body.freightCharge)
+          : Math.max(0, parseFloat((totalCodFees - codCharge).toFixed(2)));
+      } else {
+        const rawCharge = Number(req.body.deliveryCharge) || selectedCarrierRate || 40;
+        if (req.body.freightCharge !== undefined) {
+          deliveryCharge = Number(req.body.freightCharge);
+          totalCodFees = Math.round(deliveryCharge + codCharge);
+        } else if (rawCharge > codCharge && codCharge > 0) {
+          // rawCharge is already the all-inclusive quote price
+          totalCodFees = Math.round(rawCharge);
+          deliveryCharge = Math.max(0, parseFloat((rawCharge - codCharge).toFixed(2)));
+        } else {
+          deliveryCharge = rawCharge;
+          totalCodFees = Math.round(deliveryCharge + codCharge);
+        }
+      }
 
       const availableWallet = Number(sender.walletBalance) || 0;
       const isPaidUpfront = Boolean(req.body.paidUpfront || req.body.codFeePaid || req.body.paymentTxnId);

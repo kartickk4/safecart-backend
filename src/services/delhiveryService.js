@@ -76,6 +76,13 @@ const fetchDirectDelhiveryRate = async ({
       pt: paymentType
     });
 
+    if (isCod) {
+      const codVal = parseFloat(declaredValue) || 0;
+      if (codVal > 0) {
+        queryParams.set('cod', String(codVal));
+      }
+    }
+
     const res = await axios.get(`${BASE_URL}/api/kinko/v1/invoice/charges/?${queryParams.toString()}`, {
       headers: {
         'Authorization': `Token ${DELHIVERY_API_KEY}`,
@@ -95,10 +102,15 @@ const fetchDirectDelhiveryRate = async ({
       return null;
     }
 
-    // Apply platform ₹5 seller rate offset
-    const discountedPrice = Math.max(35, parseFloat((totalDelhiveryCost - 5).toFixed(2)));
-    const freightCharge = parseFloat((data.charge_DL || (totalDelhiveryCost * 0.75)).toFixed(2));
-    const codCharge = isCod ? parseFloat((data.charge_COD || 54.00).toFixed(2)) : 0;
+    // Apply platform ₹5 seller rate offset from exact Delhivery wallet charge
+    const discountedPrice = Math.max(30, parseFloat((totalDelhiveryCost - 5).toFixed(2)));
+    const freightCharge = parseFloat((data.charge_DL || 0).toFixed(2));
+    const codCharge = isCod ? parseFloat((data.charge_COD || 0).toFixed(2)) : 0;
+    const lmSurcharge = parseFloat((data.charge_LM || 0).toFixed(2));
+    const peakSurcharge = parseFloat((data.charge_PEAK || 0).toFixed(2));
+    const dieselCharge = parseFloat((data.charge_DPH || 0).toFixed(2));
+    const totalSurcharges = parseFloat((lmSurcharge + peakSurcharge + dieselCharge).toFixed(2));
+
     const gstAmount = data.tax_data 
       ? parseFloat(((data.tax_data.SGST || 0) + (data.tax_data.CGST || 0) + (data.tax_data.IGST || 0)).toFixed(2))
       : parseFloat((totalDelhiveryCost * 0.18).toFixed(2));
@@ -123,6 +135,7 @@ const fetchDirectDelhiveryRate = async ({
       discountOffset: 5.00,
       freightCharge,
       codCharge,
+      surcharges: totalSurcharges,
       gstAmount,
       whatsappCharge: 0,
       secureShipmentCharge: 0,
@@ -375,7 +388,16 @@ const createDelhiveryDirectOrder = async (shipment, senderUser) => {
       timeout: 12000
     });
 
-    console.log(`✅ [Delhivery Direct Manifest]: Created order for ${shipment.shipmentId}. Response:`, JSON.stringify(res.data).slice(0, 200));
+    console.log(`✅ [Delhivery Direct Manifest]: Created order for ${shipment.shipmentId}. Response:`, JSON.stringify(res.data));
+
+    const firstPkg = Array.isArray(res.data?.packages) ? res.data.packages[0] : null;
+    const pkgStatus = firstPkg?.status;
+    const pkgRemarks = Array.isArray(firstPkg?.remarks) ? firstPkg.remarks.join(', ') : '';
+
+    if (pkgStatus === 'Fail') {
+      console.error(`❌ [Delhivery Direct Manifest Rejected]: ${pkgRemarks}`);
+      throw new Error(`Delhivery booking failed: ${pkgRemarks || 'Manifest rejected by Delhivery'}`);
+    }
 
     return {
       success: true,

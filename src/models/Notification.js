@@ -20,7 +20,7 @@ const NotificationSchema = new mongoose.Schema({
   },
   type: { 
     type: String, 
-    enum: ['shipping', 'payment', 'confirmed', 'alert', 'delivery', 'return'], 
+    enum: ['shipping', 'payment', 'confirmed', 'alert', 'delivery', 'return', 'wallet', 'payout', 'info', 'system'], 
     default: 'shipping' 
   },
   shipmentId: {

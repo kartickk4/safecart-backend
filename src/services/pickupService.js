@@ -115,7 +115,7 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
 
     const matchedCarrier = comparison?.find(c => c.slug === targetCarrierSlug);
     const assignedCarrierSlug = targetCarrierSlug;
-    const assignedCarrierName = matchedCarrier?.name || 
+    let assignedCarrierName = matchedCarrier?.name || 
       (targetCarrierSlug === 'bluedart' ? 'Blue Dart Express' : 
        targetCarrierSlug === 'delhivery' ? 'Delhivery Express' : 
        (targetCarrierSlug.charAt(0).toUpperCase() + targetCarrierSlug.slice(1)));
@@ -144,7 +144,7 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
 
     // 3. Generate Courier Pickup Token / Reference via Shiprocket Engine
     const prefix = PREFIX_MAP[assignedCarrierSlug] || 'SR-PKP';
-    const pickupToken = `${prefix}-${Math.floor(100000 + Math.random() * 900000)}`;
+    let pickupToken = `${prefix}-${Math.floor(100000 + Math.random() * 900000)}`;
 
     // 4. Assign Pickup Executive
     const execPool = PICKUP_EXECUTIVES[assignedCarrierSlug] || PICKUP_EXECUTIVES.default;
@@ -166,10 +166,12 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
     shipment.pickupStatus = 'Scheduled';
     shipment.pickupCarrier = assignedCarrierName;
     shipment.pickupCarrierSlug = assignedCarrierSlug;
-    shipment.pickupRate = assignedRate;
-    shipment.courierDeliveryCharge = assignedRate;
+    shipment.pickupRate = shipment.pickupRate || shipment.deliveryCharge || assignedRate;
+    if (!shipment.courierDeliveryCharge) {
+      shipment.courierDeliveryCharge = shipment.pickupRate;
+    }
     if (shipment.paymentMode === 'cod' && !shipment.codHandlingCharge) {
-      shipment.codHandlingCharge = 30;
+      shipment.codHandlingCharge = shipment.codCharge || 30;
     }
 
     // For paid_offline orders (no escrow vault), courier charge is debited directly from seller wallet
