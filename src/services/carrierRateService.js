@@ -451,9 +451,7 @@ const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dime
         // Direct Delhivery is cheaper or equal
         const savings = Math.max(0, parseFloat((cheapestNimbusDelhivery.price - directDelhiveryQuote.price).toFixed(2)));
         directDelhiveryQuote.rateSavings = savings;
-        directDelhiveryQuote.savingsBadge = savings > 0 
-          ? `Direct Delhivery (Save ₹${savings} vs Nimbus)` 
-          : 'Direct Delhivery (Lowest Rate)';
+        // directDelhiveryQuote.savingsBadge removed
         directDelhiveryQuote.isArbitrageWinner = true;
         directDelhiveryQuote.arbitrageSource = 'delhivery_direct';
         winningDelhiveryQuote = directDelhiveryQuote;
@@ -462,23 +460,21 @@ const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dime
         // NimbusPost Delhivery is cheaper!
         const savings = Math.max(0, parseFloat((directDelhiveryQuote.price - cheapestNimbusDelhivery.price).toFixed(2)));
         cheapestNimbusDelhivery.rateSavings = savings;
-        cheapestNimbusDelhivery.savingsBadge = savings > 0 
-          ? `Nimbus Delhivery Promo (Save ₹${savings} vs Direct)` 
-          : 'Nimbus Delhivery (Lowest Rate)';
+        // cheapestNimbusDelhivery.savingsBadge removed
         cheapestNimbusDelhivery.isArbitrageWinner = true;
         cheapestNimbusDelhivery.arbitrageSource = 'nimbuspost';
         winningDelhiveryQuote = cheapestNimbusDelhivery;
         console.log(`[Delhivery Arbitrage] Nimbus Delhivery selected (₹${cheapestNimbusDelhivery.price} < Direct ₹${directDelhiveryQuote.price}). Saved ₹${savings}`);
       }
     } else if (directDelhiveryQuote) {
-      directDelhiveryQuote.savingsBadge = 'Direct Delhivery Live';
+      // directDelhiveryQuote.savingsBadge removed
       directDelhiveryQuote.isArbitrageWinner = true;
       directDelhiveryQuote.arbitrageSource = 'delhivery_direct';
       winningDelhiveryQuote = directDelhiveryQuote;
     } else if (nimbusDelhiveryQuotes.length > 0) {
       nimbusDelhiveryQuotes.sort((a, b) => a.price - b.price);
       winningDelhiveryQuote = nimbusDelhiveryQuotes[0];
-      winningDelhiveryQuote.savingsBadge = 'Nimbus Delhivery';
+      // winningDelhiveryQuote.savingsBadge removed
       winningDelhiveryQuote.isArbitrageWinner = true;
       winningDelhiveryQuote.arbitrageSource = 'nimbuspost';
     }
@@ -494,9 +490,7 @@ const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dime
         // Direct Shadowfax is cheaper or equal
         const savings = Math.max(0, parseFloat((cheapestNimbusShadowfax.price - directShadowfaxQuote.price).toFixed(2)));
         directShadowfaxQuote.rateSavings = savings;
-        directShadowfaxQuote.savingsBadge = savings > 0 
-          ? `Direct Shadowfax (Save ₹${savings} vs Nimbus)` 
-          : 'Direct Shadowfax (Lowest Rate)';
+        // directShadowfaxQuote.savingsBadge removed
         directShadowfaxQuote.isArbitrageWinner = true;
         directShadowfaxQuote.arbitrageSource = 'shadowfax_direct';
         winningShadowfaxQuote = directShadowfaxQuote;
@@ -505,23 +499,21 @@ const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dime
         // NimbusPost Shadowfax is cheaper!
         const savings = Math.max(0, parseFloat((directShadowfaxQuote.price - cheapestNimbusShadowfax.price).toFixed(2)));
         cheapestNimbusShadowfax.rateSavings = savings;
-        cheapestNimbusShadowfax.savingsBadge = savings > 0 
-          ? `Nimbus Shadowfax Promo (Save ₹${savings} vs Direct)` 
-          : 'Nimbus Shadowfax (Lowest Rate)';
+        // cheapestNimbusShadowfax.savingsBadge removed
         cheapestNimbusShadowfax.isArbitrageWinner = true;
         cheapestNimbusShadowfax.arbitrageSource = 'nimbuspost';
         winningShadowfaxQuote = cheapestNimbusShadowfax;
         console.log(`[Shadowfax Arbitrage] Nimbus Shadowfax selected (₹${cheapestNimbusShadowfax.price} < Direct ₹${directShadowfaxQuote.price}). Saved ₹${savings}`);
       }
     } else if (directShadowfaxQuote) {
-      directShadowfaxQuote.savingsBadge = 'Direct Shadowfax Live';
+      // directShadowfaxQuote.savingsBadge removed
       directShadowfaxQuote.isArbitrageWinner = true;
       directShadowfaxQuote.arbitrageSource = 'shadowfax_direct';
       winningShadowfaxQuote = directShadowfaxQuote;
     } else if (nimbusShadowfaxQuotes.length > 0) {
       nimbusShadowfaxQuotes.sort((a, b) => a.price - b.price);
       winningShadowfaxQuote = nimbusShadowfaxQuotes[0];
-      winningShadowfaxQuote.savingsBadge = 'Nimbus Shadowfax';
+      // winningShadowfaxQuote.savingsBadge removed
       winningShadowfaxQuote.isArbitrageWinner = true;
       winningShadowfaxQuote.arbitrageSource = 'nimbuspost';
     }
