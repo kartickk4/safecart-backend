@@ -171,29 +171,22 @@ function getRealisticNimbusQuotes(fromPincode, toPincode, weightKg = 0.5, isCod 
   const weightSlabs = Math.max(1, Math.ceil(weightKg / 0.5));
   
   // Nimbus base rates per 500g slab (often 5-10% cheaper on Shadowfax & Ekart than Shiprocket)
+  // Accurately aligned with live NimbusPost Zone B commercial rate card
   const nimbusBaseRates = {
-    shadowfax: 48.50,
-    delhivery: 54.00,
-    xpressbees: 47.00,
-    ekart: 52.00,
-    dtdc: 74.00,
-    bluedart: 95.00
+    xpressbees: { baseFreight: 44.60, codFee: 54.50, mode: 'Air', name: 'Xpressbees Air (via NimbusPost)' },
+    ekart: { baseFreight: 44.60, codFee: 56.00, mode: 'Surface', name: 'Ekart Logistics (via NimbusPost)' },
+    shadowfax: { baseFreight: 51.54, codFee: 50.25, mode: 'Surface', name: 'Shadowfax Surface (via NimbusPost)' },
+    delhivery: { baseFreight: 49.56, codFee: 54.50, mode: 'Surface', name: 'Delhivery Surface (via NimbusPost)' },
+    dtdc: { baseFreight: 69.00, codFee: 54.50, mode: 'Surface', name: 'DTDC Priority (via NimbusPost)' },
+    bluedart: { baseFreight: 90.00, codFee: 55.00, mode: 'Air', name: 'BlueDart Air (via NimbusPost)' }
   };
 
-  const names = {
-    shadowfax: 'Shadowfax (via NimbusPost)',
-    delhivery: 'Delhivery Surface (via NimbusPost)',
-    xpressbees: 'Xpressbees Surface (via NimbusPost)',
-    ekart: 'Ekart Logistics (via NimbusPost)',
-    dtdc: 'DTDC Priority (via NimbusPost)',
-    bluedart: 'BlueDart Air (via NimbusPost)'
-  };
-
-  return Object.entries(nimbusBaseRates).map(([slug, basePerSlab]) => {
-    const rawFreight = parseFloat((basePerSlab * weightSlabs).toFixed(2));
+  return Object.entries(nimbusBaseRates).map(([slug, data]) => {
+    const rawFreight = parseFloat((data.baseFreight * weightSlabs).toFixed(2));
     const discountedFreight = Math.max(10, parseFloat((rawFreight - 5.00).toFixed(2)));
-    const codCharge = isCod ? 45.00 : 0;
+    const codCharge = isCod ? data.codFee : 0;
     const finalPrice = parseFloat((discountedFreight + codCharge).toFixed(2));
+    const names = { [slug]: data.name };
 
     return {
       slug: `nimbus_${slug}`,
