@@ -143,7 +143,8 @@ const fetchDirectShadowfaxRate = async ({
 
   // Apply SecureKaro platform ₹5 discount directly on freight charge
   const discountedFreight = Math.max(10, parseFloat((rawFreight - 5.00).toFixed(2)));
-  const finalPrice = Math.max(20, parseFloat((totalBase - 5.00).toFixed(2)));
+  // All-inclusive final rate equals discounted freight + COD fee (Zero COD on Shadowfax Direct)
+  const finalPrice = parseFloat((discountedFreight + codCharge).toFixed(2));
   const weightSlabText = `${effectiveKg} K.G`;
 
   const zoneLabel = zone === 'A' ? 'Zone A (Intracity)' :
