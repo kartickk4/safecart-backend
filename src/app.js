@@ -52,8 +52,12 @@ const whatsappRoutes = loadModule('routes/whatsappRoutes.js', 'whatsappRoutes.js
 const youpiRoutes = loadModule('routes/youpiRoutes.js', 'youpiRoutes.js');
 const uploadRoutes = loadModule('routes/uploadRoutes.js', 'uploadRoutes.js');
 const { enforcePrivacyHeaders } = loadModule('middleware/cacheMiddleware.js', 'middleware/cacheMiddleware.js');
+const compression = require('compression');
 
 const app = express();
+
+// Enable Gzip/Brotli compression across all responses (Performance item 09/31)
+app.use(compression());
 
 // 0. Request Correlation ID Middleware (X-Request-ID)
 app.use((req, res, next) => {
