@@ -19,26 +19,65 @@ const SHADOWFAX_FLAT_RATES = {
   'E': 69.00    // Special Zone (NE, J&K, Kerala, Islands)
 };
 
+// Map first 2 digits of Indian pincodes to States / Postal Circles
+const STATE_PIN_PREFIXES = {
+  // Northern Region
+  'DL': ['11'],
+  'HR': ['12', '13'],
+  'PB_CH': ['14', '15', '16'],
+  'HP': ['17'],
+  'JK_LA': ['18', '19'],
+  'UP_UT': ['20', '21', '22', '23', '24', '25', '26', '27', '28'],
+  'RJ': ['30', '31', '32', '33', '34'],
+  // Western Region
+  'GJ': ['36', '37', '38', '39'],
+  'MH_GA': ['40', '41', '42', '43', '44'],
+  // Central Region
+  'MP': ['45', '46', '47', '48'],
+  'CG': ['49'],
+  // Southern Region
+  'TS': ['50'],
+  'AP': ['51', '52', '53'],
+  'KA': ['56', '57', '58', '59'],
+  'TN_PY': ['60', '61', '62', '63', '64'],
+  'KL': ['67', '68', '69'],
+  // Eastern Region (West Bengal includes 70, 71, 72, 73, 74)
+  'WB_SK': ['70', '71', '72', '73', '74'],
+  'OD': ['75', '76', '77'],
+  'AS': ['78'],
+  'NE': ['79'],
+  'BR': ['80', '81', '82', '84', '85'],
+  'JH': ['83']
+};
+
+function getStateCodeFromPin(pin) {
+  const p2 = String(pin || '').trim().slice(0, 2);
+  for (const [state, prefixes] of Object.entries(STATE_PIN_PREFIXES)) {
+    if (prefixes.includes(p2)) return state;
+  }
+  return p2;
+}
+
 // Pincode zone classification helper for Shadowfax 360
 function getShadowfaxZone(fromPin, toPin) {
   const cleanFrom = String(fromPin || '').trim().slice(0, 6);
   const cleanTo = String(toPin || '').trim().slice(0, 6);
   const fromCityPrefix = cleanFrom.slice(0, 3);
   const toCityPrefix = cleanTo.slice(0, 3);
-  const fromStatePrefix = cleanFrom.slice(0, 2);
-  const toStatePrefix = cleanTo.slice(0, 2);
 
   // Special Zones (North East: 78, 79; J&K/Ladakh: 19; Kerala: 67, 68, 69; Andaman: 744)
   const SPECIAL_PREFIXES = ['78', '79', '19', '67', '68', '69', '744'];
   if (SPECIAL_PREFIXES.some(p => cleanTo.startsWith(p) || cleanFrom.startsWith(p))) {
     return 'E';
   }
-  // Zone A: Intracity (Same city cluster)
+  // Zone A: Intracity (Same 3-digit city cluster)
   if (fromCityPrefix === toCityPrefix) {
     return 'A';
   }
   // Zone B: Within Zone / Same State
-  if (fromStatePrefix === toStatePrefix) {
+  const fromState = getStateCodeFromPin(cleanFrom);
+  const toState = getStateCodeFromPin(cleanTo);
+  if (fromState && toState && fromState === toState) {
     return 'B';
   }
   // Zone C/D: Metro & Rest of India
