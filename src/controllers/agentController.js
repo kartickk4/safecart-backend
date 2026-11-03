@@ -17,6 +17,7 @@ const cashfreeService = require('../services/cashfreeService');
 const smsService = require('../services/smsService');
 const { createNotification } = require('../services/notification');
 const { calculateServiceFee } = require('../utils/feeConfig');
+const geminiService = require('../services/geminiService');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -457,6 +458,44 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
     return { handled: true, reply: intelligentReply, showSupport: false };
   }
 
+  // 15. Generative AI Query Resolver (Google Gemini 3.5 Flash)
+  // Understands English, Hindi, Hinglish and arbitrary logistics inquiries
+  try {
+    const recentShipments = await Shipment.find({ senderId: user._id })
+      .sort({ createdAt: -1 })
+      .limit(3)
+      .select('shipmentId status amount receiverName city carrierSlug awbCode');
+
+    const activePipeline = await Shipment.find({
+      senderId: user._id,
+      escrowStage: { $in: [2, 3, 4] }
+    });
+    const pipelineFunds = activePipeline.reduce((sum, s) => sum + (s.amount || 0), 0);
+
+    const geminiReply = await geminiService.answerMerchantQuery({
+      query: msg,
+      user,
+      context: {
+        recentShipments,
+        pipelineFunds
+      }
+    });
+
+    if (geminiReply) {
+      if (session.step > STEPS.GREETING && session.step < STEPS.DONE) {
+        const stepInfo = getStepDescription(session.step);
+        return {
+          handled: true,
+          reply: `${geminiReply}\n\n────────────────────\n📦 *Shipment in progress:* We were at step: *${stepInfo.name}*.\nPlease reply with the *${stepInfo.prompt}* to continue booking, or type *"cancel"* to abort.`,
+          showSupport: false
+        };
+      }
+      return { handled: true, reply: geminiReply, showSupport: false };
+    }
+  } catch (aiErr) {
+    console.warn('[AGENT] Gemini intelligent query error, continuing to state machine:', aiErr.message);
+  }
+
   return null;
 };
 
@@ -527,6 +566,48 @@ const handleChat = async (req, res) => {
         const lowerMsg = (message || '').toLowerCase().trim();
         const isBookingRequest = /^(book|send|create|new|start|dispatch)\s*(a\s*)?(shipment|parcel|order|courier|delivery)?$/i.test(lowerMsg)
           || lowerMsg === 'book' || lowerMsg === 'send parcel' || lowerMsg === 'book shipment' || lowerMsg === 'new shipment' || lowerMsg === 'book new shipment';
+
+        // ── AI-Powered 1-Click WhatsApp / Social Media Order Extractor ───────
+        try {
+          const aiOrder = await geminiService.extractOrderFromText(message);
+          if (aiOrder && aiOrder.isOrder) {
+            if (aiOrder.receiverName) data.receiverName = aiOrder.receiverName;
+            if (aiOrder.receiverPhone) data.receiverPhone = aiOrder.receiverPhone;
+            if (aiOrder.receiverAddress) data.receiverAddress = aiOrder.receiverAddress;
+            if (aiOrder.receiverPincode) data.receiverPincode = aiOrder.receiverPincode;
+            if (aiOrder.weightKg) data.weightKg = aiOrder.weightKg;
+            if (aiOrder.amount) data.amount = aiOrder.amount;
+            if (aiOrder.paymentMode) data.paymentMode = aiOrder.paymentMode;
+            if (aiOrder.description) data.description = aiOrder.description;
+
+            if (isReadyToConfirm(data)) {
+              const senderPincode = data.senderPincode || user.pincode || '110001';
+              const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
+              const quotes = getCarrierRates(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims);
+              session.carrierQuotes = quotes;
+              session.selectedCarrier = quotes[0];
+              agentReply = `🎯 *1-Click AI Order Extracted from Message!* 🚀\n\n` + buildSummaryConfirmation(session, data, user);
+              session.step = STEPS.CONFIRMATION;
+              break;
+            } else if (data.receiverName && (data.receiverPhone || data.receiverPincode)) {
+              // Partial order detected — prompt for missing fields
+              let missingPrompt = '';
+              if (!data.receiverAddress) missingPrompt = 'full delivery address';
+              else if (!data.receiverPincode) missingPrompt = '6-digit destination pincode';
+              else if (!data.receiverPhone) missingPrompt = '10-digit receiver mobile number';
+              else if (!data.weightKg) missingPrompt = 'parcel weight (e.g. 1 kg) and value';
+              else if (!data.paymentMode) missingPrompt = 'payment mode: type *1* for Prepaid or *2* for COD';
+
+              agentReply = `✨ *I detected an order for ${data.receiverName}!*` +
+                (data.receiverPincode ? ` (PIN: ${data.receiverPincode})` : '') +
+                `\n\nTo complete booking, please provide the *${missingPrompt}*:`;
+              session.step = !data.receiverAddress ? STEPS.RECEIVER_ADDRESS : (!data.receiverPincode ? STEPS.RECEIVER_PINCODE : (!data.receiverPhone ? STEPS.RECEIVER_PHONE : (!data.weightKg ? STEPS.PARCEL_DETAILS : STEPS.PAYMENT_MODE)));
+              break;
+            }
+          }
+        } catch (extractErr) {
+          console.warn('[AGENT] AI extraction warning:', extractErr.message);
+        }
 
         // Check if user pasted a 1-shot multi-field booking string (contains phone AND pincode)
         const embeddedPhone = extractPhone(message);
