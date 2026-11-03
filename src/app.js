@@ -56,6 +56,9 @@ const compression = require('compression');
 
 const app = express();
 
+// Trust reverse proxy headers (Render, Cloudflare) so client IPs are accurate
+app.set('trust proxy', 1);
+
 // Enable Gzip/Brotli compression across all responses (Performance item 09/31)
 app.use(compression());
 
@@ -172,9 +175,38 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// 3. Global Rate Limiting Middleware
+// 3. Global Rate Limiting Middleware & Real Client IP Resolution
 const isLoadTestRequest = () => {
   return process.env.NODE_ENV === 'test';
+};
+
+const getClientIp = (req) => {
+  return (
+    req.headers['cf-connecting-ip'] ||
+    (typeof req.headers['x-forwarded-for'] === 'string' ? req.headers['x-forwarded-for'].split(',')[0].trim() : null) ||
+    req.ip ||
+    req.socket?.remoteAddress ||
+    '127.0.0.1'
+  );
+};
+
+const rateLimitKeyGenerator = (req) => {
+  // If user is authenticated, use token signature to isolate quota per user
+  const authHeader = req.headers?.authorization;
+  if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+    return 'user_' + authHeader.substring(7, 30);
+  }
+  return getClientIp(req);
+};
+
+const shouldSkipRateLimit = (req) => {
+  if (isLoadTestRequest()) return true;
+  const p = req.path || req.originalUrl || '';
+  // Exempt health checks, uptime pings, and webhook notifications from rate limits
+  if (p === '/health' || p === '/api/v1/health' || p.includes('health') || p.includes('network-info') || p.includes('/youpi/webhook')) {
+    return true;
+  }
+  return false;
 };
 
 const createRedisLimiterStore = (prefix) => {
@@ -191,14 +223,16 @@ const createRedisLimiterStore = (prefix) => {
   return undefined;
 };
 
+// Generous production global rate limiter (3,000 requests per 15 min per client/user)
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: 3000,
   message: { error: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: rateLimitKeyGenerator,
   store: createRedisLimiterStore('global'),
-  skip: isLoadTestRequest
+  skip: shouldSkipRateLimit
 });
 
 app.use('/api/', globalLimiter);
@@ -284,24 +318,26 @@ app.get(['/api/v1/network-info', '/network-info'], (req, res) => {
 // Auth-specific strict rate limiter backed by central Redis
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20, // SECURITY: Tightened to 20 attempts per 15 mins to defeat distributed brute-force
+  max: 40, // 40 failed attempts per 15 mins to defeat brute-force
   message: { error: 'Too many authentication attempts. Please try again after 15 minutes.' },
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: getClientIp,
   store: createRedisLimiterStore('auth'),
-  skipSuccessfulRequests: true, // Only count failed attempts toward the limit
-  skip: isLoadTestRequest
+  skipSuccessfulRequests: true,
+  skip: shouldSkipRateLimit
 });
 
-// AI Agent rate limiter backed by central Redis — prevent abuse of LLM-backed endpoints
+// AI Agent rate limiter — 60 messages per minute per active user/IP
 const agentLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 30, // 30 messages per minute per IP
-  message: { error: 'Too many agent requests. Please slow down.' },
+  max: 60,
+  message: { error: 'Too many agent requests. Please slow down a moment.' },
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: rateLimitKeyGenerator,
   store: createRedisLimiterStore('agent'),
-  skip: isLoadTestRequest
+  skip: shouldSkipRateLimit
 });
 
 // App Router Declarations (Standard v1 prefix)
