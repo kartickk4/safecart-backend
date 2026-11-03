@@ -503,7 +503,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
 
 const handleChat = async (req, res) => {
   try {
-    const { message = '', sessionId } = req.body;
+    const { message = '', sessionId, imageBase64, imageMimeType } = req.body;
     const userId = req.user._id;
     const user   = req.user;
 
@@ -528,8 +528,81 @@ const handleChat = async (req, res) => {
     const isEcommerce = (user.platformType === 'ecommerce');
 
     // Save user message to history
-    if (message.trim()) {
+    if (imageBase64) {
+      session.messages.push({ 
+        role: 'user', 
+        content: message.trim() ? `${message.trim()}\n📷 [Order Photo / Screenshot]` : '📷 [Order Photo / Screenshot]' 
+      });
+    } else if (message.trim()) {
       session.messages.push({ role: 'user', content: message.trim() });
+    }
+
+    // 📸⚡ GEMINI VISION / OCR: Handle Image Order Extraction
+    if (imageBase64) {
+      let agentReply = '';
+      const data = session.collectedData;
+      try {
+        const aiOrder = await geminiService.extractOrderFromImage(imageBase64, imageMimeType);
+        if (aiOrder && aiOrder.isOrder) {
+          if (aiOrder.receiverName) data.receiverName = aiOrder.receiverName;
+          if (aiOrder.receiverPhone) data.receiverPhone = aiOrder.receiverPhone;
+          if (aiOrder.receiverAddress) data.receiverAddress = aiOrder.receiverAddress;
+          if (aiOrder.receiverPincode) data.receiverPincode = aiOrder.receiverPincode;
+          if (aiOrder.weightKg) data.weightKg = aiOrder.weightKg;
+          if (aiOrder.amount) data.amount = aiOrder.amount;
+          if (aiOrder.paymentMode) data.paymentMode = aiOrder.paymentMode;
+          if (aiOrder.description) data.description = aiOrder.description;
+
+          if (isReadyToConfirm(data)) {
+            const senderPincode = data.senderPincode || user.pincode || '110001';
+            const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
+            const quotes = getCarrierRates(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims);
+            session.carrierQuotes = quotes;
+            session.selectedCarrier = quotes[0];
+            agentReply = `📸 *1-Click AI Order Extracted from Image!* ⚡\n\n` + buildSummaryConfirmation(session, data, user);
+            session.step = STEPS.CONFIRMATION;
+          } else if (data.receiverName || data.receiverPhone || data.receiverPincode || data.receiverAddress) {
+            let missingPrompt = '';
+            if (!data.receiverAddress) missingPrompt = 'full delivery address';
+            else if (!data.receiverPincode) missingPrompt = '6-digit destination pincode';
+            else if (!data.receiverPhone) missingPrompt = '10-digit receiver mobile number';
+            else if (!data.weightKg) missingPrompt = 'parcel weight (e.g. 1 kg) and value';
+            else if (!data.paymentMode) missingPrompt = 'payment mode: type *1* for Prepaid or *2* for COD';
+
+            const nameLabel = data.receiverName ? ` for ${data.receiverName}` : '';
+            agentReply = `📸 *Scanned Details from Image${nameLabel}!* ` +
+              (data.receiverPincode ? `(PIN: ${data.receiverPincode})` : '') +
+              `\n\nTo complete booking, please provide the *${missingPrompt}*:`;
+            session.step = !data.receiverAddress ? STEPS.RECEIVER_ADDRESS : (!data.receiverPincode ? STEPS.RECEIVER_PINCODE : (!data.receiverPhone ? STEPS.RECEIVER_PHONE : (!data.weightKg ? STEPS.PARCEL_DETAILS : STEPS.PAYMENT_MODE)));
+          } else {
+            agentReply = '📸 *Image Scanned:* I could not detect clear order or customer details. Please ensure the receiver name, mobile number, full address, and 6-digit PIN are visible, or simply type them here.';
+          }
+        } else {
+          agentReply = '📸 *Image Scanned:* No shipping address or order details were recognized in this image. Please ensure the picture is clear and legible, or paste the text directly.';
+        }
+      } catch (imgErr) {
+        console.warn('[AGENT] Vision extraction error:', imgErr.message);
+        agentReply = `⚠️ *Image OCR notice:* I had trouble analyzing that image (${imgErr.message || 'scan error'}). Please try again or paste the customer's text address directly.`;
+      }
+
+      session.messages.push({ role: 'agent', content: agentReply });
+      session.markModified('messages');
+      session.markModified('collectedData');
+      try {
+        await session.save();
+      } catch (saveErr) {
+        console.warn('[AGENT] session.save warning:', saveErr.message);
+      }
+
+      return res.json({
+        sessionId: session.sessionId,
+        step: session.step,
+        reply: agentReply,
+        carrierQuotes: session.step === STEPS.CONFIRMATION ? session.carrierQuotes : undefined,
+        selectedCarrier: session.selectedCarrier,
+        collectedData: session.collectedData,
+        createdShipmentId: session.createdShipmentId
+      });
     }
 
     // ── Check Intelligent Query & Problem Solver First ──────────────────────────

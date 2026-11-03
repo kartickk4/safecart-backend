@@ -186,7 +186,97 @@ async function answerMerchantQuery({ query, user, context }) {
   }
 }
 
+
+/**
+ * 1-Click Vision / OCR Order Extractor
+ * Reads photos, screenshots (WhatsApp chat, SMS, handwritten slips, shipping labels, invoices)
+ * and extracts shipping recipient and parcel details into structured JSON.
+ */
+async function extractOrderFromImage(imageBase64, imageMimeType = 'image/jpeg') {
+  if (!imageBase64 || typeof imageBase64 !== 'string') return null;
+  if (!GEMINI_API_KEY) return null;
+
+  // Clean base64 string and detect mime type if data URI was passed
+  let cleanBase64 = imageBase64.trim();
+  let mimeType = imageMimeType || 'image/jpeg';
+
+  if (cleanBase64.includes(';base64,')) {
+    const parts = cleanBase64.split(';base64,');
+    const match = parts[0].match(/data:(.*?)$/);
+    if (match && match[1]) {
+      mimeType = match[1];
+    }
+    cleanBase64 = parts[1];
+  }
+
+  // Basic sanity check on base64 content
+  if (cleanBase64.length < 50) return null;
+
+  const systemInstruction = 
+    "You are an expert Indian e-commerce OCR and logistics parcel parser for SecureKaro.\n" +
+    "You are given an image (e.g. WhatsApp conversation screenshot, customer address chit, paper invoice, handwritten label, or courier slip).\n" +
+    "Carefully inspect the image, transcribe any shipping recipient details, item description, and order values, and return strict JSON matching this schema:\n" +
+    "{\n" +
+    '  "isOrder": boolean, // true if this image contains an order/recipient address or intent to ship\n' +
+    '  "receiverName": string or null,\n' +
+    '  "receiverPhone": string or null (10-digit Indian mobile number without +91 or leading 0),\n' +
+    '  "receiverAddress": string or null (full street address, house/flat/building, landmark, area),\n' +
+    '  "receiverPincode": string or null (6-digit Indian PIN code),\n' +
+    '  "city": string or null,\n' +
+    '  "weightKg": number or null (e.g. 0.5, 1.0, 2.0 - default to 0.5 if not found),\n' +
+    '  "amount": number or null (item value or COD amount in INR),\n' +
+    '  "paymentMode": "cod" or "prepaid" (default to "cod" if cash on delivery or amount is mentioned, "prepaid" if paid/online mentioned),\n' +
+    '  "description": string or null (item/product description, e.g. \"Saree\", \"Shoes\", \"Kurtis\")\n' +
+    "}\n" +
+    "If the image does not show an address, customer details, or order, set isOrder: false.";
+
+  const body = {
+    contents: [
+      {
+        parts: [
+          {
+            inlineData: {
+              mimeType: mimeType,
+              data: cleanBase64
+            }
+          },
+          {
+            text: "Extract shipping recipient details and parcel information from this order image/screenshot."
+          }
+        ]
+      }
+    ],
+    systemInstruction: {
+      parts: [{ text: systemInstruction }]
+    },
+    generationConfig: {
+      responseMimeType: "application/json",
+      temperature: 0.1
+    }
+  };
+
+  try {
+    const rawJson = await generateWithFallback(body);
+    const parsed = JSON.parse(rawJson);
+    if (parsed && parsed.isOrder) {
+      if (parsed.receiverPhone) {
+        parsed.receiverPhone = String(parsed.receiverPhone).replace(/\D/g, '').slice(-10);
+      }
+      if (parsed.receiverPincode) {
+        const pinMatch = String(parsed.receiverPincode).match(/\b\d{6}\b/);
+        parsed.receiverPincode = pinMatch ? pinMatch[0] : null;
+      }
+      return parsed;
+    }
+    return null;
+  } catch (err) {
+    console.warn('[Gemini Vision] Image order extraction failed:', err.message);
+    return null;
+  }
+}
+
 module.exports = {
   extractOrderFromText,
+  extractOrderFromImage,
   answerMerchantQuery
 };
