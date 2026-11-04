@@ -1,13 +1,17 @@
 /**
  * geminiService.js
  * Google Gemini Generative AI Service for SecureKaro Logistics Copilot.
- * Uses gemini-3.5-flash with automatic fallback to gemini-3.5-flash-lite.
+ * Optimized for ultra-low latency (<2s responses) using gemini-3.5-flash-lite
+ * with automatic fallback to gemini-flash-lite-latest and gemini-3.5-flash.
  */
 
 const https = require('https');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const MODELS = ['gemini-3.5-flash', 'gemini-3.5-flash-lite'];
+
+// Low-latency priority: gemini-3.5-flash-lite provides 1-2s instant responses
+// avoiding the 40+ second deep thinking loops of full flash models.
+const MODELS = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.5-flash'];
 
 /**
  * Make a direct HTTPS POST request to Gemini generateContent endpoint
@@ -27,7 +31,7 @@ async function callGemini(model, body) {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(postData)
       },
-      timeout: 20000
+      timeout: 8000 // Fast 8s timeout to prevent hanging users
     }, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
@@ -59,7 +63,7 @@ async function callGemini(model, body) {
 }
 
 /**
- * Executes a Gemini request with dual-model fallback (flash -> flash-lite)
+ * Executes a Gemini request with ultra-fast fallback
  */
 async function generateWithFallback(body) {
   let lastError = null;
@@ -151,6 +155,7 @@ async function answerMerchantQuery({ query, user, context }) {
     "SecureKaro provides escrow delivery protection, automated multi-carrier shipping (Delhivery, BlueDart, DTDC, Shadowfax), 24h buyer inspection window, and instant wallet payouts.\n\n" +
     "Guidelines:\n" +
     "- Respond politely and concisely using bolding (*bold*) and clean bullet points.\n" +
+    "- Keep responses brief, crisp, and direct (max 2-3 short paragraphs).\n" +
     "- If the user asks in Hinglish or Hindi, answer naturally in friendly Hinglish/Hindi.\n" +
     "- If the user asks about live tracking, wallet balance, carrier rates, replacement policy, or disputes, provide precise, actionable guidance based on the provided live context.\n" +
     "- Never invent fake tracking numbers or false account balances.\n" +
@@ -172,8 +177,8 @@ async function answerMerchantQuery({ query, user, context }) {
       parts: [{ text: systemInstruction }]
     },
     generationConfig: {
-      temperature: 0.4,
-      maxOutputTokens: 600
+      temperature: 0.3,
+      maxOutputTokens: 400 // Keep concise for sub-second streaming
     }
   };
 
@@ -185,7 +190,6 @@ async function answerMerchantQuery({ query, user, context }) {
     return null; // Triggers fallback to deterministic rule engine
   }
 }
-
 
 /**
  * 1-Click Vision / OCR Order Extractor
