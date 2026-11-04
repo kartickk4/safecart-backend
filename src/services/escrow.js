@@ -430,13 +430,27 @@ const refundUndeliveredEscrow = async (shipmentId, reason = 'Carrier reported de
       _id: { $ne: shipment._id }
     });
 
+    // Check if seller already received ₹40 relief in the past 7 days (limit: 1 time a week per seller)
+    const sellerDoc = supplier || await User.findById(shipment.senderId);
+    const sellerLastRelief = sellerDoc?.lastRtoReliefAt ? new Date(sellerDoc.lastRtoReliefAt) : null;
+    const hasRecentSellerRelief = sellerLastRelief && (Date.now() - sellerLastRelief.getTime() < 7 * 24 * 60 * 60 * 1000);
+
     if (receiverWeeklyRejectionCount < 2) {
       // Buyer's 1st or 2nd rejection this week:
       // → Buyer gets 100% full refund (no penalty)
-      // → SecureKaro compensates seller ₹40 as burden relief
+      // → SecureKaro compensates seller ₹40 as burden relief (max 1 time per week per seller)
       receiverPenalty = 0;
       receiverRefund = isOnlineEscrow ? principal : 0;
-      supplierRelief = 40;
+      if (!hasRecentSellerRelief) {
+        supplierRelief = 40;
+        if (sellerDoc) {
+          sellerDoc.lastRtoReliefAt = new Date();
+          await sellerDoc.save();
+        }
+      } else {
+        supplierRelief = 0;
+        console.log(`[RTO PROTECTION] Seller ${shipment.senderId} weekly relief limit reached (already received ₹40 relief within past 7 days).`);
+      }
       supplierBuyerPenaltyShare = 0;
     } else {
       // Buyer's 3rd+ rejection this week:

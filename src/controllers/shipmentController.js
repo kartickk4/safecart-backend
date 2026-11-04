@@ -492,7 +492,7 @@ const createShipment = async (req, res) => {
       photoReviewRequested: isReturnAllowed,
       photoReviewPaid: true,
       photoReviewRefused: false,
-      rtoProtectionEnabled: (normalizedMode === 'prepaid') ? Boolean(rtoProtectionEnabled) : false,
+      rtoProtectionEnabled: Boolean(rtoProtectionEnabled),
       inboxQrToken: crypto.randomBytes(20).toString('hex'),
       inboxQrGeneratedAt: new Date(),
       inboxQrUsed: false,
@@ -509,6 +509,13 @@ const createShipment = async (req, res) => {
     }
 
     await shipment.save();
+
+    // Increment sender's lifetime total shipments count
+    try {
+      await User.findByIdAndUpdate(req.user._id, { $inc: { totalShipments: 1 } });
+    } catch (cntErr) {
+      console.warn('[SHIPMENT] Could not increment sender totalShipments:', cntErr.message);
+    }
 
     let pickupSchedule = null;
 
@@ -1124,13 +1131,11 @@ const dispatchShipment = async (req, res) => {
       return res.status(400).json({ error: 'Please enter a valid courier tracking ID / AWB code' });
     }
 
-    // ── Photo Before Dispatch: only required when seller enabled return option ──
-    // If returnAllowed = false → seller didn't enable returns → no photo needed → dispatch immediately
-    // If returnAllowed = true  → photo protects seller against "wrong item" claims
+    // ── Photo of Parcel on Weighing Scale: Mandatory for ALL shipments before dispatch ──
     const hasPhoto = (parcelPhotoUrl && parcelPhotoUrl.trim()) || (shipment.parcelPhotoUrl && shipment.parcelPhotoUrl.trim());
-    if (shipment.returnAllowed !== false && !hasPhoto) {
+    if (!hasPhoto) {
       return res.status(400).json({ 
-        error: 'Parcel photo is required before dispatch because you enabled the Return option for this shipment. This photo protects you if the buyer claims a wrong item was delivered.' 
+        error: 'A photo of the parcel resting on a weighing scale is mandatory for every shipment before courier dispatch to guarantee weight shield and zero-penalty protection.' 
       });
     }
 

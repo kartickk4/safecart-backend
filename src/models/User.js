@@ -84,6 +84,14 @@ const UserSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  lastRtoReliefAt: {
+    type: Date,
+    default: null
+  },
+  totalShipments: {
+    type: Number,
+    default: 0
+  },
 
   // ── Refer & Earn ─────────────────────────────────────────────────
   referralCode: {

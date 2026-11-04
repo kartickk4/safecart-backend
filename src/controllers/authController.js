@@ -86,7 +86,9 @@ const formatUserResponse = (user, activeRole = null) => {
     referralCode: user.referralCode || '',
     referralCredits: user.referralCredits || 0,
     isAdmin: Boolean(user.isAdmin),
-    adminRole: user.adminRole || null
+    adminRole: user.adminRole || null,
+    totalShipments: Number(user.totalShipments || 0),
+    shipmentsCount: Number(user.totalShipments || 0)
   };
 };
 

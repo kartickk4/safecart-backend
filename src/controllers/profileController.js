@@ -20,6 +20,7 @@ function loadMod(type, name) {
 }
 
 const User = loadMod('models', 'User');
+const Shipment = loadMod('models', 'Shipment');
 const WalletTransaction = loadMod('models', 'WalletTransaction');
 
 /**
@@ -60,8 +61,21 @@ const getProfile = async (req, res) => {
         await req.user.save();
       }
     }
-    // req.user has already been populated by protect middleware
-    res.json(req.user);
+    // Calculate user's total shipments count
+    let totalShipments = Number(req.user.totalShipments || 0);
+    if (!totalShipments && Shipment) {
+      try {
+        totalShipments = await Shipment.countDocuments({ senderId: req.user._id });
+        if (totalShipments > 0) {
+          req.user.totalShipments = totalShipments;
+          await req.user.save();
+        }
+      } catch (cntErr) {}
+    }
+    const userJson = req.user.toObject ? req.user.toObject() : { ...req.user };
+    userJson.totalShipments = totalShipments;
+    userJson.shipmentsCount = totalShipments;
+    res.json(userJson);
   } catch (error) {
     console.error('Get Profile Error:', error);
     res.status(500).json({ error: 'Internal Server Error' });
