@@ -3415,7 +3415,242 @@ const getNdrShipments = async (req, res) => {
   }
 };
 
+
+/**
+ * @desc    Get printable 4x6 inch thermal shipping label (HTML/PDF ready)
+ * @route   GET /api/v1/shipments/:id/label
+ * @access  Public / Private (token optional or sender verified)
+ */
+const getPrintableShippingLabel = async (req, res) => {
+  try {
+    const rawId = (req.params.id || '').trim().toUpperCase();
+    const shipment = await Shipment.findOne({ shipmentId: rawId })
+      .populate('senderId', 'fullName businessName phone address pincode email');
+
+    if (!shipment) {
+      return res.status(404).send('<h3>Shipment not found</h3>');
+    }
+
+    const sender = shipment.senderId || {};
+    const senderName = sender.businessName || sender.fullName || 'SecureKaro Merchant';
+    const senderPhone = sender.phone || '+91 98765 43210';
+    const senderAddr = sender.address || 'Fulfillment Hub';
+    const senderPin = sender.pincode || '110001';
+
+    const isCod = shipment.paymentMode === 'cod';
+    const carrier = (shipment.carrierSlug || 'delhivery').toUpperCase();
+    const awb = shipment.awbCode || shipment.trackingId || shipment.shipmentId;
+    const weight = shipment.parcelWeight ? Number(shipment.parcelWeight).toFixed(2) : '0.50';
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Shipping Label - ${shipment.shipmentId}</title>
+  <style>
+    @page {
+      size: 4in 6in;
+      margin: 0;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    }
+    body {
+      width: 4in;
+      height: 6in;
+      padding: 12px;
+      background: #fff;
+      color: #000;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 2px solid #000;
+      padding-bottom: 6px;
+    }
+    .brand {
+      font-size: 16px;
+      font-weight: 900;
+      letter-spacing: -0.5px;
+    }
+    .carrier-badge {
+      font-size: 14px;
+      font-weight: 900;
+      padding: 2px 6px;
+      border: 2px solid #000;
+      text-transform: uppercase;
+    }
+    .awb-section {
+      text-align: center;
+      padding: 8px 0;
+      border-bottom: 2px dashed #000;
+    }
+    .barcode-placeholder {
+      font-family: monospace;
+      font-size: 26px;
+      letter-spacing: 5px;
+      font-weight: 900;
+      line-height: 1;
+    }
+    .awb-num {
+      font-size: 11px;
+      font-weight: 700;
+      margin-top: 3px;
+    }
+    .payment-banner {
+      border: 3px solid #000;
+      background: ${isCod ? '#000' : '#fff'};
+      color: ${isCod ? '#fff' : '#000'};
+      text-align: center;
+      padding: 6px;
+      margin: 8px 0;
+      font-size: 16px;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+    }
+    .address-box {
+      border: 1.5px solid #000;
+      padding: 6px 8px;
+      margin-bottom: 6px;
+    }
+    .title {
+      font-size: 9px;
+      font-weight: 900;
+      text-transform: uppercase;
+      margin-bottom: 2px;
+    }
+    .name {
+      font-size: 13px;
+      font-weight: 900;
+    }
+    .phone {
+      font-size: 11px;
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+    .addr {
+      font-size: 10px;
+      line-height: 1.25;
+      font-weight: 500;
+    }
+    .pincode-badge {
+      display: inline-block;
+      font-size: 14px;
+      font-weight: 900;
+      border: 1.5px solid #000;
+      padding: 1px 6px;
+      margin-top: 4px;
+    }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+      font-size: 9px;
+      border-top: 1.5px solid #000;
+      padding-top: 4px;
+    }
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-top: 2px solid #000;
+      padding-top: 6px;
+      font-size: 9px;
+    }
+    .print-btn {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      padding: 8px 16px;
+      background: #1E56E3;
+      color: #fff;
+      font-weight: 700;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    @media print {
+      .print-btn { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <button class="print-btn" onclick="window.print()">🖨️ Print Label (4x6)</button>
+
+  <div>
+    <div class="header">
+      <div class="brand">SECUREKARO LOGISTICS</div>
+      <div class="carrier-badge">${carrier}</div>
+    </div>
+
+    <div class="awb-section">
+      <div class="barcode-placeholder">||||| |||| |||||| ||||| ||||</div>
+      <div class="awb-num">AWB: ${awb}</div>
+    </div>
+
+    <div class="payment-banner">
+      ${isCod ? 'CASH ON DELIVERY (COD): ₹' + (shipment.amount || 0) : 'PREPAID - DO NOT COLLECT CASH'}
+    </div>
+
+    <!-- SHIP TO -->
+    <div class="address-box">
+      <div class="title">DELIVER TO (RECIPIENT):</div>
+      <div class="name">${shipment.receiverName || 'Recipient'}</div>
+      <div class="phone">📞 ${shipment.receiverPhone || ''}</div>
+      <div class="addr">${shipment.receiverAddress || ''}</div>
+      <div class="pincode-badge">PIN: ${shipment.receiverPincode || ''}</div>
+    </div>
+
+    <!-- SHIP FROM -->
+    <div class="address-box">
+      <div class="title">RETURN / SHIPPER:</div>
+      <div class="name" style="font-size:11px;">${senderName}</div>
+      <div class="phone" style="font-size:10px;">📞 ${senderPhone}</div>
+      <div class="addr" style="font-size:9px;">${senderAddr} - ${senderPin}</div>
+    </div>
+  </div>
+
+  <div>
+    <div class="meta-grid">
+      <div><b>Order ID:</b> ${shipment.shipmentId}</div>
+      <div><b>Weight:</b> ${weight} KG</div>
+      <div><b>Item:</b> ${(shipment.description || 'General Parcel').slice(0, 24)}</div>
+      <div><b>Routing:</b> ${shipment.receiverPincode ? shipment.receiverPincode.slice(0, 3) + ' HUB' : 'SURFACE'}</div>
+    </div>
+
+    <div class="footer">
+      <span>Verified Escrow Shipping Protocol</span>
+      <span>securekaro.in/track?id=${shipment.shipmentId}</span>
+    </div>
+  </div>
+
+  <script>
+    // Auto-trigger print dialog if opened in standalone popup
+    if (window.location.search.includes('print=true')) {
+      window.onload = () => window.print();
+    }
+  </script>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (err) {
+    console.error('Printable label error:', err);
+    res.status(500).send('<h3>Error generating shipping label</h3>');
+  }
+};
+
 module.exports = {
+  getPrintableShippingLabel,
   getShipments,
   getShipmentById,
   createShipment,

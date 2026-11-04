@@ -50,6 +50,7 @@ const {
   dispatchReplacementHandler,
   confirmReplacementDeliveryHandler,
   getQrLabel,
+  getPrintableShippingLabel,
   getReplacementQrLabel,
   publicQrGetInfo,
   publicQrSendOtp,
@@ -236,6 +237,9 @@ router.route('/:id/parcel-photo')
   .put(protect, uploadParcelPhoto);
 
 // ── In-Box QR Label (seller prints & puts inside parcel) ──────────────────
+router.route('/:id/label')
+  .get(getPrintableShippingLabel);
+
 router.route('/:id/qr-label')
   .get(protect, getQrLabel);
 

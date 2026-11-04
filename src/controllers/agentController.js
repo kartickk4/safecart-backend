@@ -12,6 +12,7 @@ const Shipment = require('../models/Shipment');
 const User = require('../models/User');
 const { getCarrierRates, getCarrierRatesAsync, getPincodeInfo, attachSmartBadges, getSmartRecommendation } = require('../services/carrierRateService');
 const { autoScheduleCourierPickup } = require('../services/pickupService');
+const { verifyAddressAndPredictRto } = require('../services/addressRtoService');
 const { checkDelhiveryServiceability } = require('../services/delhiveryService');
 const { sendPaymentLinkWhatsApp, sendBookingConfirmationWhatsApp } = require('../services/whatsappService');
 const cashfreeService = require('../services/cashfreeService');
@@ -134,6 +135,23 @@ const buildSummaryConfirmation = (session, data, user) => {
     `💰 *Amount:* ${fmt(data.amount)}\n` +
     `💳 *Payment Mode:* ${modeText}\n` +
     `🛡️ *RTO Protection:* ${rtoText}\n` +
+    (() => {
+      try {
+        const audit = verifyAddressAndPredictRto({
+          address: data.receiverAddress,
+          pincode: data.receiverPincode,
+          paymentMode: data.paymentMode,
+          amount: data.amount,
+          phone: data.receiverPhone
+        });
+        let extra = '\n🎯 *AI Address Quality & RTO Risk:* ' + audit.riskLabel + ' (' + audit.deliveryProbability + '% Delivery Success)\n';
+        if (audit.missingElements && audit.missingElements.length > 0) {
+          extra += '   ⚠️ *Note:* Missing ' + audit.missingElements.join(', ') + '\n';
+        }
+        extra += '   💡 *Advisory:* ' + audit.recommendation + '\n';
+        return extra;
+      } catch (_) { return ''; }
+    })() +
     `↩️ *Returns:* ${data.returnAllowed !== false ? 'Enabled (24h)' : 'Disabled (Final Sale)'}\n` +
     `🚚 *Carrier:* ${sel.name} — ${fmt(sel.price)} · ${sel.eta}\n\n` +
     (isCod 
@@ -1643,6 +1661,11 @@ const handleChat = async (req, res) => {
 
           const carrierBadge = pickupResult.carrier || sel.name;
           const rateBadge = pickupResult.rate || sel.price;
+
+          const cleanPhone = String(data.receiverPhone || '').replace(/\D/g, '').slice(-10);
+          const waOrderText = "Hi " + (data.receiverName || "Customer") + "! 👋 Your order *" + shipmentId + "* (" + (data.description || "Package") + ") is booked via " + carrierBadge + ".\n\n📦 Track live: https://securekaro.in/track?id=" + shipmentId + "\n" + (isCod ? "💵 Amount Due (COD): ₹" + data.amount + "\n" : "💳 Payment: Prepaid\n") + "🔒 Safe delivery with SecureKaro.";
+          const waShareLink = "https://api.whatsapp.com/send?phone=91" + cleanPhone + "&text=" + encodeURIComponent(waOrderText);
+          const labelUrl = "https://securekaro.in/api/v1/shipments/" + shipmentId + "/label";
 
           if (isCod) {
             agentReply =
