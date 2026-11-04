@@ -57,7 +57,13 @@ const {
   exportUserShipments,
   quoteCodFees,
   publicPayShipment,
-  paymentWebhookHandler
+  paymentWebhookHandler,
+  uploadWeightShieldProof,
+  fileWeightDispute,
+  getWeightDisputeEvidence,
+  triggerNdrAlert,
+  publicNdrResolve,
+  getNdrShipments
 } = loadMod('controllers', 'shipmentController');
 const { createPaymentSessionForShipment } = loadMod('controllers', 'youpiWebhookController');
 const { getSupportedCouriersList, getPincodeInfo } = loadMod('services', 'carrierRateService');
@@ -117,6 +123,26 @@ router.route('/returns/receiver')
 
 router.route('/gateway-fee-status')
   .get(protect, getSupplierGatewayQuota);
+
+// ── Weight Shield & Dispute Protection Routes ──
+router.route('/:id/weight-shield')
+  .post(protect, uploadWeightShieldProof);
+
+router.route('/:id/file-weight-dispute')
+  .post(protect, fileWeightDispute);
+
+router.route('/:id/weight-dispute-evidence')
+  .get(protect, getWeightDisputeEvidence);
+
+// ── Autonomous NDR Exception Handling Routes ──
+router.route('/ndr/active')
+  .get(protect, getNdrShipments);
+
+router.route('/:id/trigger-ndr')
+  .post(protect, triggerNdrAlert);
+
+router.route('/public/ndr-resolve/:id')
+  .post(publicNdrResolve);
 
 // ── Public Delivery Sign-Off (no login required) ───────────────────────────
 // STEP 0: Preview parcel details & masked phone hint

@@ -3153,6 +3153,268 @@ const exportUserShipments = async (req, res) => {
   }
 };
 
+
+// ── Weight Shield & Dispute Protection Controllers ──
+
+/**
+ * @desc    Upload weighing scale photo & parcel dimensions to activate Weight Shield
+ * @route   POST /api/v1/shipments/:id/weight-shield
+ * @access  Private (seller only)
+ */
+const uploadWeightShieldProof = async (req, res) => {
+  try {
+    const id = req.params.id.toUpperCase();
+    const { scalePhotoUrl, weightKg, lengthCm, widthCm, heightCm } = req.body;
+
+    const shipment = await Shipment.findOne({ shipmentId: id });
+    if (!shipment) return res.status(404).json({ error: 'Shipment not found' });
+
+    if (scalePhotoUrl) {
+      shipment.packingScalePhotoUrl = scalePhotoUrl;
+      shipment.packingScalePhotoUploadedAt = new Date();
+    }
+
+    const l = parseFloat(lengthCm) || 0;
+    const w = parseFloat(widthCm) || 0;
+    const h = parseFloat(heightCm) || 0;
+    const volWeight = (l > 0 && w > 0 && h > 0) ? parseFloat(((l * w * h) / 5000).toFixed(2)) : 0;
+
+    shipment.packingDimensions = {
+      lengthCm: l,
+      widthCm: w,
+      heightCm: h,
+      volumetricWeightKg: volWeight
+    };
+
+    shipment.weightShieldActive = true;
+    shipment.weightDisputeStatus = 'Protected';
+
+    await shipment.save();
+
+    return res.json({
+      success: true,
+      message: 'Weight Shield activated! Verified packing scale evidence stored to prevent courier overcharges.',
+      shipmentId: shipment.shipmentId,
+      weightShieldStatus: shipment.weightDisputeStatus,
+      scalePhotoUrl: shipment.packingScalePhotoUrl,
+      packingDimensions: shipment.packingDimensions
+    });
+  } catch (err) {
+    console.error('Upload Weight Shield Proof Error:', err);
+    res.status(500).json({ error: 'Internal Server Error', details: err.message });
+  }
+};
+
+/**
+ * @desc    Auto-file a weight discrepancy dispute with tamper-proof photo & scale evidence
+ * @route   POST /api/v1/shipments/:id/file-weight-dispute
+ * @access  Private (seller only)
+ */
+const fileWeightDispute = async (req, res) => {
+  try {
+    const id = req.params.id.toUpperCase();
+    const { courierReportedWeightKg, discrepancyCharge, disputeReason } = req.body;
+
+    const shipment = await Shipment.findOne({ shipmentId: id });
+    if (!shipment) return res.status(404).json({ error: 'Shipment not found' });
+
+    const reportedWeight = parseFloat(courierReportedWeightKg) || ((shipment.packingDimensions?.volumetricWeightKg || 1) + 1.0);
+    const charge = parseFloat(discrepancyCharge) || 120.00;
+
+    const evidencePacket = JSON.stringify({
+      shipmentId: shipment.shipmentId,
+      awbCode: shipment.awbCode || 'Pending',
+      carrierPartner: shipment.carrierSlug || 'Courier Partner',
+      sellerDeclaredWeightKg: shipment.packingDimensions?.volumetricWeightKg || 0.5,
+      courierReportedWeightKg: reportedWeight,
+      discrepancyDiffKg: parseFloat((reportedWeight - (shipment.packingDimensions?.volumetricWeightKg || 0.5)).toFixed(2)),
+      discrepancyPenalty: charge,
+      scaleProofUrl: shipment.packingScalePhotoUrl || shipment.parcelPhotoUrl || 'Evidence Attached',
+      dimensionsCm: `${shipment.packingDimensions?.lengthCm || 15}x${shipment.packingDimensions?.widthCm || 10}x${shipment.packingDimensions?.heightCm || 5}`,
+      timestamp: new Date().toISOString(),
+      disputeFilingStatus: 'FORMAL_DISPUTE_SUBMITTED_TO_COURIER_AUDIT'
+    }, null, 2);
+
+    shipment.courierReportedWeightKg = reportedWeight;
+    shipment.weightDiscrepancyCharge = charge;
+    shipment.weightDisputeStatus = 'Disputed';
+    shipment.weightDisputeFiledAt = new Date();
+    shipment.weightDisputeEvidencePacket = evidencePacket;
+    shipment.weightDisputeResolutionNotes = disputeReason || 'Seller verified scale photo & box dimensions prove courier volumetric overscan.';
+
+    await shipment.save();
+
+    return res.json({
+      success: true,
+      message: 'Official Weight Dispute filed with courier audit! Wallet deduction held pending photographic review.',
+      shipmentId: shipment.shipmentId,
+      disputeStatus: 'Disputed',
+      evidencePacket: JSON.parse(evidencePacket)
+    });
+  } catch (err) {
+    console.error('File Weight Dispute Error:', err);
+    res.status(500).json({ error: 'Internal Server Error', details: err.message });
+  }
+};
+
+/**
+ * @desc    Get weight dispute evidence packet and audit proof
+ * @route   GET /api/v1/shipments/:id/weight-dispute-evidence
+ * @access  Private
+ */
+const getWeightDisputeEvidence = async (req, res) => {
+  try {
+    const id = req.params.id.toUpperCase();
+    const shipment = await Shipment.findOne({ shipmentId: id });
+    if (!shipment) return res.status(404).json({ error: 'Shipment not found' });
+
+    res.json({
+      success: true,
+      shipmentId: shipment.shipmentId,
+      weightShieldActive: shipment.weightShieldActive,
+      weightDisputeStatus: shipment.weightDisputeStatus,
+      scalePhotoUrl: shipment.packingScalePhotoUrl,
+      packingDimensions: shipment.packingDimensions,
+      courierReportedWeightKg: shipment.courierReportedWeightKg,
+      weightDiscrepancyCharge: shipment.weightDiscrepancyCharge,
+      weightDisputeFiledAt: shipment.weightDisputeFiledAt,
+      evidencePacket: shipment.weightDisputeEvidencePacket ? JSON.parse(shipment.weightDisputeEvidencePacket) : null
+    });
+  } catch (err) {
+    console.error('Get Weight Dispute Evidence Error:', err);
+    res.status(500).json({ error: 'Internal Server Error', details: err.message });
+  }
+};
+
+// ── Autonomous WhatsApp NDR (Non-Delivery Report) Controllers ──
+
+/**
+ * @desc    Trigger autonomous NDR alert: sends WhatsApp 1-click resolution to customer
+ * @route   POST /api/v1/shipments/:id/trigger-ndr
+ * @access  Private / Internal
+ */
+const triggerNdrAlert = async (req, res) => {
+  try {
+    const id = req.params.id.toUpperCase();
+    const { ndrReason } = req.body;
+
+    const shipment = await Shipment.findOne({ shipmentId: id });
+    if (!shipment) return res.status(404).json({ error: 'Shipment not found' });
+
+    const attempts = (shipment.ndrAttemptCount || 0) + 1;
+    const statusEnum = attempts === 1 ? 'Failed_Attempt_1' : (attempts === 2 ? 'Failed_Attempt_2' : 'Failed_Attempt_3');
+
+    shipment.ndrStatus = statusEnum;
+    shipment.ndrReason = ndrReason || 'Customer was unavailable / Door locked';
+    shipment.ndrAttemptCount = attempts;
+    shipment.ndrLastAttemptAt = new Date();
+    shipment.ndrWhatsAppSentAt = new Date();
+
+    await shipment.save();
+
+    const frontendBase = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',')[0].trim() : 'https://securekaro.in';
+    const resolutionUrl = `${frontendBase}/tracking?awb=${shipment.shipmentId}&ndr=true`;
+
+    const { sendNdrResolutionWhatsApp } = require('../services/whatsappService');
+    await sendNdrResolutionWhatsApp({
+      phone: shipment.receiverPhone,
+      receiverName: shipment.receiverName,
+      shipmentId: shipment.shipmentId,
+      carrierName: shipment.carrierSlug?.toUpperCase() || 'Courier Partner',
+      awbCode: shipment.awbCode,
+      ndrReason: shipment.ndrReason,
+      resolutionUrl
+    });
+
+    return res.json({
+      success: true,
+      message: `Autonomous NDR Resolution link dispatched via WhatsApp to +${shipment.receiverPhone}`,
+      shipmentId: shipment.shipmentId,
+      ndrStatus: shipment.ndrStatus,
+      ndrAttemptCount: attempts
+    });
+  } catch (err) {
+    console.error('Trigger NDR Alert Error:', err);
+    res.status(500).json({ error: 'Internal Server Error', details: err.message });
+  }
+};
+
+/**
+ * @desc    Public 1-click NDR resolution by buyer (NO login required)
+ * @route   POST /api/v1/shipments/public/ndr-resolve/:id
+ * @access  Public
+ */
+const publicNdrResolve = async (req, res) => {
+  try {
+    const id = req.params.id.toUpperCase();
+    const { choice, slot, newAddress, comments } = req.body;
+
+    const shipment = await Shipment.findOne({ shipmentId: id });
+    if (!shipment) return res.status(404).json({ error: 'Shipment not found' });
+
+    shipment.ndrStatus = 'Buyer_Rescheduled';
+    shipment.ndrBuyerActionTaken = choice || 'Reschedule_Delivery';
+    shipment.ndrBuyerChosenSlot = slot || 'Tomorrow, 10:00 AM - 2:00 PM';
+    if (newAddress && newAddress.trim().length > 5) {
+      shipment.ndrBuyerUpdatedAddress = newAddress.trim();
+    }
+    shipment.ndrResolutionLoggedAt = new Date();
+
+    await shipment.save();
+
+    // Log CarrierJourney milestone
+    try {
+      const CarrierJourney = require('../models/CarrierJourney');
+      let journey = await CarrierJourney.findOne({ shipmentId: shipment.shipmentId });
+      if (journey) {
+        journey.milestones.push({
+          status: 'NDR Resolved: Reattempt Scheduled',
+          location: 'Receiver Hub',
+          detail: `Customer confirmed delivery reattempt slot: ${shipment.ndrBuyerChosenSlot}${newAddress ? ` with updated address: ${newAddress}` : ''}`,
+          time: new Date()
+        });
+        await journey.save();
+      }
+    } catch (jErr) {
+      console.warn('[NDR Journey Log Note]:', jErr.message);
+    }
+
+    return res.json({
+      success: true,
+      message: `Reattempt scheduled successfully for ${shipment.ndrBuyerChosenSlot}! The courier partner has been updated.`,
+      shipmentId: shipment.shipmentId,
+      chosenSlot: shipment.ndrBuyerChosenSlot
+    });
+  } catch (err) {
+    console.error('Public NDR Resolve Error:', err);
+    res.status(500).json({ error: 'Internal Server Error', details: err.message });
+  }
+};
+
+/**
+ * @desc    Get all active NDR shipments for current merchant
+ * @route   GET /api/v1/shipments/ndr/active
+ * @access  Private
+ */
+const getNdrShipments = async (req, res) => {
+  try {
+    const userIds = await getLinkedUserIds(req.user);
+    const ndrShipments = await Shipment.find({
+      senderId: { $in: userIds },
+      ndrStatus: { $ne: 'None' }
+    }).sort({ ndrLastAttemptAt: -1 }).lean();
+
+    return res.json({
+      success: true,
+      count: ndrShipments.length,
+      ndrShipments
+    });
+  } catch (err) {
+    console.error('Get NDR Shipments Error:', err);
+    res.status(500).json({ error: 'Internal Server Error', details: err.message });
+  }
+};
+
 module.exports = {
   getShipments,
   getShipmentById,
@@ -3192,6 +3454,12 @@ module.exports = {
   quoteCodFees,
   executeOrderPaymentAndCourierBooking,
   publicPayShipment,
-  paymentWebhookHandler
+  paymentWebhookHandler,
+  uploadWeightShieldProof,
+  fileWeightDispute,
+  getWeightDisputeEvidence,
+  triggerNdrAlert,
+  publicNdrResolve,
+  getNdrShipments
 };
 

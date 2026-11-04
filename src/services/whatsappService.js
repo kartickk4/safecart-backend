@@ -356,6 +356,63 @@ const sendPayoutReleasedWhatsApp = async ({ phone, senderName, shipmentId, amoun
   }
 };
 
+
+/**
+ * Autonomous NDR (Non-Delivery Report) Resolution Alert via WhatsApp
+ * Automatically contacts the buyer when a delivery attempt fails with 1-click reattempt actions.
+ */
+const sendNdrResolutionWhatsApp = async ({ phone, receiverName, shipmentId, carrierName, awbCode, ndrReason, resolutionUrl }) => {
+  const digits = (phone || '').toString().replace(/\D/g, '').slice(-10);
+  const e164Phone = digits.length === 10 ? `91${digits}` : (phone || '').toString().replace(/\D/g, '');
+
+  const carrier = carrierName || 'Courier Partner';
+  const reason = ndrReason || 'Customer was unavailable / Door locked';
+
+  const messageText =
+    `⚠️ *Delivery Attempt Notice — SecureKaro Delivery Shield*\n\n` +
+    `Hello ${receiverName || 'there'}! 👋\n\n` +
+    `The courier executive from *${carrier}* attempted to deliver your order *${shipmentId}* (AWB: ${awbCode || 'Pending'}) today, but the delivery could not be completed.\n\n` +
+    `📌 *Courier Reason:* "${reason}"\n\n` +
+    `To prevent this parcel from being returned to the seller (RTO), please choose your preferred delivery preference in 1-click:\n\n` +
+    `👉 *Tap to Reschedule or Update Address:*\n${resolutionUrl}\n\n` +
+    `Available 1-Click Options:\n` +
+    `1️⃣ Reattempt Tomorrow (10:00 AM - 2:00 PM)\n` +
+    `2️⃣ Reattempt Tomorrow (2:00 PM - 6:00 PM)\n` +
+    `3️⃣ Update Delivery Address or Nearby Landmark\n` +
+    `4️⃣ Request Delivery Call Before Arrival\n\n` +
+    `_Your parcel & payment are protected under SecureKaro Verified Delivery Protection._`;
+
+  console.log(`[WHATSAPP NDR] ${WA_ENABLED ? 'Sending' : 'SIMULATING'} NDR resolution alert to +${e164Phone}`);
+  console.log(`[WHATSAPP NDR] Message:\n${messageText}`);
+
+  if (!WA_ENABLED) {
+    return { success: true, mode: 'simulated', phone: e164Phone, messageText };
+  }
+
+  try {
+    const response = await axios.post(
+      `https://graph.facebook.com/v21.0/${WA_PHONE_ID}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        to: e164Phone,
+        type: 'text',
+        text: { body: messageText }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${WA_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      }
+    );
+    return { success: true, mode: 'live', phone: e164Phone, messageId: response.data?.messages?.[0]?.id };
+  } catch (err) {
+    console.warn('[WHATSAPP] NDR WhatsApp error:', err.response?.data || err.message);
+    return { success: false, mode: 'failed', error: err.message };
+  }
+};
+
 module.exports = { 
   sendPaymentLinkWhatsApp, 
   sendBookingConfirmationWhatsApp,
@@ -363,5 +420,6 @@ module.exports = {
   sendReverseCourierAssignedWhatsApp,
   sendPhotoReviewChoiceWhatsApp,
   sendDeliveryOtpWhatsApp,
-  sendPayoutReleasedWhatsApp
+  sendPayoutReleasedWhatsApp,
+  sendNdrResolutionWhatsApp
 };

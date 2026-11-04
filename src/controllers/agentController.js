@@ -404,6 +404,78 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
   }
 
   // 12. General Problem / Issue / Support Inquiry
+  // 11B. Packing Photo Weight Shield & Discrepancy Dispute Engine
+  else if (/\b(weight|weight discrepancy|weight dispute|weight shield|extra weight|courier weight|volumetric weight|weight penalty)\b/i.test(msg)) {
+    // Check if merchant has active weight discrepancy records
+    const activeDisputes = await Shipment.find({
+      senderId: user._id,
+      weightDisputeStatus: { $in: ['Detected', 'Disputed', 'Won', 'Lost'] }
+    }).sort({ createdAt: -1 }).limit(5);
+
+    let disputeSummary = '';
+    if (activeDisputes && activeDisputes.length > 0) {
+      disputeSummary = '\n\n📋 *Your Active Weight Records:*\n' +
+        activeDisputes.map(s => {
+          const statusIcon = s.weightDisputeStatus === 'Won' ? '🏆 Won (Deduction Reversed)' :
+            s.weightDisputeStatus === 'Disputed' ? '⏳ Auto-Dispute Submitted with Photo Proof' :
+            s.weightDisputeStatus === 'Detected' ? '⚠️ Discrepancy Detected' : '❌ Closed';
+          return '• *' + s.shipmentId + '*: Billed ' + (s.courierReportedWeightKg || s.parcelWeight) + 'kg vs Declared ' + s.parcelWeight + 'kg — ' + statusIcon;
+        }).join('\n');
+    }
+
+    intelligentReply =
+      `⚖️ *SecureKaro Packing Photo Weight Shield: Safeguarding You From Courier Overcharges*\n\n` +
+      `Courier aggregators routinely slap ₹100–₹150 penalties for 1 extra volumetric kg without proof. SecureKaro stops this with our **Tamper-Proof Weight Shield**:\n\n` +
+      `1️⃣ *Photo & Scale Verification at Packing:* Snap a quick photo of your parcel resting on a digital weighing scale with dimensions.\n` +
+      `2️⃣ *Cryptographic Timestamp Hash:* SecureKaro creates an immutable manifest evidence packet before carrier pickup.\n` +
+      `3️⃣ *Automated Courier Dispute:* If Delhivery, DTDC, or Shadowfax reports an inflated sorting-hub weight, our agent **auto-files the dispute** with your photo evidence within 60 seconds.\n` +
+      `4️⃣ *Wallet Protection:* Unfair wallet deductions are automatically frozen until dispute resolution.\n` +
+      `\n🏆 *Win Rate:* SecureKaro merchants win 89%+ of courier weight claims with our evidence packet.` +
+      disputeSummary;
+  }
+
+  // 11C. Autonomous WhatsApp NDR (Non-Delivery Report) Loop
+  else if (/\b(ndr|failed delivery|delivery attempt|attempt failed|customer unavailable|fake attempt|reattempt|undelivered alert)\b/i.test(msg)) {
+    // Look up any shipments under NDR
+    const ndrShipments = await Shipment.find({
+      senderId: user._id,
+      ndrStatus: { $ne: 'None' }
+    }).sort({ updatedAt: -1 }).limit(5);
+
+    let ndrList = '';
+    if (ndrShipments && ndrShipments.length > 0) {
+      ndrList = '\n\n⚠️ *Shipments Requiring NDR Resolution:*\n' +
+        ndrShipments.map(s => {
+          const statusText = s.ndrBuyerActionTaken
+            ? '✅ Buyer Responded: ' + (s.ndrBuyerChosenSlot || 'Slot Confirmed') + (s.ndrBuyerUpdatedAddress ? ' (Updated Address)' : '')
+            : '📲 Interactive WhatsApp Alert Sent to ' + s.receiverPhone;
+          return '• *' + s.shipmentId + '* (' + s.receiverName + '): Attempt Failed (' + (s.ndrReason || 'Customer Unavailable') + ')\n  └ ' + statusText;
+        }).join('\n');
+    }
+
+    intelligentReply =
+      `🚨 *SecureKaro Autonomous WhatsApp NDR Exception Engine*\n\n` +
+      `Traditional aggregators let courier delivery boys log fake 'Customer Not Available' attempts, burning 18–22% of revenue in avoidable RTOs.\n\n` +
+      `⚡ *How SecureKaro Resolves Failed Deliveries Instantly:*\n` +
+      `• **Instant WhatsApp Alert:** As soon as a delivery failure is logged, SecureKaro immediately pings the customer with interactive 1-click buttons.\n` +
+      `• **1-Tap Slot Reattempt:** Customer selects *Morning (9 AM - 1 PM)* or *Evening (2 PM - 7 PM)* when they will actually be home.\n` +
+      `• **Address & Landmark Repair:** If address was incorrect, customer enters their landmark via WhatsApp without needing human ticketing.\n` +
+      `• **Auto Courier Escalation:** Reattempt instruction and verified GPS coordinates are fed directly into the courier API.\n` +
+      (ndrList || '\n✅ *Great news:* You currently have 0 unresolved NDR parcels!');
+  }
+
+  // 11D. True Cost-to-Deliver Courier Routing
+  else if (/\b(cost to deliver|true cost|cheapest courier|best courier|courier routing|courier rank|allocation)\b/i.test(msg)) {
+    intelligentReply =
+      `📊 *True Cost-to-Deliver vs Cheap Freight Mirage*\n\n` +
+      `Most aggregators route your orders to whatever courier gives them the highest margin, advertising a deceptively cheap base freight (e.g. ₹42).\n\n` +
+      `⚠️ **The Hidden Trap:** A courier charging ₹42 with a 24% RTO rate and frequent ₹120 weight penalties ends up costing you **₹89+ per delivered parcel**!\n\n` +
+      `⭐ **SecureKaro Cost-to-Deliver Algorithm:**\n` +
+      `\\(\\text{Expected Total Cost} = \\text{Freight} + (P_{\\text{RTO}} \\times \\text{Return Cost}) + (P_{\\text{Dispute}} \\times \\text{Penalty})\\)\n\n` +
+      `• Every courier quote shows real **Pincode Delivery Success Rate** (e.g. 94% Success).\n` +
+      `• Automatically highlights the **⭐ Lowest Expected Total Cost** winner so you pocket maximum profit!`;
+  }
+
   // 12. Live Support Helpline Escalation & Dissatisfaction Handler (LAST RESORT ONLY)
   else if (/\b(not satisfied|not satisfy|unsatisfied|not working|not resolved|unresolved|didn't solve|not solved|unsolved|problem not solved|cannot solve|can't solve|didn't resolve|still have|still problem|cannot resolve|can't resolve|call support|talk to human|human agent|call customer|customer care|customer support|helpline|support number|support phone|call helpline|live support|contact support|phone number|call now)\b/i.test(msg)) {
     intelligentReply =

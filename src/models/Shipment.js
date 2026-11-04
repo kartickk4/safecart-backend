@@ -338,6 +338,85 @@ const ShipmentSchema = new mongoose.Schema({
     type: Date
   },
 
+  // ── Weight Shield & Dispute Protection (Anti-Weight Fraud) ──
+  packingScalePhotoUrl: {
+    type: String,
+    default: ''
+  },
+  packingScalePhotoUploadedAt: {
+    type: Date
+  },
+  packingDimensions: {
+    lengthCm: { type: Number, default: 0 },
+    widthCm: { type: Number, default: 0 },
+    heightCm: { type: Number, default: 0 },
+    volumetricWeightKg: { type: Number, default: 0 }
+  },
+  weightShieldActive: {
+    type: Boolean,
+    default: true
+  },
+  weightDisputeStatus: {
+    type: String,
+    enum: ['None', 'Protected', 'Audit_Pending', 'Disputed', 'Won', 'Waived', 'Settled'],
+    default: 'Protected'
+  },
+  courierReportedWeightKg: {
+    type: Number,
+    default: 0
+  },
+  weightDiscrepancyCharge: {
+    type: Number,
+    default: 0
+  },
+  weightDisputeFiledAt: {
+    type: Date
+  },
+  weightDisputeEvidencePacket: {
+    type: String,
+    default: ''
+  },
+  weightDisputeResolutionNotes: {
+    type: String,
+    default: ''
+  },
+
+  // ── Autonomous NDR (Non-Delivery Report) Exception Loop ──
+  ndrStatus: {
+    type: String,
+    enum: ['None', 'Failed_Attempt_1', 'Failed_Attempt_2', 'Failed_Attempt_3', 'Buyer_Rescheduled', 'RTO_Initiated', 'Resolved'],
+    default: 'None'
+  },
+  ndrReason: {
+    type: String,
+    default: ''
+  },
+  ndrAttemptCount: {
+    type: Number,
+    default: 0
+  },
+  ndrLastAttemptAt: {
+    type: Date
+  },
+  ndrWhatsAppSentAt: {
+    type: Date
+  },
+  ndrBuyerChosenSlot: {
+    type: String,
+    default: ''
+  },
+  ndrBuyerUpdatedAddress: {
+    type: String,
+    default: ''
+  },
+  ndrBuyerActionTaken: {
+    type: String,
+    default: ''
+  },
+  ndrResolutionLoggedAt: {
+    type: Date
+  },
+
   status: { 
     type: String, 
     enum: [
