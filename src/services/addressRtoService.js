@@ -122,3 +122,4 @@ function verifyAddressAndPredictRto({ address = '', pincode = '', paymentMode = 
 module.exports = {
   verifyAddressAndPredictRto
 };
+

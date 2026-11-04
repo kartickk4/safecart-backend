@@ -3421,6 +3421,8 @@ const getNdrShipments = async (req, res) => {
  * @route   GET /api/v1/shipments/:id/label
  * @access  Public / Private (token optional or sender verified)
  */
+const { streamShippingLabelPdf } = require('../services/labelPdfService');
+
 const getPrintableShippingLabel = async (req, res) => {
   try {
     const rawId = (req.params.id || '').trim().toUpperCase();
@@ -3429,6 +3431,11 @@ const getPrintableShippingLabel = async (req, res) => {
 
     if (!shipment) {
       return res.status(404).send('<h3>Shipment not found</h3>');
+    }
+
+    // If client requests raw PDF binary via PDFKit
+    if (req.query.format === 'pdf' || req.query.download === 'true') {
+      return streamShippingLabelPdf(shipment, res);
     }
 
     const sender = shipment.senderId || {};
