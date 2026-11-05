@@ -486,10 +486,10 @@ const createShipment = async (req, res) => {
       codFeePaymentMethod: isCod ? codFeePaymentMethod : 'none',
       codFeePaidAt: isCod ? codFeePaidAt : undefined,
       codFeeTransactionRef: isCod ? codFeeTransactionRef : '',
-      // Photo required ONLY when return option is enabled — protects seller from wrong-item claims
-      photoReviewEnabled: isReturnAllowed,
+      // Photo review option: default false, enabled only if seller toggles it
+      photoReviewEnabled: Boolean(photoReviewEnabled),
       photoReviewFee: 0,
-      photoReviewRequested: isReturnAllowed,
+      photoReviewRequested: Boolean(photoReviewEnabled),
       photoReviewPaid: true,
       photoReviewRefused: false,
       rtoProtectionEnabled: Boolean(rtoProtectionEnabled),

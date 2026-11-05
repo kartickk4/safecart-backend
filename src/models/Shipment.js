@@ -318,10 +318,10 @@ const ShipmentSchema = new mongoose.Schema({
     default: ''
   },
 
-  // Parcel Photo Verification Feature (Mandatory for all shipments at ₹0 fee)
+  // Parcel Photo Verification Feature (Optional for shipments, default false)
   photoReviewEnabled: {
     type: Boolean,
-    default: true
+    default: false
   },
   photoReviewFee: {
     type: Number,
@@ -329,7 +329,7 @@ const ShipmentSchema = new mongoose.Schema({
   },
   photoReviewRequested: {
     type: Boolean,
-    default: true
+    default: false
   },
   photoReviewPaid: {
     type: Boolean,
