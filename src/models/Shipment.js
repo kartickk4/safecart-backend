@@ -65,11 +65,19 @@ const ShipmentSchema = new mongoose.Schema({
     default: ""
   },
 
-  // YouPI-PG UPI Gateway Integration Fields
+  // Payment Mode: how the buyer pays for the shipment (supports all gateways & COD)
   paymentMode: {
     type: String,
-    enum: ['cod', 'prepaid_youpi', 'prepaid_cashfree', 'escrow', ''],
+    enum: ['prepaid', 'cod', 'paid_offline', 'prepaid_youpi', 'prepaid_cashfree', 'escrow', ''],
+    default: 'prepaid'
+  },
+  paymentTransactionRef: {
+    type: String,
     default: ''
+  },
+  prepaymentCashback: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null
   },
   youpiPaymentId: {
     type: String,
@@ -118,6 +126,10 @@ const ShipmentSchema = new mongoose.Schema({
   returnReason: {
     type: String,
     default: ""
+  },
+  returnRequested: {
+    type: Boolean,
+    default: false
   },
   returnRequestedAt: {
     type: Date
@@ -276,12 +288,7 @@ const ShipmentSchema = new mongoose.Schema({
   replacementDeliveryOtpUsed: { type: Boolean, default: false },
   replacementDispatchedOnPickupScan: { type: Boolean, default: false },
 
-  // Payment Mode: how the buyer pays for the shipment
-  paymentMode: {
-    type: String,
-    enum: ['prepaid', 'cod', 'paid_offline'],
-    default: 'prepaid'
-  },
+
   // For prepaid: whether the payment was received before dispatch
   isPrepaid: {
     type: Boolean,
@@ -431,10 +438,12 @@ const ShipmentSchema = new mongoose.Schema({
     enum: [
       'Awaiting Payment', 
       'Pending Pickup', 
+      'Picked Up',
       'In Transit', 
       'Reached Destination Hub', 
       'Out for Delivery', 
       'Delivered', 
+      'Confirmed',
       'Released', 
       'Locked',
       'Cancelled',
@@ -442,9 +451,32 @@ const ShipmentSchema = new mongoose.Schema({
       'Return Requested',
       'Return In Transit',
       'Returned & Refunded',
-      'Replacement In Transit'
+      'Returned & Restocked',
+      'Replacement In Transit',
+      'Dispatched',
+      'Completed'
     ], 
     default: 'Awaiting Payment' 
+  },
+  cancelledAt: {
+    type: Date,
+    default: null
+  },
+  cancelReason: {
+    type: String,
+    default: ''
+  },
+  deliveredAt: {
+    type: Date,
+    default: null
+  },
+  isPickedUp: {
+    type: Boolean,
+    default: false
+  },
+  pickedUpAt: {
+    type: Date,
+    default: null
   },
   escrowStage: { 
     type: Number, 

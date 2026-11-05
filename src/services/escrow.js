@@ -326,6 +326,8 @@ const cancelEscrow = async (shipmentId, userId, reason = 'Cancelled by user') =>
 
   shipment.status = 'Cancelled';
   shipment.escrowStage = -2;
+  shipment.cancelledAt = new Date();
+  shipment.cancelReason = reason || 'Cancelled by user';
   if (wasFunded) {
     shipment.principalRefundedToReceiver = shipment.amount;
   }
