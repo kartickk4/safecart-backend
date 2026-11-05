@@ -231,6 +231,15 @@ const ShipmentSchema = new mongoose.Schema({
   partialRefundBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   discountAutoCompletedBySupplier: { type: Boolean, default: false },
 
+  // ── Buyer & Seller Dispute Claims ──
+  hasActiveClaim: { type: Boolean, default: false },
+  claimId: { type: String, default: '' },
+  claimReason: { type: String, default: '' },
+  claimDescription: { type: String, default: '' },
+  claimStatus: { type: String, enum: ['None', 'Under Review', 'Approved', 'Rejected'], default: 'None' },
+  claimFiledAt: { type: Date, default: null },
+  claimFiledByRole: { type: String, default: '' },
+
   // Option 1: Replacement — supplier approval
   replacementApproved: { type: Boolean, default: null }, // null = pending
   replacementApprovedAt: { type: Date },

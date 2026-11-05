@@ -94,3 +94,4 @@ function streamShippingLabelPdf(shipment, res) {
 module.exports = {
   streamShippingLabelPdf
 };
+

@@ -30,7 +30,7 @@ const ClaimSchema = new mongoose.Schema({
   },
   description: { 
     type: String, 
-    required: true 
+    default: "" 
   },
   evidenceUrls: [{ 
     type: String 

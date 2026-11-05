@@ -32,8 +32,8 @@ const fileClaim = async (req, res) => {
   const { shipmentId, role, reason, description, evidenceUrls } = req.body;
 
   try {
-    if (!shipmentId || !role || !reason || !description) {
-      return res.status(400).json({ error: 'shipmentId, role (supplier/receiver), reason, and description are required' });
+    if (!shipmentId || !reason) {
+      return res.status(400).json({ error: 'shipmentId and reason are required' });
     }
 
     const shipment = await Shipment.findOne({ shipmentId: shipmentId.toUpperCase() });
@@ -42,21 +42,35 @@ const fileClaim = async (req, res) => {
     }
 
     // Verify caller is either sender or receiver
-    const isSender = shipment.senderId.toString() === req.user._id.toString();
-    const isReceiver = isReceiverMatch(req.user.phone, shipment.receiverPhone);
+    const isSender = Boolean(shipment.senderId && shipment.senderId.toString() === req.user._id.toString());
+    const isReceiver = Boolean(
+      (shipment.receiverId && shipment.receiverId.toString() === req.user._id.toString()) ||
+      isReceiverMatch(req.user.phone, shipment.receiverPhone)
+    );
 
-    if (!isSender && !isReceiver) {
+    if (!isSender && !isReceiver && req.user.role !== 'Admin') {
       return res.status(403).json({ error: 'Not authorized to file a claim on this shipment' });
     }
 
     // Check if a claim already exists for this shipment
     const existingClaim = await Claim.findOne({ shipmentId: shipmentId.toUpperCase() });
     if (existingClaim) {
-      return res.status(400).json({ error: 'A dispute claim has already been filed for this shipment' });
+      return res.status(400).json({ 
+        error: 'A dispute claim has already been filed for this shipment',
+        claimId: existingClaim.claimId,
+        status: existingClaim.status
+      });
     }
 
-    // Lock the escrow in DB
-    await escrow.lockEscrow(shipmentId, req.user);
+    const claimRole = role ? role.toLowerCase() : (isSender ? 'supplier' : 'receiver');
+    const cleanDesc = (description && description.trim()) ? description.trim() : reason;
+
+    // Lock the escrow in DB if active
+    try {
+      await escrow.lockEscrow(shipmentId, req.user);
+    } catch (escrowErr) {
+      console.warn('[CLAIM] Lock escrow note:', escrowErr.message);
+    }
 
     const claimId = generateClaimId();
 
@@ -64,25 +78,51 @@ const fileClaim = async (req, res) => {
       claimId,
       shipmentId: shipmentId.toUpperCase(),
       filedBy: req.user._id,
-      role,
+      role: claimRole,
       reason,
-      description,
+      description: cleanDesc,
       evidenceUrls: evidenceUrls || [],
       status: 'Under Review'
     });
 
     await claim.save();
 
-    // Notify the filer
+    // Update shipment with authoritative claim information
+    shipment.hasActiveClaim = true;
+    shipment.claimId = claimId;
+    shipment.claimReason = reason;
+    shipment.claimDescription = cleanDesc;
+    shipment.claimStatus = 'Under Review';
+    shipment.claimFiledAt = new Date();
+    shipment.claimFiledByRole = claimRole;
+    if (shipment.status !== 'Cancelled' && shipment.status !== 'Returned & Refunded') {
+      shipment.status = 'Locked';
+      shipment.escrowStage = -1;
+    }
+    await shipment.save();
+
+    // 1. Notify the filer
     await createNotification(
       req.user._id,
       'gavel',
-      `Dispute Filed — ${claimId}`,
-      `Dispute successfully initiated for shipment ${shipmentId}. Order payment locked.`,
+      `Claim Filed — ${claimId}`,
+      `Your dispute claim for "${reason}" on shipment ${shipmentId} has been submitted. Order payment is protected in escrow while support reviews it.`,
       'alert'
     );
 
-    res.status(201).json(claim);
+    // 2. Notify the other party
+    const counterPartyId = isReceiver ? shipment.senderId : shipment.receiverId;
+    if (counterPartyId) {
+      await createNotification(
+        counterPartyId,
+        'gavel',
+        `Dispute Claim Raised: ${shipment.shipmentId}`,
+        `The ${claimRole === 'receiver' ? 'buyer' : 'seller'} has filed a dispute claim (${claimId}) regarding: "${reason}". Order funds are secured in escrow.`,
+        'alert'
+      );
+    }
+
+    res.status(201).json({ claim, shipment });
   } catch (error) {
     console.error('File Claim Error:', error);
     res.status(500).json({ error: 'Internal Server Error' });
