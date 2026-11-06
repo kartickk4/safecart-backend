@@ -31,17 +31,18 @@ const {
 } = loadMod('controllers', 'walletController');
 
 const { protect } = loadMod('middleware', 'auth');
+const { withdrawalRateLimiter, rechargeRateLimiter } = loadMod('middleware', 'walletSecurity');
 
 const router = express.Router();
 
-router.post('/create-order', protect, createRechargeOrder);
+router.post('/create-order', protect, rechargeRateLimiter, createRechargeOrder);
 router.post('/verify', protect, verifyPayment);
 router.get('/balance', protect, getWalletBalance);
 router.get('/transactions', protect, getTransactions);
 router.post('/webhook', handleWebhook);
 
-// Withdrawal routes
-router.post('/buyer/withdraw', protect, withdrawCashback);   // Buyer cashback: <₹100 → ₹3 fee
-router.post('/seller/withdraw', protect, withdrawWallet);    // Seller wallet: <₹2000 → ₹2 fee
+// Withdrawal routes (protected with banking-grade rate limiters)
+router.post('/buyer/withdraw', protect, withdrawalRateLimiter, withdrawCashback);   // Buyer cashback: <₹100 → ₹3 fee
+router.post('/seller/withdraw', protect, withdrawalRateLimiter, withdrawWallet);    // Seller wallet: <₹2000 → ₹2 fee
 
 module.exports = router;

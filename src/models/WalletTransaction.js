@@ -58,6 +58,11 @@ const WalletTransactionSchema = new mongoose.Schema({
     sparse: true,
     index: true
   },
+  idempotencyKey: {
+    type: String,
+    sparse: true,
+    index: true
+  },
   gatewaySignature: {
     type: String,
     default: ''

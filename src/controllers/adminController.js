@@ -2831,8 +2831,37 @@ const exportData = async (req, res) => {
   }
 };
 
+/**
+ * @desc    On-demand double-entry wallet ledger reconciliation audit
+ * @route   GET /api/v1/admin/wallet/reconcile
+ * @access  Private (Admin)
+ */
+const reconcileLedger = async (req, res) => {
+  try {
+    const { userId } = req.query;
+    const { reconcileUserWallet, reconcileAllWallets } = require('../services/reconciliationService');
+    if (userId) {
+      const result = await reconcileUserWallet(userId);
+      await logAudit(req, 'WALLET_RECONCILE_USER', 'User', userId, result);
+      return res.json({ success: true, result });
+    }
+    const report = await reconcileAllWallets();
+    await logAudit(req, 'WALLET_RECONCILE_PLATFORM', 'System', 'ALL', {
+      totalAudited: report.totalAccountsAudited,
+      healthy: report.healthyAccounts,
+      discrepancies: report.discrepancyCount,
+      variance: report.netPlatformVariance
+    });
+    res.json({ success: true, report });
+  } catch (error) {
+    console.error('Admin Reconcile Error:', error);
+    res.status(500).json({ error: 'Failed to run ledger reconciliation', details: error.message });
+  }
+};
+
 module.exports = {
   getAnalyticsDashboard,
+  reconcileLedger,
   getAllUsers,
   getUserById,
   suspendUser,

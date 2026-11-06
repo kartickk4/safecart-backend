@@ -76,6 +76,7 @@ router.get('/finance/withdrawals', adminController.getWithdrawalRequests);
 router.post('/finance/withdrawals/:id', adminController.processWithdrawal);
 router.post('/wallet/adjust', adminController.adjustWalletBalance);
 router.get('/wallet/transactions/:userId', adminController.getUserTransactions);
+router.get('/wallet/reconcile', adminController.reconcileLedger);
 
 // System Configuration & Bulk Queue
 router.get('/system/config', adminController.getSystemConfig);

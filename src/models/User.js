@@ -60,6 +60,10 @@ const UserSchema = new mongoose.Schema({
     bankName: { type: String, default: "" },
     upiId: { type: String, default: "" }
   },
+  payoutDetailsUpdatedAt: {
+    type: Date,
+    default: null
+  },
   cashfreeBeneficiaryId: {
     type: String,
     default: ""

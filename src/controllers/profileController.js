@@ -184,6 +184,11 @@ const updateProfile = async (req, res) => {
 
     // Update bank details if provided
     if (bankDetails) {
+      const prevUpi = (user.bankDetails?.upiId || '').toLowerCase().trim();
+      const prevAcc = (user.bankDetails?.accountNumber || '').trim();
+      const newUpi = (bankDetails.upiId || '').toLowerCase().trim();
+      const newAcc = (bankDetails.accountNumber || '').trim();
+
       user.bankDetails = {
         accountHolderName: (bankDetails.accountHolderName !== undefined ? bankDetails.accountHolderName : user.bankDetails?.accountHolderName) || '',
         accountNumber: (bankDetails.accountNumber !== undefined ? bankDetails.accountNumber : user.bankDetails?.accountNumber) || '',
@@ -192,15 +197,24 @@ const updateProfile = async (req, res) => {
         upiId: (bankDetails.upiId !== undefined ? bankDetails.upiId : user.bankDetails?.upiId) || ''
       };
 
+      // If destination actually changed, mark timestamp for security cooling-off period
+      if ((newUpi && newUpi !== prevUpi) || (newAcc && newAcc !== prevAcc)) {
+        user.payoutDetailsUpdatedAt = new Date();
+      }
+
       // Sync updated bank details across all accounts sharing this user's email or phone
       try {
         const syncConditions = [];
         if (user.email) syncConditions.push({ email: user.email.toLowerCase().trim() });
         if (user.phone) syncConditions.push({ phone: user.phone.trim() });
         if (syncConditions.length > 0) {
+          const syncSet = { bankDetails: user.bankDetails };
+          if (user.payoutDetailsUpdatedAt) {
+            syncSet.payoutDetailsUpdatedAt = user.payoutDetailsUpdatedAt;
+          }
           await User.updateMany(
             { $or: syncConditions },
-            { $set: { bankDetails: user.bankDetails } }
+            { $set: syncSet }
           );
         }
       } catch (syncErr) {
