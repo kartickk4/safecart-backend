@@ -20,7 +20,7 @@ function loadMod(type, name) {
   return require(`./${name}`);
 }
 
-const { getTrackingByAwb, handleWebhook, getPublicTracking } = loadMod('controllers', 'trackingController');
+const { getTrackingByAwb, handleWebhook, handleBillingWebhook, getPublicTracking } = loadMod('controllers', 'trackingController');
 
 const router = express.Router();
 
@@ -28,6 +28,8 @@ const router = express.Router();
 router.post('/public', getPublicTracking);
 router.get('/public', getPublicTracking);
 router.get('/:awb', getTrackingByAwb);
+router.post('/webhook/billing', handleBillingWebhook);
+router.post('/webhook/billing/:carrier', handleBillingWebhook);
 router.post('/webhook/carrier-tracking', handleWebhook);
 router.post('/webhook/shiprocket', handleWebhook);
 router.post('/webhook/:carrier', handleWebhook);

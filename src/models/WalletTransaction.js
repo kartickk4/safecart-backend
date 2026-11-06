@@ -32,7 +32,9 @@ const WalletTransactionSchema = new mongoose.Schema({
       'refund',
       'admin_adjustment',
       'withdrawal',
-      'rto_freight'
+      'rto_freight',
+      'weight_discrepancy',
+      'oda_surcharge'
     ],
     required: true,
     index: true

@@ -1,9 +1,11 @@
 const Shipment = require('../models/Shipment');
 const CarrierJourney = require('../models/CarrierJourney');
 const User = require('../models/User');
+const WalletTransaction = require('../models/WalletTransaction');
 const { createNotification } = require('../services/notification');
 const { cacheManager } = require('../services/cacheManager');
 const carrierTracking = require('../services/carrierTracking');
+const { recordTransaction } = require('../services/walletService');
 const axios = require('axios');
 
 
@@ -185,7 +187,17 @@ const handleWebhook = async (req, res) => {
     let newStage = shipment.escrowStage;
 
     const statusStr = trackingStatus.toLowerCase();
-    if (statusStr.includes('delivered')) {
+    if (statusStr.includes('undelivered') || statusStr.includes('failed') || statusStr.includes('rto') || statusStr.includes('returned')) {
+      console.log(`[TRACKING WEBHOOK] Courier reported shipment ${shipment.shipmentId} undelivered/RTO. Processing return freight debit...`);
+      try {
+        const escrow = require('../services/escrow');
+        if (escrow.refundUndeliveredEscrow) {
+          await escrow.refundUndeliveredEscrow(shipment.shipmentId, `Carrier reported ${trackingStatus}`);
+        }
+      } catch (escrowErr) {
+        console.warn('[TRACKING WEBHOOK Escrow warning]:', escrowErr.message);
+      }
+    } else if (statusStr.includes('delivered')) {
       newStatus = 'Delivered';
       newStage = 5;
     } else if (statusStr.includes('out for delivery')) {
@@ -197,6 +209,51 @@ const handleWebhook = async (req, res) => {
     } else if (statusStr.includes('pending')) {
       newStatus = 'Pending Pickup';
       newStage = 3;
+    }
+
+    // Check if the webhook payload also includes a weight discrepancy or billing adjustment debit
+    const rawBillingAmount = req.body?.differential_amount ?? req.body?.differentialAmount ?? req.body?.debit_amount ?? req.body?.billing_amount;
+    if (rawBillingAmount !== undefined && !isNaN(Number(rawBillingAmount)) && Number(rawBillingAmount) > 0) {
+      const extraDebit = parseFloat(Number(rawBillingAmount).toFixed(2));
+      const reportedWeight = parseFloat(req.body?.applied_weight || req.body?.billed_weight || req.body?.actual_weight || 0);
+      const seller = await User.findById(shipment.senderId);
+      if (seller) {
+        const balBefore = parseFloat((Number(seller.walletBalance) || 0).toFixed(2));
+        const balAfter = parseFloat((balBefore - extraDebit).toFixed(2));
+        seller.walletBalance = balAfter;
+        await seller.save();
+
+        await recordTransaction({
+          userId: seller._id,
+          type: 'debit',
+          amount: extraDebit,
+          source: 'weight_discrepancy',
+          description: `Courier weight adjustment debit for AWB ${awbCode} (${shipment.shipmentId})`,
+          paymentGateway: 'system',
+          balanceBefore: balBefore,
+          balanceAfter: balAfter,
+          metadata: {
+            shipmentId: shipment.shipmentId,
+            awbCode,
+            extraDebit,
+            reportedWeight,
+            declaredWeight: shipment.parcelWeight
+          }
+        });
+
+        shipment.weightDiscrepancyCharge = parseFloat(((shipment.weightDiscrepancyCharge || 0) + extraDebit).toFixed(2));
+        if (reportedWeight > 0) shipment.courierReportedWeightKg = reportedWeight;
+        shipment.weightDisputeStatus = 'Disputed';
+        await shipment.save();
+
+        await createNotification(
+          seller._id,
+          'payment',
+          `Weight Discrepancy Debit: -₹${extraDebit.toFixed(2)} (${shipment.shipmentId})`,
+          `Courier scanned higher weight (${reportedWeight}kg vs ${shipment.parcelWeight || 0.5}kg declared) on AWB ${awbCode}. Exact debit of ₹${extraDebit.toFixed(2)} applied to your wallet.`,
+          'payment'
+        );
+      }
     }
 
     if (newStatus !== shipment.status || newStage !== shipment.escrowStage) {
@@ -247,6 +304,123 @@ const handleWebhook = async (req, res) => {
   } catch (error) {
     console.error('Webhook Error:', error);
     res.status(500).json({ error: 'Internal Server Error' });
+  }
+};
+
+/**
+ * @desc    Receive carrier billing, weight adjustment, and extra charge webhooks
+ *          Directly and automatically debits the exact amount to the exact paisa from the seller's wallet
+ * @route   POST /api/v1/tracking/webhook/billing (or /:carrier)
+ * @access  Public (courier webhook)
+ */
+const handleBillingWebhook = async (req, res) => {
+  try {
+    const awbCode = (req.body?.awb || req.body?.awbCode || req.body?.waybill || req.body?.Waybill || req.body?.airway_bill || '').trim();
+    if (!awbCode) {
+      return res.status(400).json({ error: 'Awb code is required in billing webhook payload' });
+    }
+
+    const rawAmount = req.body?.differential_amount ?? req.body?.differentialAmount ?? req.body?.debit_amount ?? req.body?.debitAmount ?? req.body?.charged_amount ?? req.body?.billing_amount ?? req.body?.rto_charge ?? req.body?.amount ?? req.body?.extra_charge ?? 0;
+    const exactAmount = parseFloat(Number(rawAmount).toFixed(2));
+
+    if (isNaN(exactAmount) || exactAmount <= 0) {
+      return res.status(200).json({ message: 'Acknowledged: no chargeable debit amount specified in webhook' });
+    }
+
+    const rawType = (req.body?.charge_type || req.body?.chargeType || req.body?.event || req.body?.type || req.body?.reason || '').toLowerCase();
+    let source = 'freight_deduction';
+    if (rawType.includes('weight') || req.body?.applied_weight || req.body?.excess_weight || req.body?.declared_weight) {
+      source = 'weight_discrepancy';
+    } else if (rawType.includes('rto')) {
+      source = 'rto_freight';
+    } else if (rawType.includes('oda')) {
+      source = 'oda_surcharge';
+    }
+
+    const reportedWeight = parseFloat(req.body?.applied_weight || req.body?.appliedWeight || req.body?.billed_weight || req.body?.chargedWeight || req.body?.actual_weight || req.body?.weight_kg || 0);
+
+    const shipment = await Shipment.findOne({ awbCode });
+    if (!shipment) {
+      console.warn(`[BILLING WEBHOOK] AWB not found: ${awbCode}`);
+      return res.status(200).json({ message: 'Acknowledged: shipment not found for AWB' });
+    }
+
+    const seller = await User.findById(shipment.senderId);
+    if (!seller) {
+      return res.status(404).json({ error: 'Seller not found for this shipment' });
+    }
+
+    // Idempotency: check if this exact transaction was already debited
+    const externalTxnId = req.body?.transaction_id || req.body?.txn_id || req.body?.invoice_id || `${awbCode}_${source}_${exactAmount}`;
+    const existingTx = await WalletTransaction.findOne({
+      gatewayPaymentId: externalTxnId,
+      status: 'success'
+    });
+    if (existingTx) {
+      return res.status(200).json({ message: 'Acknowledged: billing debit already processed', alreadyProcessed: true });
+    }
+
+    // Atomic debit from seller's wallet
+    const balBefore = parseFloat((Number(seller.walletBalance) || 0).toFixed(2));
+    const balAfter = parseFloat((balBefore - exactAmount).toFixed(2));
+    seller.walletBalance = balAfter;
+    await seller.save();
+
+    // Record audited ledger transaction
+    await recordTransaction({
+      userId: seller._id,
+      type: 'debit',
+      amount: exactAmount,
+      source,
+      description: `${source === 'weight_discrepancy' ? 'Weight discrepancy charge' : source === 'rto_freight' ? 'RTO return freight' : 'Courier billing adjustment'} for AWB ${awbCode} (${shipment.shipmentId})`,
+      paymentGateway: 'system',
+      gatewayPaymentId: externalTxnId,
+      balanceBefore: balBefore,
+      balanceAfter: balAfter,
+      metadata: {
+        shipmentId: shipment.shipmentId,
+        awbCode,
+        carrier: req.params.carrier || shipment.carrierSlug,
+        chargedAmount: exactAmount,
+        reportedWeight,
+        declaredWeight: shipment.parcelWeight,
+        timestamp: new Date().toISOString()
+      }
+    });
+
+    // Update shipment model
+    if (source === 'weight_discrepancy') {
+      shipment.weightDiscrepancyCharge = parseFloat(((shipment.weightDiscrepancyCharge || 0) + exactAmount).toFixed(2));
+      if (reportedWeight > 0) shipment.courierReportedWeightKg = reportedWeight;
+      shipment.weightDisputeStatus = 'Disputed';
+    } else if (source === 'rto_freight') {
+      shipment.undeliveredSupplierCharge = parseFloat(((shipment.undeliveredSupplierCharge || 0) + exactAmount).toFixed(2));
+      shipment.status = 'Undelivered';
+    }
+    await shipment.save();
+
+    // In-app notification to seller
+    await createNotification(
+      seller._id,
+      'payment',
+      `Courier Billing Debit: -₹${exactAmount.toFixed(2)} (${shipment.shipmentId})`,
+      `Courier billed ₹${exactAmount.toFixed(2)} for ${source === 'weight_discrepancy' ? `weight discrepancy (${reportedWeight}kg billed vs ${shipment.parcelWeight || 0.5}kg declared)` : source === 'rto_freight' ? 'RTO return freight' : 'transit adjustment'} on AWB ${awbCode}. Debited from your wallet.`,
+      'payment'
+    );
+
+    console.log(`[BILLING WEBHOOK] Debited ₹${exactAmount} from seller ${seller._id} for AWB ${awbCode} (${source}). Wallet balance: ₹${balBefore} -> ₹${balAfter}`);
+
+    res.json({
+      success: true,
+      message: `₹${exactAmount.toFixed(2)} successfully debited from seller's wallet`,
+      awbCode,
+      shipmentId: shipment.shipmentId,
+      debitedAmount: exactAmount,
+      newWalletBalance: balAfter
+    });
+  } catch (error) {
+    console.error('[BILLING WEBHOOK Error]:', error);
+    res.status(500).json({ error: 'Failed to process courier billing webhook' });
   }
 };
 
@@ -563,6 +737,7 @@ const getShiprocketDeliveryStatus = async (req, res) => {
 module.exports = {
   getTrackingByAwb,
   handleWebhook,
+  handleBillingWebhook,
   getPublicTracking,
   getShiprocketDeliveryStatus
 };
