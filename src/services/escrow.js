@@ -344,33 +344,14 @@ const cancelEscrow = async (shipmentId, userId, reason = 'Cancelled by user') =>
     'alert'
   );
 
-  // Find Receiver and credit wallet if funded
+  // Notify Receiver about cancellation (Platform does not hold parcel payment)
   const receiver = await findReceiverUser(shipment, userId);
-  if (receiver && wasFunded) {
-    const refundAmt = Number(shipment.amount) || 0;
-    const balBefore = Number(receiver.walletBalance) || 0;
-    receiver.walletBalance = parseFloat((balBefore + refundAmt).toFixed(2));
-    await receiver.save();
-    try {
-      const { recordTransaction } = require('./walletService');
-      await recordTransaction({
-        userId: receiver._id,
-        type: 'credit',
-        amount: refundAmt,
-        source: 'refund',
-        description: `Refund credited for cancelled shipment ${shipment.shipmentId}`,
-        balanceBefore: balBefore,
-        balanceAfter: receiver.walletBalance,
-        metadata: { shipmentId: shipment.shipmentId }
-      });
-    } catch (e) {}
-  }
   if (receiver) {
     await createNotification(
       receiver._id,
       'cancel',
       `Shipment Cancelled: ${shipment.shipmentId}`,
-      `Order ${shipment.shipmentId} (${formattedAmount}) was cancelled.${wasFunded ? ` Full refund of ${formattedAmount} credited to your wallet.` : ''} Reason: ${reason}`,
+      `Order ${shipment.shipmentId} was cancelled (${reason}). If you made any advance payment directly to the merchant outside the platform, please contact the seller for your settlement or raise a dispute claim.`,
       'alert'
     );
   }
@@ -433,9 +414,9 @@ const refundUndeliveredEscrow = async (shipmentId, reason = 'Carrier reported de
     }
   }
 
-  // Buyer always receives 100% full refund with zero deductions
+  // Platform does not collect or hold parcel payment; refund of parcel principal is settled directly with seller
   receiverPenalty = 0;
-  receiverRefund = isOnlineEscrow ? principal : 0;
+  receiverRefund = 0;
   supplierBuyerPenaltyShare = 0;
   receiverWeeklyRejectionCount = 0;
 
@@ -447,12 +428,12 @@ const refundUndeliveredEscrow = async (shipmentId, reason = 'Carrier reported de
   shipment.status = 'Undelivered';
   shipment.escrowStage = -3;
   shipment.daysInEscrow = daysHeld;
-  shipment.undeliveredSupplierRelief = supplierRelief + supplierBuyerPenaltyShare;
-  shipment.undeliveredSupplierPenalty = 0; // Sellers are NEVER penalized — SecureKaro policy
-  shipment.undeliveredSupplierCharge = 0;  // No charge to seller, ever
-  shipment.undeliveredReceiverPenalty = receiverPenalty;
-  shipment.undeliveredPlatformCharge = receiverPenalty > 0 ? 10 : 0; // SecureKaro keeps ₹10 of the ₹40 buyer penalty
-  shipment.principalRefundedToReceiver = receiverRefund;
+  shipment.undeliveredSupplierRelief = supplierRelief;
+  shipment.undeliveredSupplierPenalty = 0;
+  shipment.undeliveredSupplierCharge = 0;
+  shipment.undeliveredReceiverPenalty = 0;
+  shipment.undeliveredPlatformCharge = 0;
+  shipment.principalRefundedToReceiver = 0;
   shipment.undeliveredReason = reason;
   shipment.undeliveredProcessedAt = new Date();
   await shipment.save();
@@ -461,36 +442,15 @@ const refundUndeliveredEscrow = async (shipmentId, reason = 'Carrier reported de
   const fmt = (n) => `₹${new Intl.NumberFormat('en-IN').format(n)}`;
   const formattedPrincipal = fmt(principal);
 
-  // ── Credit receiver's wallet (after penalty deduction if applicable) ───────
+  // ── Notify receiver about undelivered package ───────
   const receiver = await findReceiverUser(shipment);
   if (receiver) {
-    if (receiverRefund > 0) {
-      const balBefore = Number(receiver.walletBalance) || 0;
-      receiver.walletBalance = parseFloat((balBefore + receiverRefund).toFixed(2));
-      await receiver.save();
-      try {
-        const { recordTransaction } = require('./walletService');
-        await recordTransaction({
-          userId: receiver._id,
-          type: 'credit',
-          amount: receiverRefund,
-          source: 'refund',
-          description: `Undelivered parcel refund credited for ${shipment.shipmentId}`,
-          balanceBefore: balBefore,
-          balanceAfter: receiver.walletBalance,
-          metadata: { shipmentId: shipment.shipmentId }
-        });
-      } catch (e) {}
-    }
-
-    // 100% full refund with zero deductions
     await createNotification(
       receiver._id,
-      'payments',
-      `Delivery Failed — Full Refund Processed: ${shipment.shipmentId}`,
-      `Shipment ${shipment.shipmentId} was undelivered (${reason}). ` +
-      `100% of your payment principal (${formattedPrincipal}) has been refunded to your wallet with zero deduction.`,
-      'payment'
+      'local_shipping',
+      `Shipment Undelivered: ${shipment.shipmentId}`,
+      `Shipment ${shipment.shipmentId} was marked undelivered by courier (${reason}). If you paid the merchant directly in advance, please request your refund directly from the seller or file a dispute claim.`,
+      'shipping'
     );
   }
 
@@ -975,29 +935,12 @@ const confirmReturnReceivedEscrow = async (shipmentId) => {
   } else {
     // Online Escrow & COD remittance cases: funds held/settled by platform vault
     if (receiver) {
-      const refundAmt = Number(shipment.amount) || 0;
-      const balBefore = Number(receiver.walletBalance) || 0;
-      receiver.walletBalance = parseFloat((balBefore + refundAmt).toFixed(2));
-      await receiver.save();
-      try {
-        const { recordTransaction } = require('./walletService');
-        await recordTransaction({
-          userId: receiver._id,
-          type: 'credit',
-          amount: refundAmt,
-          source: 'refund',
-          description: `Return processed: Refund credited for ${shipment.shipmentId}`,
-          balanceBefore: balBefore,
-          balanceAfter: receiver.walletBalance,
-          metadata: { shipmentId: shipment.shipmentId }
-        });
-      } catch (e) {}
       await createNotification(
         receiver._id,
-        'payments',
-        `Return Processed: Payment Refunded — ${shipment.shipmentId}`,
-        `Returned parcel ${shipment.shipmentId} was received by supplier. Principal (${formattedPrincipal}) has been refunded to your wallet.`,
-        'payment',
+        'local_shipping',
+        `Return Delivered to Seller: ${shipment.shipmentId}`,
+        `Returned parcel ${shipment.shipmentId} was received at the seller's warehouse. If you paid the merchant directly in advance, please ensure the seller settles your refund or raise a dispute claim.`,
+        'shipping',
         shipment.shipmentId
       );
     }
@@ -1007,7 +950,7 @@ const confirmReturnReceivedEscrow = async (shipmentId) => {
         supplier._id,
         'wallet',
         `Return Complete: Package Received — ${shipment.shipmentId}`,
-        `Returned package ${shipment.shipmentId} arrived at your warehouse. Payment refund processed to receiver.`,
+        `Returned package ${shipment.shipmentId} arrived at your warehouse. Please settle the buyer's refund directly if paid in advance.`,
         'confirmed',
         shipment.shipmentId
       );
