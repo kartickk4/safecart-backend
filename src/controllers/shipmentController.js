@@ -13,6 +13,8 @@ const { autoScheduleCourierPickup } = require('../services/pickupService');
 const { calculateServiceFee, calculateSellerPayout } = require('../utils/feeConfig');
 const crypto = require('crypto');
 const { cacheManager } = require('../services/cacheManager');
+const { getActiveShipmentsCount, calculateSecurityReserve } = require('../utils/securityReserve');
+const { recordTransaction } = require('../services/walletService');
 
 // Helper to invalidate admin dashboard aggregates whenever shipment state changes
 const invalidateDashboardCache = () => {
@@ -347,6 +349,13 @@ const createShipment = async (req, res) => {
       });
     }
 
+    // ── Dynamic Minimum Wallet Security Reserve Buffer ────────────────────────
+    // Sellers must maintain a minimum wallet balance: ₹100 per active shipment, capped at ₹1,000 max.
+    // When creating this shipment, new active count will be activeShipmentsCount + 1
+    const activeShipmentsCount = await getActiveShipmentsCount(sender._id);
+    const newActiveCount = activeShipmentsCount + 1;
+    const requiredReserve = calculateSecurityReserve(newActiveCount);
+
     // ── COD Upfront Fee Calculation & Wallet Balance Adjustment ──
     let deliveryCharge = 0;
     let codCharge = 0;
@@ -383,10 +392,12 @@ const createShipment = async (req, res) => {
 
       const availableWallet = Number(sender.walletBalance) || 0;
       const isPaidUpfront = Boolean(req.body.paidUpfront || req.body.codFeePaid || req.body.paymentTxnId);
+      const totalRequiredForWalletAdjust = totalCodFees + requiredReserve;
 
       if (!isPaidUpfront) {
-        if (availableWallet >= totalCodFees) {
-          // Charge is <= wallet balance: Supplier adjusts it directly from wallet
+        if (availableWallet >= totalRequiredForWalletAdjust) {
+          // Charge is <= wallet balance and leaves the required security buffer intact:
+          const balBefore = availableWallet;
           sender.walletBalance = parseFloat(Math.max(0, availableWallet - totalCodFees).toFixed(2));
           await sender.save();
 
@@ -394,26 +405,70 @@ const createShipment = async (req, res) => {
           codFeePaymentMethod = 'wallet_adjustment';
           codFeePaidAt = new Date();
           codFeeTransactionRef = 'WAL_' + Date.now();
+
+          // Audit record in wallet ledger
+          await recordTransaction({
+            userId: sender._id,
+            type: 'debit',
+            amount: totalCodFees,
+            source: 'cod_fee_deduction',
+            description: `COD upfront booking fee for shipment ${shipmentId} (Delivery: ₹${deliveryCharge} + COD Handling: ₹${codCharge})`,
+            paymentGateway: 'system',
+            balanceBefore: balBefore,
+            balanceAfter: sender.walletBalance,
+            metadata: { shipmentId, deliveryCharge, codCharge, totalCodFees, requiredReserve }
+          });
         } else {
-          // Charge is > wallet balance: Supplier must pay first then only shipment is created!
+          // Charge + reserve > wallet balance: Supplier must pay or top up to cover fee + reserve
+          const shortfall = Math.max(0, totalRequiredForWalletAdjust - availableWallet);
           return res.status(402).json({
             error: 'INSUFFICIENT_WALLET_BALANCE',
             code: 'COD_PAYMENT_REQUIRED',
-            message: `COD shipment requires ₹${totalCodFees} upfront fee (Courier Delivery: ₹${deliveryCharge} + COD Handling: ₹${codCharge}). Your wallet balance is ₹${availableWallet}. Please pay ₹${totalCodFees} or top up your wallet to create this shipment.`,
+            message: `COD shipment requires ₹${totalCodFees} upfront fee plus a minimum security reserve of ₹${requiredReserve} (${newActiveCount} active shipment(s) @ ₹100/shipment, max ₹1,000). Your wallet balance is ₹${availableWallet}. Total required: ₹${totalRequiredForWalletAdjust}. Please top up ₹${shortfall} or pay online.`,
             deliveryCharge,
             codCharge,
             totalCharge: totalCodFees,
+            requiredReserve,
+            activeShipmentsCount,
+            totalRequired: totalRequiredForWalletAdjust,
             walletBalance: availableWallet,
-            shortfall: Math.max(0, totalCodFees - availableWallet),
+            shortfall,
             canAdjustWallet: false
           });
         }
       } else {
-        // Supplier paid the upfront fee via online gateway checkout
+        // Supplier paid the upfront fee via online gateway checkout, but wallet must maintain security reserve
+        if (availableWallet < requiredReserve) {
+          const shortfall = Math.max(0, requiredReserve - availableWallet);
+          return res.status(402).json({
+            error: 'INSUFFICIENT_SECURITY_BUFFER',
+            code: 'SECURITY_BUFFER_REQUIRED',
+            message: `You must maintain a minimum wallet security buffer of ₹${requiredReserve} for ${newActiveCount} active shipment(s) (₹100/shipment, max ₹1,000). Your current wallet balance is ₹${availableWallet}. Please top up ₹${shortfall} to book this shipment.`,
+            requiredReserve,
+            activeShipmentsCount,
+            walletBalance: availableWallet,
+            shortfall
+          });
+        }
         codFeePaid = true;
         codFeePaymentMethod = 'online_gateway';
         codFeePaidAt = new Date();
         codFeeTransactionRef = req.body.paymentTxnId || ('TXN_' + Date.now());
+      }
+    } else {
+      // Non-COD shipments: Ensure seller maintains the minimum dynamic security buffer
+      const availableWallet = Number(sender.walletBalance) || 0;
+      if (availableWallet < requiredReserve) {
+        const shortfall = Math.max(0, requiredReserve - availableWallet);
+        return res.status(402).json({
+          error: 'INSUFFICIENT_SECURITY_BUFFER',
+          code: 'SECURITY_BUFFER_REQUIRED',
+          message: `You must maintain a minimum wallet security buffer of ₹${requiredReserve} for ${newActiveCount} active shipment(s) (₹100/shipment, max ₹1,000). Your current wallet balance is ₹${availableWallet}. Please top up ₹${shortfall} to book this shipment.`,
+          requiredReserve,
+          activeShipmentsCount,
+          walletBalance: availableWallet,
+          shortfall
+        });
       }
     }
 
@@ -724,10 +779,15 @@ const quoteCodFees = async (req, res) => {
       ? Number(bodyCodCharge)
       : 40;
 
+    const activeShipmentsCount = await getActiveShipmentsCount(user._id);
+    const newActiveCount = activeShipmentsCount + 1;
+    const requiredReserve = calculateSecurityReserve(newActiveCount);
+
     const totalCharge = Math.round(deliveryCharge + codCharge);
     const walletBalance = Number(user.walletBalance) || 0;
-    const canAdjustWallet = walletBalance >= totalCharge;
-    const shortfall = Math.max(0, totalCharge - walletBalance);
+    const totalRequired = totalCharge + requiredReserve;
+    const canAdjustWallet = walletBalance >= totalRequired;
+    const shortfall = Math.max(0, totalRequired - walletBalance);
 
     res.json({
       success: true,
@@ -735,6 +795,12 @@ const quoteCodFees = async (req, res) => {
       codCharge,
       totalCharge,
       walletBalance,
+      activeShipmentsCount,
+      requiredReserve,
+      maxReserveCap: 1000,
+      reservePerShipment: 100,
+      totalRequired,
+      availableAfterReserve: Math.max(0, walletBalance - requiredReserve),
       canAdjustWallet,
       shortfall,
       carrierSlug: carrierSlug || 'auto',

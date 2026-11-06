@@ -5,6 +5,7 @@ const WalletTransaction = require('../models/WalletTransaction');
 const { createNotification } = require('./notification');
 const { calculateServiceFee } = require('../utils/feeConfig');
 const cashfreeService = require('./cashfreeService');
+const { recordTransaction } = require('./walletService');
 
 /**
  * Helper: Find receiver user by exact or normalized phone number
@@ -385,40 +386,16 @@ const refundUndeliveredEscrow = async (shipmentId, reason = 'Carrier reported de
   const isPaidOffline = shipment.paymentMode === 'paid_offline';
   const isOnlineEscrow = !isCod && !isPaidOffline;
 
-  // Relief paid BY SecureKaro TO the seller (1st/2nd buyer rejection) — sellers are never charged
-  let supplierRelief = 0;
-  // Share of buyer's fair-play fee that goes to seller's wallet (3rd+ buyer rejection)
-  let supplierBuyerPenaltyShare = 0;
-  // Buyer fair-play fee (only on 3rd+ rejection in a week under RTO Protection)
-  let receiverPenalty = 0;
-  let receiverRefund = isOnlineEscrow ? principal : 0;
-  // Weekly buyer rejection count (for RTO Protection threshold check)
-  let receiverWeeklyRejectionCount = 0;
-
-  // Evaluate Smart RTO Protection if enabled on this shipment
-  if (shipment.rtoProtectionEnabled === true) {
-    // Check if seller already received ₹40 relief in the past 7 days (limit: 1 time a week per seller)
-    const sellerDoc = supplier || await User.findById(shipment.senderId);
-    const sellerLastRelief = sellerDoc?.lastRtoReliefAt ? new Date(sellerDoc.lastRtoReliefAt) : null;
-    const hasRecentSellerRelief = sellerLastRelief && (Date.now() - sellerLastRelief.getTime() < 7 * 24 * 60 * 60 * 1000);
-
-    if (!hasRecentSellerRelief) {
-      supplierRelief = 40;
-      if (sellerDoc) {
-        sellerDoc.lastRtoReliefAt = new Date();
-        await sellerDoc.save();
-      }
-    } else {
-      supplierRelief = 0;
-      console.log(`[RTO PROTECTION] Seller ${shipment.senderId} weekly relief limit reached (already received ₹40 relief within past 7 days).`);
-    }
-  }
+  // Courier partner bills SecureKaro for the return freight (RTO).
+  // This return freight fee is deducted from the seller's wallet reserve buffer.
+  const rtoFreightCharge = Number(shipment.deliveryCharge) || 40;
 
   // Platform does not collect or hold parcel payment; refund of parcel principal is settled directly with seller
-  receiverPenalty = 0;
-  receiverRefund = 0;
-  supplierBuyerPenaltyShare = 0;
-  receiverWeeklyRejectionCount = 0;
+  const supplierRelief = 0;
+  const receiverPenalty = 0;
+  const receiverRefund = 0;
+  const supplierBuyerPenaltyShare = 0;
+  const receiverWeeklyRejectionCount = 0;
 
   // Calculate days held
   const createdDate = shipment.createdAt ? new Date(shipment.createdAt) : new Date();
@@ -428,9 +405,9 @@ const refundUndeliveredEscrow = async (shipmentId, reason = 'Carrier reported de
   shipment.status = 'Undelivered';
   shipment.escrowStage = -3;
   shipment.daysInEscrow = daysHeld;
-  shipment.undeliveredSupplierRelief = supplierRelief;
+  shipment.undeliveredSupplierRelief = 0;
   shipment.undeliveredSupplierPenalty = 0;
-  shipment.undeliveredSupplierCharge = 0;
+  shipment.undeliveredSupplierCharge = rtoFreightCharge;
   shipment.undeliveredReceiverPenalty = 0;
   shipment.undeliveredPlatformCharge = 0;
   shipment.principalRefundedToReceiver = 0;
@@ -440,7 +417,6 @@ const refundUndeliveredEscrow = async (shipmentId, reason = 'Carrier reported de
 
   // ── Format helpers ─────────────────────────────────────────────────────────
   const fmt = (n) => `₹${new Intl.NumberFormat('en-IN').format(n)}`;
-  const formattedPrincipal = fmt(principal);
 
   // ── Notify receiver about undelivered package ───────
   const receiver = await findReceiverUser(shipment);
@@ -457,30 +433,36 @@ const refundUndeliveredEscrow = async (shipmentId, reason = 'Carrier reported de
   // ── Handle supplier wallet & notifications ─────────────────────────────────
   const supplier = await User.findById(shipment.senderId);
   if (supplier) {
-    if (supplierRelief > 0) {
-      // SecureKaro RTO relief credited to seller
-      supplier.walletBalance = parseFloat(((Number(supplier.walletBalance) || 0) + supplierRelief).toFixed(2));
-      await supplier.save();
+    // Deduct RTO return freight from seller's wallet
+    const balBefore = parseFloat((Number(supplier.walletBalance) || 0).toFixed(2));
+    const balAfter = parseFloat((balBefore - rtoFreightCharge).toFixed(2));
+    supplier.walletBalance = balAfter;
+    await supplier.save();
 
-      await createNotification(
-        supplier._id,
-        'local_shipping',
-        `RTO Protection: +${fmt(supplierRelief)} SecureKaro Compensation`,
-        `Shipment ${shipment.shipmentId} was rejected/undelivered by the buyer (${reason}). ` +
-        `Under RTO & Undelivered Protection, SecureKaro has credited ${fmt(supplierRelief)} to your wallet to reduce your courier and packaging loss burden.`,
-        'payment'
-      );
-    } else {
-      // Standard notification
-      await createNotification(
-        supplier._id,
-        'local_shipping',
-        `Shipment Undelivered: ${shipment.shipmentId}`,
-        `Carrier marked shipment ${shipment.shipmentId} as undelivered (${reason}). ` +
-        `Order funds (${formattedPrincipal}) have been refunded to the receiver.`,
-        'alert'
-      );
-    }
+    await recordTransaction({
+      userId: supplier._id,
+      type: 'debit',
+      amount: rtoFreightCharge,
+      source: 'rto_freight',
+      description: `RTO return freight charged by courier for undelivered shipment ${shipment.shipmentId} (AWB: ${shipment.awbCode || 'N/A'})`,
+      paymentGateway: 'system',
+      balanceBefore: balBefore,
+      balanceAfter: balAfter,
+      metadata: {
+        shipmentId: shipment.shipmentId,
+        awbCode: shipment.awbCode,
+        reason,
+        rtoFreightCharge
+      }
+    });
+
+    await createNotification(
+      supplier._id,
+      'local_shipping',
+      `RTO Return Freight: -${fmt(rtoFreightCharge)} (${shipment.shipmentId})`,
+      `Courier marked shipment ${shipment.shipmentId} as undelivered / RTO (${reason}). Return freight of ${fmt(rtoFreightCharge)} was deducted from your wallet reserve. The parcel is returning to your pickup address.`,
+      'payment'
+    );
   }
 
   return {

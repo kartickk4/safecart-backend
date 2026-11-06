@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const Reward = require('../models/Reward');
 const rewardService = require('../services/rewardService');
+const { getActiveShipmentsCount, calculateSecurityReserve } = require('../utils/securityReserve');
 
 /**
  * @desc    Get user's cashback balance & reward history
@@ -18,14 +19,16 @@ const getRewardWallet = async (req, res) => {
     const supplierWallet = await rewardService.computeSupplierWallet(req.user._id);
 
     const isSupplier = user.role === 'Supplier';
-    // user.walletBalance holds credits from:
-    //   - Accepted partial discount remainder (supplier gets principal - discountAmount)
-    // These must be included in the withdrawable total.
+    // user.walletBalance holds credits from direct recharges & order adjustments.
+    // Sellers must maintain a minimum reserve buffer for active shipments.
     const directWalletCredits = parseFloat((Number(user.walletBalance) || 0).toFixed(2));
+    const activeShipmentsCount = isSupplier ? await getActiveShipmentsCount(req.user._id) : 0;
+    const securityReserve = isSupplier ? calculateSecurityReserve(activeShipmentsCount) : 0;
+    const withdrawableDirectCredits = Math.max(0, parseFloat((directWalletCredits - securityReserve).toFixed(2)));
 
     const withdrawableBalance = supplierWallet
-      ? parseFloat((supplierWallet.withdrawableBalance + directWalletCredits).toFixed(2))
-      : (user.cashbackBalance || 0) + directWalletCredits;
+      ? parseFloat((supplierWallet.withdrawableBalance + withdrawableDirectCredits).toFixed(2))
+      : (user.cashbackBalance || 0) + withdrawableDirectCredits;
     const pendingConfirmationBalance = supplierWallet ? supplierWallet.pendingConfirmationBalance : 0;
     const totalWalletBalance = supplierWallet
       ? parseFloat((supplierWallet.totalWalletBalance + directWalletCredits).toFixed(2))
@@ -37,6 +40,10 @@ const getRewardWallet = async (req, res) => {
       withdrawableBalance,
       pendingConfirmationBalance,
       totalWalletBalance,
+      activeShipmentsCount,
+      securityReserve,
+      reservePerShipment: 100,
+      maxReserveCap: 1000,
       confirmationPipeline: supplierWallet ? supplierWallet.confirmationPipeline : [],
       supplierWallet: supplierWallet || null,
       bankDetails: user.bankDetails || {},

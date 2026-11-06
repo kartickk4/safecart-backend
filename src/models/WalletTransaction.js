@@ -31,7 +31,8 @@ const WalletTransactionSchema = new mongoose.Schema({
       'cod_fee_deduction',
       'refund',
       'admin_adjustment',
-      'withdrawal'
+      'withdrawal',
+      'rto_freight'
     ],
     required: true,
     index: true

@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const User = require('../models/User');
 const WalletTransaction = require('../models/WalletTransaction');
 const cashfreeService = require('../services/cashfreeService');
+const { getActiveShipmentsCount, calculateSecurityReserve } = require('../utils/securityReserve');
 
 /**
  * @desc    Create a payment order for recharging seller wallet
@@ -219,10 +220,20 @@ const getWalletBalance = async (req, res) => {
       if (item._id === 'debit') totalDeducted = parseFloat(Number(item.total).toFixed(2));
     }
 
+    const currentBalance = parseFloat((Number(user.walletBalance) || 0).toFixed(2));
+    const activeShipmentsCount = await getActiveShipmentsCount(user._id);
+    const securityReserve = calculateSecurityReserve(activeShipmentsCount);
+    const withdrawableBalance = Math.max(0, parseFloat((currentBalance - securityReserve).toFixed(2)));
+
     res.json({
       success: true,
-      walletBalance: parseFloat((Number(user.walletBalance) || 0).toFixed(2)),
-      isNegative: (Number(user.walletBalance) || 0) < 0,
+      walletBalance: currentBalance,
+      isNegative: currentBalance < 0,
+      activeShipmentsCount,
+      securityReserve,
+      withdrawableBalance,
+      reservePerShipment: 100,
+      maxReserveCap: 1000,
       cashbackBalance: user.cashbackBalance || 0,
       totalRecharged,
       totalDeducted,
@@ -409,9 +420,27 @@ const withdrawWallet = async (req, res) => {
       });
     }
 
-    // Atomic deduction: prevents double-spending race conditions
+    // ── Dynamic Minimum Wallet Security Reserve Buffer Check ────────────────
+    // Sellers must maintain a minimum wallet balance: ₹100 per active shipment, capped at ₹1,000 max.
+    const activeShipmentsCount = await getActiveShipmentsCount(req.user._id);
+    const requiredReserve = calculateSecurityReserve(activeShipmentsCount);
+
+    const currentSnapshot = await User.findById(req.user._id);
+    if (!currentSnapshot) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+    const currentBalance = Number(currentSnapshot.walletBalance) || 0;
+    const maxWithdrawable = Math.max(0, parseFloat((currentBalance - requiredReserve).toFixed(2)));
+
+    if (requested > maxWithdrawable) {
+      return res.status(400).json({
+        error: `Cannot withdraw ₹${requested}. You have ${activeShipmentsCount} active shipment(s) requiring a minimum wallet security buffer of ₹${requiredReserve} (₹100/shipment, max ₹1,000). Maximum withdrawable balance is ₹${maxWithdrawable.toFixed(2)}.`
+      });
+    }
+
+    // Atomic deduction: prevents double-spending race conditions while guaranteeing reserve buffer
     const user = await User.findOneAndUpdate(
-      { _id: req.user._id, walletBalance: { $gte: requested } },
+      { _id: req.user._id, walletBalance: { $gte: requested + requiredReserve } },
       { 
         $inc: { 
           walletBalance: -requested,
@@ -422,10 +451,10 @@ const withdrawWallet = async (req, res) => {
     );
 
     if (!user) {
-      const currentSnapshot = await User.findById(req.user._id);
-      const available = currentSnapshot ? currentSnapshot.walletBalance : 0;
+      const freshSnapshot = await User.findById(req.user._id);
+      const available = freshSnapshot ? freshSnapshot.walletBalance : 0;
       return res.status(400).json({
-        error: `Insufficient wallet balance or concurrent transaction in progress. Available: ₹${available.toFixed(2)}`
+        error: `Insufficient withdrawable wallet balance (minimum ₹${requiredReserve} security buffer must be retained for ${activeShipmentsCount} active shipment(s)). Available: ₹${available.toFixed(2)}`
       });
     }
 
