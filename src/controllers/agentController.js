@@ -380,7 +380,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
       `🛡️ *SecureKaro Smart RTO & Undelivered Protection:*\n\n` +
       `• *Prepaid Protected Orders:* When RTO Protection is enabled, SecureKaro credits *₹40 seller relief compensation* directly to your wallet if a courier marks the parcel RTO due to buyer rejection.\n` +
       `• *Delivery Verification:* Couriers are required to attempt delivery up to 3 times with OTP and geo-tagged proof.\n` +
-      `• *Anti-Fraud Network:* Buyers who serially reject 3+ parcels across our merchant network are blacklisted and charged a fair-play deposit on future orders.\n` +
+      `• *Full Buyer Refund:* Buyers receive 100% full refund with zero deduction on undelivered orders.\n` +
       `• *Note on COD:* RTO relief is exclusively for Prepaid Protected orders since prepaid buyers have committed verified payment.`;
   }
 
@@ -1133,8 +1133,8 @@ const handleChat = async (req, res) => {
             `💳 Payment Mode: *Prepaid (Delivery Protected)* ✅\n\n` +
             `🛡️ *Enable Smart RTO & Undelivered Protection?*\n\n` +
             `If the buyer refuses or fails to accept delivery:\n` +
-            `• SecureKaro compensates you *₹40* relief per rejected parcel\n` +
-            `• Repeat serial rejectors (3+ rejections/week) pay a fair-play fee\n\n` +
+            `• SecureKaro compensates you *₹40* relief per undelivered parcel\n` +
+            `• Buyer receives a 100% full refund with zero deductions\n\n` +
             `Reply *"yes"* to enable RTO Protection or *"no"* to skip.`;
         }
         break;

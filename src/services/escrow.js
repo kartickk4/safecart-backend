@@ -416,47 +416,28 @@ const refundUndeliveredEscrow = async (shipmentId, reason = 'Carrier reported de
 
   // Evaluate Smart RTO Protection if enabled on this shipment
   if (shipment.rtoProtectionEnabled === true) {
-    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
-    // Track buyer's rejection count in past 7 days (excluding this shipment)
-    receiverWeeklyRejectionCount = await Shipment.countDocuments({
-      receiverPhone: shipment.receiverPhone,
-      status: 'Undelivered',
-      undeliveredProcessedAt: { $gte: oneWeekAgo },
-      _id: { $ne: shipment._id }
-    });
-
     // Check if seller already received ₹40 relief in the past 7 days (limit: 1 time a week per seller)
     const sellerDoc = supplier || await User.findById(shipment.senderId);
     const sellerLastRelief = sellerDoc?.lastRtoReliefAt ? new Date(sellerDoc.lastRtoReliefAt) : null;
     const hasRecentSellerRelief = sellerLastRelief && (Date.now() - sellerLastRelief.getTime() < 7 * 24 * 60 * 60 * 1000);
 
-    if (receiverWeeklyRejectionCount < 2) {
-      // Buyer's 1st or 2nd rejection this week:
-      // → Buyer gets 100% full refund (no penalty)
-      // → SecureKaro compensates seller ₹40 as burden relief (max 1 time per week per seller)
-      receiverPenalty = 0;
-      receiverRefund = isOnlineEscrow ? principal : 0;
-      if (!hasRecentSellerRelief) {
-        supplierRelief = 40;
-        if (sellerDoc) {
-          sellerDoc.lastRtoReliefAt = new Date();
-          await sellerDoc.save();
-        }
-      } else {
-        supplierRelief = 0;
-        console.log(`[RTO PROTECTION] Seller ${shipment.senderId} weekly relief limit reached (already received ₹40 relief within past 7 days).`);
+    if (!hasRecentSellerRelief) {
+      supplierRelief = 40;
+      if (sellerDoc) {
+        sellerDoc.lastRtoReliefAt = new Date();
+        await sellerDoc.save();
       }
-      supplierBuyerPenaltyShare = 0;
     } else {
-      // Buyer's 3rd+ rejection this week:
-      // → Buyer is charged ₹40 (₹30 goes to seller, ₹10 kept by SecureKaro)
-      receiverPenalty = 40;
-      receiverRefund = isOnlineEscrow ? Math.max(0, parseFloat((principal - receiverPenalty).toFixed(2))) : 0;
       supplierRelief = 0;
-      supplierBuyerPenaltyShare = 30; // ₹30 of buyer's ₹40 penalty goes to seller
+      console.log(`[RTO PROTECTION] Seller ${shipment.senderId} weekly relief limit reached (already received ₹40 relief within past 7 days).`);
     }
   }
+
+  // Buyer always receives 100% full refund with zero deductions
+  receiverPenalty = 0;
+  receiverRefund = isOnlineEscrow ? principal : 0;
+  supplierBuyerPenaltyShare = 0;
+  receiverWeeklyRejectionCount = 0;
 
   // Calculate days held
   const createdDate = shipment.createdAt ? new Date(shipment.createdAt) : new Date();
@@ -502,69 +483,35 @@ const refundUndeliveredEscrow = async (shipmentId, reason = 'Carrier reported de
       } catch (e) {}
     }
 
-    if (receiverPenalty > 0) {
-      // 3rd+ rejection: buyer charged ₹40, ₹30 to seller, ₹10 to SecureKaro
-      await createNotification(
-        receiver._id,
-        'payments',
-        `Delivery Rejected — Fair-Play Fee Charged: ${shipment.shipmentId}`,
-        `Shipment ${shipment.shipmentId} was rejected/undelivered (${reason}). ` +
-        `You have exceeded the 2 free rejections allowed per week under RTO Protection rules. ` +
-        `A fair-play charge of ${fmt(receiverPenalty)} has been deducted (₹30 compensates the seller, ₹10 goes to SecureKaro). ` +
-        `Net refund of ${fmt(receiverRefund)} has been credited to your wallet.`,
-        'payment'
-      );
-    } else {
-      // 1st or 2nd rejection: full refund with a gentle warning
-      const warnMsg = shipment.rtoProtectionEnabled
-        ? ` ⚠️ Note: If you reject more than 2 parcels in a week, a ₹40 fair-play fee will be charged from your next rejection.`
-        : '';
-      await createNotification(
-        receiver._id,
-        'payments',
-        `Delivery Failed — Full Refund Processed: ${shipment.shipmentId}`,
-        `Shipment ${shipment.shipmentId} was undelivered (${reason}). ` +
-        `100% of your payment principal (${formattedPrincipal}) has been refunded to your wallet with zero deduction.${warnMsg}`,
-        'payment'
-      );
-    }
+    // 100% full refund with zero deductions
+    await createNotification(
+      receiver._id,
+      'payments',
+      `Delivery Failed — Full Refund Processed: ${shipment.shipmentId}`,
+      `Shipment ${shipment.shipmentId} was undelivered (${reason}). ` +
+      `100% of your payment principal (${formattedPrincipal}) has been refunded to your wallet with zero deduction.`,
+      'payment'
+    );
   }
 
   // ── Handle supplier wallet & notifications ─────────────────────────────────
   const supplier = await User.findById(shipment.senderId);
   if (supplier) {
-    const totalSupplierCredit = supplierRelief + supplierBuyerPenaltyShare;
-
-    if (totalSupplierCredit > 0) {
-      // Credit seller wallet: either ₹40 SecureKaro relief (1st/2nd buyer rejection)
-      // OR ₹30 from buyer's penalty (3rd+ buyer rejection)
-      supplier.walletBalance = parseFloat(((Number(supplier.walletBalance) || 0) + totalSupplierCredit).toFixed(2));
+    if (supplierRelief > 0) {
+      // SecureKaro RTO relief credited to seller
+      supplier.walletBalance = parseFloat(((Number(supplier.walletBalance) || 0) + supplierRelief).toFixed(2));
       await supplier.save();
 
-      if (supplierRelief > 0) {
-        // SecureKaro compensation: buyer's 1st or 2nd rejection this week
-        await createNotification(
-          supplier._id,
-          'local_shipping',
-          `RTO Protection: +${fmt(supplierRelief)} SecureKaro Compensation`,
-          `Shipment ${shipment.shipmentId} was rejected/undelivered by the buyer (${reason}). ` +
-          `Under RTO & Undelivered Protection, SecureKaro has credited ${fmt(supplierRelief)} to your wallet to reduce your courier and packaging loss burden.`,
-          'payment'
-        );
-      } else if (supplierBuyerPenaltyShare > 0) {
-        // Buyer's 3rd+ rejection: seller gets ₹30 share of the buyer's ₹40 penalty
-        await createNotification(
-          supplier._id,
-          'local_shipping',
-          `Buyer Penalty Share Credited: +${fmt(supplierBuyerPenaltyShare)}`,
-          `Shipment ${shipment.shipmentId} was rejected/undelivered (${reason}). ` +
-          `The buyer was charged a ₹40 fair-play fee (3rd+ rejection this week). ` +
-          `Your compensation of ${fmt(supplierBuyerPenaltyShare)} has been credited to your wallet.`,
-          'payment'
-        );
-      }
+      await createNotification(
+        supplier._id,
+        'local_shipping',
+        `RTO Protection: +${fmt(supplierRelief)} SecureKaro Compensation`,
+        `Shipment ${shipment.shipmentId} was rejected/undelivered by the buyer (${reason}). ` +
+        `Under RTO & Undelivered Protection, SecureKaro has credited ${fmt(supplierRelief)} to your wallet to reduce your courier and packaging loss burden.`,
+        'payment'
+      );
     } else {
-      // RTO Protection OFF — standard notification
+      // Standard notification
       await createNotification(
         supplier._id,
         'local_shipping',
