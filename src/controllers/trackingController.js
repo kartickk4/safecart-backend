@@ -3,6 +3,7 @@ const CarrierJourney = require('../models/CarrierJourney');
 const User = require('../models/User');
 const { createNotification } = require('../services/notification');
 const { cacheManager } = require('../services/cacheManager');
+const carrierTracking = require('../services/carrierTracking');
 const axios = require('axios');
 
 
@@ -51,9 +52,40 @@ const getTrackingByAwb = async (req, res) => {
         $or: [{ awbCode: cleanAwb }, { shipmentId: cleanAwb }]
       }).select('shipmentId awbCode carrierSlug carrierName status city createdAt');
 
-      const journey = await CarrierJourney.findOne({
+      let journey = await CarrierJourney.findOne({
         $or: [{ awbCode: cleanAwb }, { shipmentId: cleanAwb }]
       });
+
+      // On-Demand Real-Time Fetch: If milestones are empty or missing, fetch live from carrier
+      const targetAwb = (shipment && shipment.awbCode) || cleanAwb;
+      const targetSlug = (shipment && shipment.carrierSlug) || 'delhivery';
+      const hasMilestones = journey && journey.milestones && journey.milestones.length > 0;
+
+      if (!hasMilestones && targetAwb && targetAwb !== 'N/A') {
+        try {
+          const trackData = await carrierTracking.getTrackingDetails(targetSlug, targetAwb);
+          if (trackData && trackData.activities && trackData.activities.length > 0) {
+            if (!journey) {
+              journey = new CarrierJourney({
+                shipmentId: shipment ? shipment.shipmentId : cleanAwb,
+                awbCode: targetAwb,
+                courierName: (trackData.courierName || targetSlug).toUpperCase(),
+                milestones: []
+              });
+            }
+            journey.milestones = trackData.activities.map(act => ({
+              status: act.status || act.activity,
+              location: act.location || 'Logistics Facility',
+              detail: act.activity || `Status: ${act.status}`,
+              time: act.date ? new Date(act.date) : new Date()
+            }));
+            if (trackData.courierName) journey.courierName = trackData.courierName;
+            await journey.save();
+          }
+        } catch (syncErr) {
+          console.warn('[ON-DEMAND TRACKING SYNC]:', syncErr.message);
+        }
+      }
 
       if (!shipment && !journey) {
         return null;
@@ -92,10 +124,11 @@ const getTrackingByAwb = async (req, res) => {
  * @access  Public
  */
 const handleWebhook = async (req, res) => {
-  const { awb, status, current_status, location, activities } = req.body;
+  const { awb, status, current_status, location, activities } = req.body || {};
 
-  const awbCode = awb || req.body.awbCode;
-  const trackingStatus = status || current_status || 'In Transit';
+  // Supports standard fields, Delhivery (Waybill / Status / Scans), and Shiprocket (awb / current_status / scans)
+  const awbCode = awb || req.body?.awbCode || req.body?.Waybill || req.body?.waybill;
+  const trackingStatus = status || current_status || req.body?.Status?.Status || req.body?.current_status || 'In Transit';
 
   try {
     if (!awbCode) {
@@ -105,7 +138,7 @@ const handleWebhook = async (req, res) => {
     const shipment = await Shipment.findOne({ awbCode });
     if (!shipment) {
       console.warn(`[TRACKING WEBHOOK] Received update for untracked AWB: ${awbCode}`);
-      return res.status(404).json({ error: 'Associated shipment not found' });
+      return res.status(200).json({ message: 'Acknowledged: untracked AWB' });
     }
 
     // Update CarrierJourney milestones
@@ -126,10 +159,21 @@ const handleWebhook = async (req, res) => {
         detail: act.activity || act.detail || `Status: ${act.status}`,
         time: act.date ? new Date(act.date) : (act.time ? new Date(act.time) : new Date())
       }));
+    } else if (req.body?.Scans && Array.isArray(req.body.Scans)) {
+      // Delhivery Webhook Scans payload
+      journey.milestones = req.body.Scans.map(scan => {
+        const d = scan.ScanDetail || {};
+        return {
+          status: d.Scan || scan.StatusType || 'In Transit',
+          location: d.ScannedLocation || 'Logistics Hub',
+          detail: d.Instructions || d.Comment || d.Scan || 'Status update',
+          time: d.ScanDateTime ? new Date(d.ScanDateTime) : new Date()
+        };
+      });
     } else {
       journey.milestones.push({
         status: trackingStatus,
-        location: location || 'Sorting Facility',
+        location: location || req.body?.Status?.Instructions || 'Sorting Facility',
         detail: `Status updated via webhook to: ${trackingStatus}`,
         time: new Date()
       });
@@ -262,12 +306,39 @@ const getPublicTracking = async (req, res) => {
     }
 
     // 3. Fetch carrier journey
-    const journey = await CarrierJourney.findOne({
+    let journey = await CarrierJourney.findOne({
       $or: [
         { shipmentId: shipment.shipmentId },
         { awbCode: shipment.awbCode || trackingId }
       ]
     });
+
+    // On-demand live fetch if milestones are missing or empty
+    if ((!journey || !journey.milestones || journey.milestones.length === 0) && shipment.awbCode && shipment.awbCode !== 'N/A') {
+      try {
+        const trackData = await carrierTracking.getTrackingDetails(shipment.carrierSlug || 'delhivery', shipment.awbCode);
+        if (trackData && trackData.activities && trackData.activities.length > 0) {
+          if (!journey) {
+            journey = new CarrierJourney({
+              shipmentId: shipment.shipmentId,
+              awbCode: shipment.awbCode,
+              courierName: (trackData.courierName || shipment.carrierSlug || 'DELHIVERY').toUpperCase(),
+              milestones: []
+            });
+          }
+          journey.milestones = trackData.activities.map(act => ({
+            status: act.status || act.activity,
+            location: act.location || 'Logistics Facility',
+            detail: act.activity || `Status: ${act.status}`,
+            time: act.date ? new Date(act.date) : new Date()
+          }));
+          if (trackData.courierName) journey.courierName = trackData.courierName;
+          await journey.save();
+        }
+      } catch (syncErr) {
+        console.warn('[PUBLIC ON-DEMAND TRACKING NOTE]:', syncErr.message);
+      }
+    }
 
     // 4. Generate Live Telemetry
     let telemetry = null;
