@@ -16,9 +16,9 @@ const getRewardWallet = async (req, res) => {
     }
 
     const history = await Reward.find({ userId: req.user._id }).sort({ createdAt: -1 });
-    const supplierWallet = await rewardService.computeSupplierWallet(req.user._id);
-
     const isSupplier = user.role === 'Supplier';
+    const supplierWallet = isSupplier ? await rewardService.computeSupplierWallet(req.user._id) : null;
+
     // user.walletBalance holds credits from direct recharges & order adjustments.
     // Sellers must maintain a minimum reserve buffer for active shipments.
     const directWalletCredits = parseFloat((Number(user.walletBalance) || 0).toFixed(2));
@@ -26,16 +26,15 @@ const getRewardWallet = async (req, res) => {
     const securityReserve = isSupplier ? calculateSecurityReserve(activeShipmentsCount) : 0;
     const withdrawableDirectCredits = Math.max(0, parseFloat((directWalletCredits - securityReserve).toFixed(2)));
 
-    const withdrawableBalance = supplierWallet
-      ? parseFloat((supplierWallet.withdrawableBalance + withdrawableDirectCredits).toFixed(2))
-      : (user.cashbackBalance || 0) + withdrawableDirectCredits;
+    // For suppliers: withdrawable from shipping wallet (after reserve) + cashback
+    // For buyers: withdrawable from order balance (walletBalance) + cashback
+    const cashback = parseFloat((Number(user.cashbackBalance) || 0).toFixed(2));
+    const withdrawableBalance = parseFloat((withdrawableDirectCredits + cashback).toFixed(2));
     const pendingConfirmationBalance = supplierWallet ? supplierWallet.pendingConfirmationBalance : 0;
-    const totalWalletBalance = supplierWallet
-      ? parseFloat((supplierWallet.totalWalletBalance + directWalletCredits).toFixed(2))
-      : (user.cashbackBalance || 0) + directWalletCredits;
+    const totalWalletBalance = parseFloat((directWalletCredits + cashback).toFixed(2));
 
     res.json({
-      cashbackBalance: user.cashbackBalance || 0,
+      cashbackBalance: cashback,
       walletBalance: directWalletCredits,
       withdrawableBalance,
       pendingConfirmationBalance,

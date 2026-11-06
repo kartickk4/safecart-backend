@@ -508,18 +508,19 @@ const computeSupplierWallet = async (userId) => {
           s.withdrawableAt = s.withdrawableAt || expiresAt;
           await s.save();
         }
-        withdrawableParcelAmount += (s.amount || 0);
+        // SecureKaro does NOT collect or hold parcel principal amounts (buyer pays seller directly outside)
+        withdrawableParcelAmount = 0;
         withdrawableCashbackAmount += cbAmt;
       } else {
-        pendingConfirmationParcelAmount += (s.amount || 0);
+        pendingConfirmationParcelAmount = 0;
         pendingConfirmationCashbackAmount += cbAmt;
         const remainingMs = Math.max(0, new Date(expiresAt).getTime() - Date.now());
         confirmationPipeline.push({
           shipmentId: s.shipmentId,
-          parcelAmount: s.amount || 0,
+          parcelAmount: 0,
           cashbackAmount: cbAmt,
           cashbackRate: '₹3 – ₹6',
-          totalAmount: (s.amount || 0) + cbAmt,
+          totalAmount: cbAmt,
           awbCode: s.awbCode,
           carrierSlug: s.carrierSlug || 'delhivery',
           status: s.status,
@@ -537,17 +538,17 @@ const computeSupplierWallet = async (userId) => {
     .reduce((sum, r) => sum + (r.amount || 0), 0);
 
   const directWalletCredits = parseFloat((Number(user.walletBalance) || 0).toFixed(2));
-  const totalEarnedWithdrawable = withdrawableParcelAmount + withdrawableCashbackAmount + otherRewards;
-  const withdrawableBalance = Math.max(0, parseFloat((totalEarnedWithdrawable + directWalletCredits - (user.totalWithdrawn || 0)).toFixed(2)));
-  const pendingConfirmationBalance = parseFloat((pendingConfirmationParcelAmount + pendingConfirmationCashbackAmount).toFixed(2));
-  const totalWalletBalance = parseFloat((withdrawableBalance + pendingConfirmationBalance).toFixed(2));
+  const totalEarnedCashback = withdrawableCashbackAmount + otherRewards;
+  const withdrawableCashback = Math.max(0, parseFloat((totalEarnedCashback - (user.totalWithdrawn || 0)).toFixed(2)));
+  const pendingConfirmationBalance = parseFloat((pendingConfirmationCashbackAmount).toFixed(2));
+  const totalWalletBalance = parseFloat((directWalletCredits + (user.cashbackBalance || 0)).toFixed(2));
 
   return {
-    withdrawableBalance,
+    withdrawableBalance: withdrawableCashback,
     pendingConfirmationBalance,
-    pendingConfirmationParcelAmount,
+    pendingConfirmationParcelAmount: 0,
     pendingConfirmationCashbackAmount,
-    withdrawableParcelAmount,
+    withdrawableParcelAmount: 0,
     withdrawableCashbackAmount,
     directWalletCredits,
     totalWalletBalance,
@@ -580,12 +581,13 @@ const withdrawCashback = async (userId, amount, method, payoutDetails, isMobileA
   let availableBalance = (user.cashbackBalance || 0) + directWalletCredits;
 
   if (isSupplier) {
-    const supplierWallet = await computeSupplierWallet(userId);
-    if (supplierWallet) {
-      availableBalance = supplierWallet.withdrawableBalance;
-      if (withdrawAmount > availableBalance) {
-        throw new Error(`Requested amount (₹${withdrawAmount}) exceeds your available withdrawable balance of ₹${availableBalance}. ₹${supplierWallet.pendingConfirmationBalance} is currently locked in the 24-hour buyer confirmation window and will become withdrawable automatically once the window closes.`);
-      }
+    const { getActiveShipmentsCount, calculateSecurityReserve } = require('../utils/securityReserve');
+    const activeShipmentsCount = await getActiveShipmentsCount(userId);
+    const securityReserve = calculateSecurityReserve(activeShipmentsCount);
+    const withdrawableWallet = Math.max(0, directWalletCredits - securityReserve);
+    availableBalance = parseFloat((withdrawableWallet + (user.cashbackBalance || 0)).toFixed(2));
+    if (withdrawAmount > availableBalance) {
+      throw new Error(`Cannot withdraw ₹${withdrawAmount}. You have ${activeShipmentsCount} active shipment(s) requiring a minimum wallet security buffer of ₹${securityReserve} (₹100/shipment, max ₹1,000). Maximum withdrawable balance is ₹${availableBalance.toFixed(2)}.`);
     }
   } else {
     // Non-supplier (Buyer / Receiver):

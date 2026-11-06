@@ -317,12 +317,35 @@ const withdrawCashback = async (req, res) => {
       });
     }
 
+    const currentSnapshot = await User.findById(req.user._id);
+    if (!currentSnapshot) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+    const currentCashback = Number(currentSnapshot.cashbackBalance) || 0;
+    const currentWallet = Number(currentSnapshot.walletBalance) || 0;
+    const totalAvailable = parseFloat((currentCashback + currentWallet).toFixed(2));
+
+    if (requested > totalAvailable) {
+      return res.status(400).json({
+        error: `Insufficient balance. Available to withdraw: ₹${totalAvailable.toFixed(2)}`
+      });
+    }
+
+    // Deduct from cashback first, then walletBalance
+    const deductCashback = Math.min(currentCashback, requested);
+    const deductWallet = parseFloat((requested - deductCashback).toFixed(2));
+
     // Atomic deduction: prevents double-spending race conditions
     const user = await User.findOneAndUpdate(
-      { _id: req.user._id, cashbackBalance: { $gte: requested } },
+      { 
+        _id: req.user._id, 
+        cashbackBalance: { $gte: deductCashback },
+        walletBalance: { $gte: deductWallet }
+      },
       { 
         $inc: { 
-          cashbackBalance: -requested,
+          cashbackBalance: -deductCashback,
+          walletBalance: -deductWallet,
           totalWithdrawn: netTransfer
         } 
       },
@@ -330,14 +353,14 @@ const withdrawCashback = async (req, res) => {
     );
 
     if (!user) {
-      const currentSnapshot = await User.findById(req.user._id);
-      const available = currentSnapshot ? currentSnapshot.cashbackBalance : 0;
+      const freshSnapshot = await User.findById(req.user._id);
+      const available = freshSnapshot ? ((freshSnapshot.cashbackBalance || 0) + (freshSnapshot.walletBalance || 0)) : 0;
       return res.status(400).json({
-        error: `Insufficient cashback balance or concurrent transaction in progress. Available: ₹${available.toFixed(2)}`
+        error: `Insufficient balance or concurrent transaction in progress. Available: ₹${available.toFixed(2)}`
       });
     }
 
-    const balanceAfter = parseFloat((Number(user.cashbackBalance) || 0).toFixed(2));
+    const balanceAfter = parseFloat(((Number(user.cashbackBalance) || 0) + (Number(user.walletBalance) || 0)).toFixed(2));
     const balanceBefore = parseFloat((balanceAfter + requested).toFixed(2));
 
     // Record the withdrawal in ledger
@@ -376,7 +399,9 @@ const withdrawCashback = async (req, res) => {
       netTransferred: netTransfer,
       feeApplied: fee > 0,
       feeReason: fee > 0 ? `₹${BUYER_FEE} fee applied because withdrawal was below ₹${BUYER_FEE_THRESHOLD}` : null,
-      cashbackBalance: balanceAfter,
+      cashbackBalance: user.cashbackBalance || 0,
+      walletBalance: user.walletBalance || 0,
+      withdrawableBalance: parseFloat(((user.cashbackBalance || 0) + (user.walletBalance || 0)).toFixed(2)),
       transaction,
       message: fee > 0
         ? `₹${netTransfer.toFixed(2)} will be transferred to ${upiId} (₹${fee} processing fee deducted).`
