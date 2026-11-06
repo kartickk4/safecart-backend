@@ -2859,9 +2859,28 @@ const reconcileLedger = async (req, res) => {
   }
 };
 
+/**
+ * @desc    On-demand Cloudflare R2 media storage cleanup
+ * @route   POST /api/v1/admin/media/cleanup
+ * @access  Private (Admin)
+ */
+const triggerMediaCleanup = async (req, res) => {
+  try {
+    const retentionDays = parseInt(req.body?.retentionDays) || 7;
+    const { cleanupCompletedShipmentPhotos } = require('../services/mediaCleanupService');
+    const result = await cleanupCompletedShipmentPhotos(retentionDays);
+    await logAudit(req, 'R2_MEDIA_CLEANUP', 'Storage', 'Cloudflare_R2', result);
+    res.json({ success: true, result });
+  } catch (error) {
+    console.error('Admin Media Cleanup Error:', error);
+    res.status(500).json({ error: 'Failed to run media cleanup', details: error.message });
+  }
+};
+
 module.exports = {
   getAnalyticsDashboard,
   reconcileLedger,
+  triggerMediaCleanup,
   getAllUsers,
   getUserById,
   suspendUser,

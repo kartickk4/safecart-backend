@@ -353,6 +353,15 @@ const ShipmentSchema = new mongoose.Schema({
   parcelPhotoUploadedAt: {
     type: Date
   },
+  parcelPhotoCleanedUp: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  parcelPhotoCleanedUpAt: {
+    type: Date,
+    default: null
+  },
 
   // ── Weight Shield & Dispute Protection (Anti-Weight Fraud) ──
   packingScalePhotoUrl: {

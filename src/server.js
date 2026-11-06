@@ -5,6 +5,7 @@ const connectDB = require(path.join(__dirname, 'config', 'db'));
 const { initTrackingJob } = require(path.join(__dirname, 'jobs', 'trackingPoll'));
 const { initReturnWindowCron } = require(path.join(__dirname, 'jobs', 'returnWindowAutoClose'));
 const { initWalletReconciliationCron } = require(path.join(__dirname, 'jobs', 'walletReconciliation'));
+const { initMediaCleanupCron } = require(path.join(__dirname, 'jobs', 'mediaCleanupCron'));
 
 const logger = require(path.join(__dirname, 'utils', 'logger'));
 
@@ -26,6 +27,7 @@ connectDB().then(() => {
   initTrackingJob();
   initReturnWindowCron();
   initWalletReconciliationCron();
+  initMediaCleanupCron();
 }).catch(err => {
   logger.warn({ error: err.message }, 'Database initialization warning');
 });
