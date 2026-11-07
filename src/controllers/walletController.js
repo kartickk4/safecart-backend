@@ -154,6 +154,7 @@ const verifyPayment = async (req, res) => {
     const transaction = await WalletTransaction.create({
       userId: user._id,
       sellerId: user._id,
+      walletType: 'seller',
       type: 'credit',
       amount: numAmount,
       source: 'recharge',
@@ -235,6 +236,23 @@ const getWalletBalance = async (req, res) => {
 
     res.json({
       success: true,
+      // ── Strict Role Separation: Seller Wallet vs Buyer Cashback ─────────
+      sellerWallet: {
+        balance: currentBalance,
+        isNegative: currentBalance < 0,
+        activeShipmentsCount,
+        securityReserve,
+        withdrawableBalance,
+        reservePerShipment: 100,
+        maxReserveCap: 1000,
+        totalRecharged,
+        totalDeducted
+      },
+      buyerWallet: {
+        cashbackBalance: user.cashbackBalance || 0,
+        withdrawableBalance: user.cashbackBalance || 0
+      },
+      // ── Backward-Compatible Top-Level Keys ────────────────────────────────
       walletBalance: currentBalance,
       isNegative: currentBalance < 0,
       activeShipmentsCount,
@@ -263,10 +281,14 @@ const getTransactions = async (req, res) => {
     const page = Math.max(1, parseInt(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
     const type = req.query.type; // 'credit' | 'debit'
+    const walletType = req.query.walletType; // 'seller' | 'buyer_cashback'
 
     const query = { $or: [{ sellerId: req.user._id }, { userId: req.user._id }] };
     if (type && ['credit', 'debit'].includes(type)) {
       query.type = type;
+    }
+    if (walletType && ['seller', 'buyer_cashback'].includes(walletType)) {
+      query.walletType = walletType;
     }
 
     // Execute count and paginated query in parallel
@@ -366,12 +388,11 @@ const withdrawCashback = async (req, res) => {
     }
 
     const currentCashback = Number(currentSnapshot.cashbackBalance) || 0;
-    const currentWallet = Number(currentSnapshot.walletBalance) || 0;
-    const totalAvailable = parseFloat((currentCashback + currentWallet).toFixed(2));
 
-    if (requested > totalAvailable) {
+    // Strict Segregation Rule: Buyer cashback withdrawals CANNOT touch or draw from seller wallet balance!
+    if (requested > currentCashback) {
       return res.status(400).json({
-        error: `Insufficient balance. Available to withdraw: ₹${totalAvailable.toFixed(2)}`
+        error: `Insufficient buyer cashback balance. Available cashback to withdraw: ₹${currentCashback.toFixed(2)}. Seller shipping wallet funds cannot be accessed or mixed via buyer cashback withdrawal.`
       });
     }
 
@@ -379,21 +400,15 @@ const withdrawCashback = async (req, res) => {
     const requiresAdminApproval = velocity.requiresAdminApproval;
     const initialStatus = requiresAdminApproval ? 'pending' : 'success';
 
-    // Deduct from cashback first, then walletBalance
-    const deductCashback = Math.min(currentCashback, requested);
-    const deductWallet = parseFloat((requested - deductCashback).toFixed(2));
-
-    // Atomic deduction: prevents double-spending race conditions
+    // Atomic deduction: strictly from cashbackBalance only (walletBalance is NEVER touched)
     const user = await User.findOneAndUpdate(
       { 
         _id: req.user._id, 
-        cashbackBalance: { $gte: deductCashback },
-        walletBalance: { $gte: deductWallet }
+        cashbackBalance: { $gte: requested }
       },
       { 
         $inc: { 
-          cashbackBalance: -deductCashback,
-          walletBalance: -deductWallet,
+          cashbackBalance: -requested,
           totalWithdrawn: netTransfer
         } 
       },
@@ -402,23 +417,24 @@ const withdrawCashback = async (req, res) => {
 
     if (!user) {
       const freshSnapshot = await User.findById(req.user._id);
-      const available = freshSnapshot ? ((freshSnapshot.cashbackBalance || 0) + (freshSnapshot.walletBalance || 0)) : 0;
+      const available = freshSnapshot ? (freshSnapshot.cashbackBalance || 0) : 0;
       return res.status(400).json({
-        error: `Insufficient balance or concurrent transaction in progress. Available: ₹${available.toFixed(2)}`
+        error: `Insufficient cashback balance or concurrent transaction in progress. Available: ₹${available.toFixed(2)}`
       });
     }
 
-    const balanceAfter = parseFloat(((Number(user.cashbackBalance) || 0) + (Number(user.walletBalance) || 0)).toFixed(2));
+    const balanceAfter = parseFloat((Number(user.cashbackBalance) || 0).toFixed(2));
     const balanceBefore = parseFloat((balanceAfter + requested).toFixed(2));
 
-    // Record the withdrawal in immutable double-entry ledger
+    // Record the withdrawal in immutable double-entry ledger with explicit walletType
     const transaction = await WalletTransaction.create({
       userId: user._id,
       sellerId: user._id,
+      walletType: 'buyer_cashback',
       type: 'debit',
       amount: requested,
-      source: 'withdrawal',
-      description: `Cashback withdrawal to UPI: ${upiId}${
+      source: 'cashback_withdrawal',
+      description: `Buyer cashback withdrawal to UPI: ${upiId}${
         fee > 0 ? ` | Processing fee: ₹${fee} (amount < ₹${BUYER_FEE_THRESHOLD})` : ''
       }${requiresAdminApproval ? ' [High-Value Review Queued]' : ''}`,
       paymentGateway: 'system',
@@ -429,6 +445,7 @@ const withdrawCashback = async (req, res) => {
       balanceAfter,
       status: initialStatus,
       metadata: {
+        walletType: 'buyer_cashback',
         withdrawalType: 'cashback',
         upiId,
         requestedAmount: requested,
@@ -463,8 +480,8 @@ const withdrawCashback = async (req, res) => {
       feeApplied: fee > 0,
       feeReason: fee > 0 ? `₹${BUYER_FEE} fee applied because withdrawal was below ₹${BUYER_FEE_THRESHOLD}` : null,
       cashbackBalance: user.cashbackBalance || 0,
-      walletBalance: user.walletBalance || 0,
-      withdrawableBalance: parseFloat(((user.cashbackBalance || 0) + (user.walletBalance || 0)).toFixed(2)),
+      withdrawableBalance: parseFloat((Number(user.cashbackBalance) || 0).toFixed(2)),
+      walletType: 'buyer_cashback',
       requiresAdminApproval,
       status: initialStatus,
       transaction,
@@ -597,6 +614,7 @@ const withdrawWallet = async (req, res) => {
     const transaction = await WalletTransaction.create({
       userId: user._id,
       sellerId: user._id,
+      walletType: 'seller',
       type: 'debit',
       amount: requested,
       source: 'withdrawal',

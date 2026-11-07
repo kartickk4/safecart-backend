@@ -12,6 +12,13 @@ const WalletTransactionSchema = new mongoose.Schema({
     required: true
     // index defined below as composite with createdAt
   },
+  walletType: {
+    type: String,
+    enum: ['seller', 'buyer_cashback'],
+    default: 'seller',
+    required: true,
+    index: true
+  },
   type: {
     type: String,
     enum: ['credit', 'debit'],
@@ -32,6 +39,8 @@ const WalletTransactionSchema = new mongoose.Schema({
       'refund',
       'admin_adjustment',
       'withdrawal',
+      'cashback_reward',
+      'cashback_withdrawal',
       'rto_freight',
       'weight_discrepancy',
       'oda_surcharge'
@@ -45,8 +54,8 @@ const WalletTransactionSchema = new mongoose.Schema({
   },
   paymentGateway: {
     type: String,
-    enum: ['cashfree', 'razorpay', 'upi', 'system', 'admin'],
-    default: 'cashfree'
+    enum: ['phonepe', 'cashfree', 'razorpay', 'upi', 'system', 'admin'],
+    default: 'phonepe'
   },
   gatewayOrderId: {
     type: String,
