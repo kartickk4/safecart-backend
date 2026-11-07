@@ -56,7 +56,7 @@ const ShipmentSchema = new mongoose.Schema({
     default: ""
   },
 
-  // Cashfree Payment Link & Payout Fields
+  // Payment Gateway Fields (PhonePe PG / Gateway Integration)
   paymentLink: {
     type: String,
     default: ""
@@ -65,11 +65,19 @@ const ShipmentSchema = new mongoose.Schema({
     type: String,
     default: ""
   },
+  phonepeTransactionId: {
+    type: String,
+    default: ""
+  },
+  phonepeMerchantTransactionId: {
+    type: String,
+    default: ""
+  },
 
-  // YouPI-PG UPI Gateway Integration Fields
+  // YouPI-PG & PhonePe Integration Fields
   paymentMode: {
     type: String,
-    enum: ['cod', 'prepaid_youpi', 'prepaid_cashfree', 'escrow', ''],
+    enum: ['cod', 'prepaid_phonepe', 'prepaid_youpi', 'prepaid_cashfree', 'escrow', ''],
     default: ''
   },
   youpiPaymentId: {

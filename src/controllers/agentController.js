@@ -15,7 +15,8 @@ const { autoScheduleCourierPickup } = require('../services/pickupService');
 const { verifyAddressAndPredictRto } = require('../services/addressRtoService');
 const { checkDelhiveryServiceability } = require('../services/delhiveryService');
 const { sendPaymentLinkWhatsApp, sendBookingConfirmationWhatsApp } = require('../services/whatsappService');
-const cashfreeService = require('../services/cashfreeService');
+const phonepeService = require('../services/phonepeService');
+const cashfreeService = phonepeService; // Backwards-compatible alias
 const smsService = require('../services/smsService');
 const { createNotification } = require('../services/notification');
 const { calculateServiceFee } = require('../utils/feeConfig');
@@ -308,7 +309,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
   }
 
   // 4. Wallet, Balance & Payouts Query
-  else if (/\b(wallet|balance|payout|withdraw|earnings|payouts|my money|account balance|available balance|cashfree)\b/i.test(msg)) {
+  else if (/\b(wallet|balance|payout|withdraw|earnings|payouts|my money|account balance|available balance|cashfree|phonepe)\b/i.test(msg)) {
     const currentUser = await User.findById(user._id) || user;
     const activeEscrowShipments = await Shipment.find({
       senderId: user._id,
@@ -323,7 +324,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
       `💼 *Available Withdrawable Balance:* *${fmt(available)}*\n` +
       `🔒 *Active In-Transit Pipeline:* *${fmt(lockedEscrow)}* (${activeEscrowShipments.length} in-transit orders)\n` +
       `📈 *Lifetime Total Withdrawn:* *${fmt(withdrawn)}*\n\n` +
-      `⚡ *How Cashfree Payouts Work:*\n` +
+      `⚡ *How PhonePe Payouts & Settlement Work:*\n` +
       `• Once a parcel is delivered and the 24-hour buyer inspection window ends, order funds auto-credit to your Available Balance.\n` +
       `• Navigate to the *Wallet* tab in the left menu and tap *Withdraw Funds* for instant IMPS / UPI bank payout.`;
   }
@@ -557,7 +558,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
       `🤝 *I am here to solve it! What kind of issue are you facing?*\n\n` +
       `1️⃣ 🔄 *Replacement or Returns:* Buyer requested a replacement, exchange, or return?\n` +
       `2️⃣ 🚚 *Courier Delivery or RTO:* Delivery delayed, courier marked rejection, or pickup pending?\n` +
-      `3️⃣ 💰 *Wallet & Order Payout:* Funds not credited, or questions on Cashfree withdrawal?\n` +
+      `3️⃣ 💰 *Wallet & Order Payout:* Funds not credited, or questions on PhonePe / bank withdrawal?\n` +
       `4️⃣ ⚡ *Defect Partial Discount:* Want to offer a 15%–30% discount to avoid return shipping fees?\n` +
       `5️⃣ 🚨 *Buyer Dispute or Fraud:* Wrong item returned or unboxing proof dispute?\n\n` +
       `Please tell me what happened (or provide your tracking ID e.g. *SPL-...*) and I will resolve it with you!`;

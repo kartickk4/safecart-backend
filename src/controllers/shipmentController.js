@@ -3,7 +3,8 @@ const CarrierJourney = require('../models/CarrierJourney');
 const User = require('../models/User');
 const carrierTracking = require('../services/carrierTracking');
 const escrow = require('../services/escrow');
-const cashfreeService = require('../services/cashfreeService');
+const phonepeService = require('../services/phonepeService');
+const cashfreeService = phonepeService; // Backwards-compatible alias
 const { createNotification } = require('../services/notification');
 const { grantDeliveryConfirmCashback, grantPrepaymentCashback } = require('../services/rewardService');
 const smsService = require('../services/smsService');
@@ -1002,19 +1003,20 @@ const publicPayShipment = async (req, res) => {
       });
     }
 
-    // In production, verify with Cashfree that the payment was genuinely completed
-    if (process.env.NODE_ENV === 'production' && shipment.cashfreeLinkId) {
+    // In production, verify with PhonePe that the payment was genuinely completed
+    if (process.env.NODE_ENV === 'production' && (shipment.phonepeMerchantTransactionId || shipment.cashfreeLinkId)) {
       try {
-        const linkDetails = await cashfreeService.getPaymentLinkDetails(shipment.cashfreeLinkId);
-        const linkStatus = linkDetails?.data?.link_status || linkDetails?.status;
-        if (linkStatus !== 'PAID' && linkStatus !== 'COMPLETED') {
+        const targetId = shipment.phonepeMerchantTransactionId || shipment.cashfreeLinkId;
+        const linkDetails = await phonepeService.getPaymentStatus(targetId);
+        const isSuccess = linkDetails?.success && linkDetails?.code === 'PAYMENT_SUCCESS';
+        if (!isSuccess) {
           return res.status(400).json({
-            error: 'Payment has not been confirmed by the payment gateway yet. Please complete checkout.',
+            error: 'Payment has not been confirmed by PhonePe gateway yet. Please complete checkout.',
             paymentLink: shipment.paymentLink
           });
         }
       } catch (cfErr) {
-        console.warn('[Public Pay] Cashfree link verification error:', cfErr.message);
+        console.warn('[Public Pay] PhonePe status verification error:', cfErr.message);
       }
     }
 
@@ -1063,16 +1065,78 @@ const markCashfreeEventProcessed = (eventId) => {
 };
 
 /**
- * @desc    Payment gateway webhook (Cashfree / PhonePe / Easebuzz)
+ * @desc    Payment gateway webhook (PhonePe / Unified PG Callback)
  * @route   POST /api/v1/shipments/webhook/payment
  * @access  Public
  */
 const paymentWebhookHandler = async (req, res) => {
   try {
     const event = req.body;
-    console.log('[Shipment Payment Webhook] Inbound payment event received:', event?.type || 'event');
+    console.log('[Shipment Payment Webhook] Inbound payment event received');
 
-    // 1. SECURITY: Cryptographic HMAC Signature Verification (Cashfree)
+    // ── 0. Handle Inbound PhonePe Webhook Format ──────────────────────────────
+    if (req.body && req.body.response) {
+      const base64Response = req.body.response;
+      const xVerify = req.headers['x-verify'];
+
+      if (process.env.NODE_ENV === 'production' && !phonepeService.verifyPhonePeWebhookSignature(base64Response, xVerify)) {
+        console.warn('[Shipment Webhook Security] Rejected: Invalid PhonePe x-verify signature');
+        return res.status(401).json({ error: 'Invalid PhonePe webhook signature' });
+      }
+
+      let phonepePayload = {};
+      try {
+        phonepePayload = JSON.parse(Buffer.from(base64Response, 'base64').toString('utf8'));
+      } catch (err) {
+        return res.status(400).json({ error: 'Malformed PhonePe payload' });
+      }
+
+      const { success, code, data } = phonepePayload;
+      const merchantTxId = data?.merchantTransactionId;
+      const phonepeTxId = data?.transactionId;
+
+      if (!success || code !== 'PAYMENT_SUCCESS') {
+        console.log(`[PhonePe Webhook] Non-success status acknowledged (${code})`);
+        return res.status(200).json({ status: 'OK', note: 'Non-success acknowledged' });
+      }
+
+      if (phonepeTxId && isCashfreeEventProcessed(phonepeTxId)) {
+        console.log(`[PhonePe Webhook] Duplicate transaction ignored (idempotent): ${phonepeTxId}`);
+        return res.status(200).json({ status: 'OK', note: 'Transaction already processed' });
+      }
+
+      const shipment = await Shipment.findOne({
+        $or: [
+          { phonepeMerchantTransactionId: merchantTxId },
+          { cashfreeLinkId: merchantTxId },
+          { shipmentId: merchantTxId?.replace(/^MT_/, '')?.split('_')?.[0] }
+        ]
+      });
+
+      if (shipment) {
+        const paidRupees = Number(data?.amount || 0) / 100;
+        const expected = Number(shipment.amount || shipment.escrowAmount || 0);
+        if (expected > 0 && paidRupees > 0 && Math.abs(paidRupees - expected) > 1.0) {
+          console.warn(`[PhonePe Webhook Security Alert] Amount mismatch for ${shipment.shipmentId}: Paid ₹${paidRupees}, expected ₹${expected}`);
+          return res.status(400).json({ error: 'Payment amount mismatch' });
+        }
+
+        if (!shipment.receiverPaymentDone) {
+          shipment.phonepeTransactionId = phonepeTxId || '';
+          shipment.phonepeMerchantTransactionId = merchantTxId || '';
+          await executeOrderPaymentAndCourierBooking(shipment, {
+            transactionRef: phonepeTxId || merchantTxId || `PP_${Date.now()}`,
+            gateway: 'phonepe_webhook'
+          });
+          console.log(`[Shipment Payment Webhook] PhonePe payment verified and courier booked for ${shipment.shipmentId}`);
+        }
+      }
+
+      if (phonepeTxId) markCashfreeEventProcessed(phonepeTxId);
+      return res.status(200).json({ status: 'OK' });
+    }
+
+    // ── 1. Legacy / Fallback Gateway Signature Verification ─────────────────
     const signature = req.headers['x-webhook-signature'];
     const timestamp = req.headers['x-webhook-timestamp'];
     const hasSecret = Boolean(process.env.CASHFREE_SECRET_KEY);
@@ -3593,8 +3657,8 @@ const getPrintableShippingLabel = async (req, res) => {
     const senderPin = sender.pincode || '110001';
 
     const isCod = shipment.paymentMode === 'cod';
-    const carrier = (shipment.carrierSlug || 'delhivery').toUpperCase();
-    const awb = shipment.awbCode || shipment.trackingId || shipment.shipmentId;
+    const displayCarrier = (shipment.carrierSlug || 'delhivery').toUpperCase();
+    const displayAwb = shipment.awbCode || shipment.trackingId || shipment.shipmentId;
     const weight = shipment.parcelWeight ? Number(shipment.parcelWeight).toFixed(2) : '0.50';
 
     const html = `<!DOCTYPE html>
@@ -3743,12 +3807,12 @@ const getPrintableShippingLabel = async (req, res) => {
   <div>
     <div class="header">
       <div class="brand">SECUREKARO LOGISTICS</div>
-      <div class="carrier-badge">${carrier}</div>
+      <div class="carrier-badge">${displayCarrier}</div>
     </div>
 
     <div class="awb-section">
       <div class="barcode-placeholder">||||| |||| |||||| ||||| ||||</div>
-      <div class="awb-num">AWB: ${awb}</div>
+      <div class="awb-num">AWB: ${displayAwb}</div>
     </div>
 
     <div class="payment-banner">

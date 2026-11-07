@@ -1,7 +1,8 @@
 const crypto = require('crypto');
 const User = require('../models/User');
 const WalletTransaction = require('../models/WalletTransaction');
-const cashfreeService = require('../services/cashfreeService');
+const phonepeService = require('../services/phonepeService');
+const cashfreeService = phonepeService; // Backwards-compatible alias
 const { getActiveShipmentsCount, calculateSecurityReserve } = require('../utils/securityReserve');
 const {
   checkCoolingPeriod,
@@ -76,7 +77,7 @@ const verifyPayment = async (req, res) => {
       orderId, 
       paymentId, 
       amount, 
-      gateway = 'cashfree',
+      gateway = 'phonepe',
       signature,
       paymentMode = 'UPI',
       fee,
@@ -117,9 +118,9 @@ const verifyPayment = async (req, res) => {
     }
 
     // 2. Gateway Verification: Never trust client-side claims alone
-    const normalizedGateway = (gateway || 'cashfree').toLowerCase();
-    if (normalizedGateway === 'cashfree') {
-      const verification = await cashfreeService.verifyPaymentWithGateway({
+    const normalizedGateway = (gateway || 'phonepe').toLowerCase();
+    if (normalizedGateway === 'phonepe' || normalizedGateway === 'cashfree') {
+      const verification = await phonepeService.verifyPaymentWithGateway({
         orderId: orderId || effectivePaymentId,
         paymentId: effectivePaymentId,
         expectedAmount: calculatedTotal || numAmount,
@@ -129,7 +130,7 @@ const verifyPayment = async (req, res) => {
       if (!verification.verified) {
         console.warn(`[Wallet Recharge Security] Payment verification failed for user ${req.user._id}: ${verification.error}`);
         return res.status(400).json({
-          error: verification.error || 'Payment verification failed with gateway. Wallet was not credited.'
+          error: verification.error || 'Payment verification failed with PhonePe gateway. Wallet was not credited.'
         });
       }
     }

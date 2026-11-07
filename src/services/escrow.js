@@ -70,11 +70,14 @@ const releaseEscrow = async (shipmentId, receiverId) => {
     : (shipment.pickupRate > 0 ? shipment.pickupRate : (hasCourierBooked ? 55 : 0));
 
   const isCod = shipment.paymentMode === 'cod';
-  const codHandlingFee = isCod ? (shipment.codHandlingCharge > 0 ? shipment.codHandlingCharge : 30) : 0;
+  const codFeeAlreadyPaid = Boolean(shipment.codFeePaid);
+  const codHandlingFee = (isCod && !codFeeAlreadyPaid) ? (shipment.codHandlingCharge > 0 ? shipment.codHandlingCharge : 30) : 0;
   const isPaidOffline = shipment.paymentMode === 'paid_offline';
 
-  // In online/escrow and COD modes, courier & COD fees are net-settled from escrow
-  const freightDeduction = isPaidOffline ? 0 : courierFreight;
+  // In online/escrow and COD modes, courier & COD fees are net-settled from escrow.
+  // If the seller already paid the courier freight & COD fee upfront at booking (codFeePaid === true),
+  // do NOT deduct it again from the collected cash remittance!
+  const freightDeduction = (isPaidOffline || codFeeAlreadyPaid) ? 0 : courierFreight;
   const totalDeductions = parseFloat((serviceFee + freightDeduction + codHandlingFee).toFixed(2));
   const netPayout = Math.max(0, parseFloat((shipment.amount - totalDeductions).toFixed(2)));
 
