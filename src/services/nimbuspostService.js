@@ -318,12 +318,18 @@ async function createOrderInNimbusPost(shipment, senderUser = null, courierCompa
     });
 
     if (res.data?.status && res.data?.data) {
+      const awbNum = res.data.data.awb_number;
+      let labelUrl = '';
+      if (awbNum) {
+        labelUrl = await generateNimbusPostLabel(awbNum);
+      }
       return {
         success: true,
         orderId: res.data.data.order_id,
         shipmentId: res.data.data.shipment_id,
-        awb: res.data.data.awb_number,
-        courierName: res.data.data.courier_name
+        awb: awbNum,
+        courierName: res.data.data.courier_name,
+        labelUrl
       };
     }
   } catch (err) {
@@ -340,9 +346,43 @@ async function createOrderInNimbusPost(shipment, senderUser = null, courierCompa
   };
 }
 
+/**
+ * Generate official shipping label PDF URL from NimbusPost
+ * @param {string|Array<string>} awbNumbers
+ * @returns {Promise<string|null>} PDF URL
+ */
+async function generateNimbusPostLabel(awbNumbers) {
+  try {
+    const token = await getNimbusToken();
+    if (!token) return null;
+
+    const awbList = Array.isArray(awbNumbers) ? awbNumbers : [awbNumbers];
+    const res = await axios.post('https://api.nimbuspost.com/v1/shipments/label', {
+      awb: awbList
+    }, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 12000
+    });
+
+    if (res.data?.status && res.data?.data) {
+      const labelData = res.data.data;
+      if (typeof labelData === 'string') return labelData;
+      if (labelData?.label_url) return labelData.label_url;
+      if (Array.isArray(labelData) && labelData[0]?.label) return labelData[0].label;
+    }
+  } catch (err) {
+    console.warn('[NimbusPost Label Generation Notice]:', err.response?.data?.message || err.message);
+  }
+  return null;
+}
+
 module.exports = {
   getNimbusToken,
   fetchLiveNimbusRates,
   getRealisticNimbusQuotes,
-  createOrderInNimbusPost
+  createOrderInNimbusPost,
+  generateNimbusPostLabel
 };

@@ -525,7 +525,7 @@ const createShipment = async (req, res) => {
       parcelHeight: parseFloat(bodyHeight) || 5,
       carrierSlug: assignedCarrierSlug,
       awbCode: shouldSkipPaymentLink ? assignedAwbCode : null,
-      shippingLabelUrl: shouldSkipPaymentLink ? 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf' : '',
+      shippingLabelUrl: shouldSkipPaymentLink ? `/api/v1/shipments/${shipmentId}/label?format=pdf` : '',
       pickupStatus: shouldSkipPaymentLink ? 'Scheduled' : 'Pending Buyer Payment',
       paymentLink: cfLink.linkUrl,
       cashfreeLinkId: cfLink.linkId,
@@ -889,7 +889,11 @@ const executeOrderPaymentAndCourierBooking = async (shipment, paymentDetails = {
 
   shipment.carrierSlug = logisticsData.carrierSlug || pickupSchedule?.carrierSlug || chosenCarrierSlug;
   shipment.awbCode = logisticsData.awbCode || pickupSchedule?.pickupToken || shipment.awbCode;
-  shipment.shippingLabelUrl = logisticsData.shippingLabelUrl || shipment.shippingLabelUrl || 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf';
+  shipment.shippingLabelUrl = (logisticsData?.shippingLabelUrl && !logisticsData.shippingLabelUrl.includes('dummy.pdf'))
+    ? logisticsData.shippingLabelUrl
+    : (shipment.shippingLabelUrl && !shipment.shippingLabelUrl.includes('dummy.pdf'))
+      ? shipment.shippingLabelUrl
+      : `/api/v1/shipments/${shipment.shipmentId}/label?format=pdf`;
   shipment.pickupCarrier = pickupSchedule?.carrier || (chosenCarrierSlug === 'bluedart' ? 'Blue Dart Express' : (chosenCarrierSlug === 'delhivery' ? 'Delhivery Express' : (chosenCarrierSlug.charAt(0).toUpperCase() + chosenCarrierSlug.slice(1))));
 
   if (shipment.awbCode) {
@@ -3504,7 +3508,80 @@ const getPrintableShippingLabel = async (req, res) => {
       return res.status(404).send('<h3>Shipment not found</h3>');
     }
 
-    // If client requests raw PDF binary via PDFKit
+    // 1. Direct Redirect to the Official Courier Label PDF if already generated
+    // (Exact PDF from Shiprocket, NimbusPost, Delhivery, or Shadowfax containing user's pickup address)
+    if (
+      shipment.shippingLabelUrl &&
+      typeof shipment.shippingLabelUrl === 'string' &&
+      shipment.shippingLabelUrl.startsWith('http') &&
+      !shipment.shippingLabelUrl.includes('dummy.pdf') &&
+      !shipment.shippingLabelUrl.includes('/label')
+    ) {
+      return res.redirect(shipment.shippingLabelUrl);
+    }
+
+    // 2. On-the-fly Official Label Resolution by Carrier & AWB
+    const awb = (shipment.awbCode || shipment.trackingId || '').trim();
+    const carrier = (shipment.carrierSlug || shipment.pickupCarrier || '').toLowerCase();
+
+    // Delhivery Official Packing Slip PDF
+    if (carrier.includes('delhivery') && awb) {
+      const delhiveryLabel = `https://track.delhivery.com/api/p/packing_slip?wbns=${awb}&pdf=true`;
+      shipment.shippingLabelUrl = delhiveryLabel;
+      await shipment.save().catch(() => {});
+      return res.redirect(delhiveryLabel);
+    }
+
+    // Shadowfax Official Thermal Label PDF
+    if (carrier.includes('shadowfax') && awb) {
+      const shadowfaxLabel = `https://dale.shadowfax.in/api/v4/clients/orders/${awb}/shipping_label/`;
+      shipment.shippingLabelUrl = shadowfaxLabel;
+      await shipment.save().catch(() => {});
+      return res.redirect(shadowfaxLabel);
+    }
+
+    // NimbusPost Official Label PDF
+    if (carrier.includes('nimbus') && awb) {
+      try {
+        const { generateNimbusPostLabel } = require('../services/nimbuspostService');
+        const npUrl = await generateNimbusPostLabel(awb);
+        if (npUrl) {
+          shipment.shippingLabelUrl = npUrl;
+          await shipment.save().catch(() => {});
+          return res.redirect(npUrl);
+        }
+      } catch (npErr) {
+        console.warn('[Nimbus Label Redirect Notice]:', npErr.message);
+      }
+    }
+
+    // Shiprocket Official Label PDF
+    if (carrier.includes('shiprocket') || shipment.shiprocketShipmentId) {
+      try {
+        const axios = require('axios');
+        const { getAuthToken } = require('../services/shiprocketService');
+        const token = await getAuthToken();
+        const srShipmentId = shipment.shiprocketShipmentId;
+        if (token && srShipmentId) {
+          const labelRes = await axios.post('https://apiv2.shiprocket.in/v1/external/courier/generate/label', {
+            shipment_id: [srShipmentId]
+          }, {
+            headers: { Authorization: `Bearer ${token}` },
+            timeout: 10000
+          });
+          const srUrl = labelRes.data?.label_url || labelRes.data?.response?.label_url;
+          if (srUrl) {
+            shipment.shippingLabelUrl = srUrl;
+            await shipment.save().catch(() => {});
+            return res.redirect(srUrl);
+          }
+        }
+      } catch (srErr) {
+        console.warn('[Shiprocket Label Redirect Notice]:', srErr.message);
+      }
+    }
+
+    // 3. Fallback: If client requests raw PDF binary via PDFKit
     if (req.query.format === 'pdf' || req.query.download === 'true') {
       return streamShippingLabelPdf(shipment, res);
     }

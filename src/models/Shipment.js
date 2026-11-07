@@ -1,25 +1,26 @@
+
 const mongoose = require('mongoose');
 
 const ShipmentSchema = new mongoose.Schema({
-  shipmentId: { 
-    type: String, 
-    required: true, 
+  shipmentId: {
+    type: String,
+    required: true,
     unique: true,
     uppercase: true,
     trim: true
   }, // Format: SPL-XXXX-X
-  senderId: { 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: 'User', 
-    required: true 
+  senderId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
   },
-  receiverName: { 
-    type: String, 
+  receiverName: {
+    type: String,
     required: true,
     trim: true
   },
-  receiverPhone: { 
-    type: String, 
+  receiverPhone: {
+    type: String,
     required: true,
     trim: true
   },
@@ -28,33 +29,33 @@ const ShipmentSchema = new mongoose.Schema({
     ref: 'User',
     default: null
   },
-  description: { 
-    type: String, 
-    required: true 
+  description: {
+    type: String,
+    required: true
   },
-  amount: { 
-    type: Number, 
-    required: true 
+  amount: {
+    type: Number,
+    required: true
   }, // In INR (₹)
-  city: { 
-    type: String, 
-    default: "" 
+  city: {
+    type: String,
+    default: ""
   }, // Route description (e.g., "Mumbai -> Delhi")
-  
+
   // Logistics Integration Fields (TrackCourier)
-  carrierSlug: { 
-    type: String, 
-    default: "" 
+  carrierSlug: {
+    type: String,
+    default: ""
   },
-  awbCode: { 
-    type: String, 
-    default: "" 
+  awbCode: {
+    type: String,
+    default: ""
   },
-  shippingLabelUrl: { 
-    type: String, 
-    default: "" 
+  shippingLabelUrl: {
+    type: String,
+    default: ""
   },
-  
+
   // Cashfree Payment Link & Payout Fields
   paymentLink: {
     type: String,
@@ -65,19 +66,11 @@ const ShipmentSchema = new mongoose.Schema({
     default: ""
   },
 
-  // Payment Mode: how the buyer pays for the shipment (supports all gateways & COD)
+  // YouPI-PG UPI Gateway Integration Fields
   paymentMode: {
     type: String,
-    enum: ['prepaid', 'cod', 'paid_offline', 'prepaid_youpi', 'prepaid_cashfree', 'escrow', ''],
-    default: 'prepaid'
-  },
-  paymentTransactionRef: {
-    type: String,
+    enum: ['cod', 'prepaid_youpi', 'prepaid_cashfree', 'escrow', ''],
     default: ''
-  },
-  prepaymentCashback: {
-    type: mongoose.Schema.Types.Mixed,
-    default: null
   },
   youpiPaymentId: {
     type: String,
@@ -126,10 +119,6 @@ const ShipmentSchema = new mongoose.Schema({
   returnReason: {
     type: String,
     default: ""
-  },
-  returnRequested: {
-    type: Boolean,
-    default: false
   },
   returnRequestedAt: {
     type: Date
@@ -288,7 +277,12 @@ const ShipmentSchema = new mongoose.Schema({
   replacementDeliveryOtpUsed: { type: Boolean, default: false },
   replacementDispatchedOnPickupScan: { type: Boolean, default: false },
 
-
+  // Payment Mode: how the buyer pays for the shipment
+  paymentMode: {
+    type: String,
+    enum: ['prepaid', 'cod', 'paid_offline'],
+    default: 'prepaid'
+  },
   // For prepaid: whether the payment was received before dispatch
   isPrepaid: {
     type: Boolean,
@@ -442,85 +436,60 @@ const ShipmentSchema = new mongoose.Schema({
     type: Date
   },
 
-  status: { 
-    type: String, 
+  status: {
+    type: String,
     enum: [
-      'Awaiting Payment', 
-      'Pending Pickup', 
-      'Picked Up',
-      'In Transit', 
-      'Reached Destination Hub', 
-      'Out for Delivery', 
-      'Delivered', 
-      'Confirmed',
-      'Released', 
+      'Awaiting Payment',
+      'Pending Pickup',
+      'In Transit',
+      'Reached Destination Hub',
+      'Out for Delivery',
+      'Delivered',
+      'Released',
       'Locked',
       'Cancelled',
       'Undelivered',
       'Return Requested',
       'Return In Transit',
       'Returned & Refunded',
-      'Returned & Restocked',
-      'Replacement In Transit',
-      'Dispatched',
-      'Completed'
-    ], 
-    default: 'Awaiting Payment' 
+      'Replacement In Transit'
+    ],
+    default: 'Awaiting Payment'
   },
-  cancelledAt: {
-    type: Date,
-    default: null
+  escrowStage: {
+    type: Number,
+    enum: [1, 2, 3, 4, 5, 6, -1, -2, -3, -4, -5],
+    default: 1
   },
-  cancelReason: {
-    type: String,
-    default: ''
-  },
-  deliveredAt: {
-    type: Date,
-    default: null
-  },
-  isPickedUp: {
-    type: Boolean,
-    default: false
-  },
-  pickedUpAt: {
-    type: Date,
-    default: null
-  },
-  escrowStage: { 
-    type: Number, 
-    enum: [1, 2, 3, 4, 5, 6, -1, -2, -3, -4, -5], 
-    default: 1 
-  },
-  
+
   // Escrow Financial Settlement Ledger Fields
-  escrowInterestRate: { 
-    type: Number, 
-    default: 0 
+  escrowInterestRate: {
+    type: Number,
+    default: 0
   },
-  daysInEscrow: { 
-    type: Number, 
-    default: 0 
+  daysInEscrow: {
+    type: Number,
+    default: 0
   },
-  accruedInterest: { 
-    type: Number, 
-    default: 0 
+  accruedInterest: {
+    type: Number,
+    default: 0
   },
-  receiverInterestPaid: { 
-    type: Number, 
-    default: 0 
+  receiverInterestPaid: {
+    type: Number,
+    default: 0
   },
-  supplierInterestPaid: { 
-    type: Number, 
-    default: 0 
+  supplierInterestPaid: {
+    type: Number,
+    default: 0
   },
-  supplierCashbackPaid: { 
-    type: Number, 
-    default: 0 
+  supplierCashbackPaid: {
+    type: Number,
+    default: 0
   },
-  principalDisbursedToSupplier: { 
-    type: Number, 
-    default: 0 
+  principalDisbursedToSupplier: {
+    type: Number,
+    default: 0
   },
   gatewayFeeDeducted: {
     type: Number,
@@ -542,9 +511,9 @@ const ShipmentSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  principalRefundedToReceiver: { 
-    type: Number, 
-    default: 0 
+  principalRefundedToReceiver: {
+    type: Number,
+    default: 0
   },
 
   // Courier Delivery Charge & Settlement Ledger Fields
@@ -817,13 +786,13 @@ const ShipmentSchema = new mongoose.Schema({
     default: ''
   },
 
-  createdAt: { 
-    type: Date, 
-    default: Date.now 
+  createdAt: {
+    type: Date,
+    default: Date.now
   },
-  updatedAt: { 
-    type: Date, 
-    default: Date.now 
+  updatedAt: {
+    type: Date,
+    default: Date.now
   }
 });
 

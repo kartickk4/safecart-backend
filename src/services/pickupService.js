@@ -257,6 +257,9 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
             shipment.nimbusShipmentId = npRes.shipmentId;
             pickupToken = `NP-${npRes.orderId}`;
             shipment.pickupToken = pickupToken;
+            if (npRes.labelUrl) {
+              shipment.shippingLabelUrl = npRes.labelUrl;
+            }
             if (npRes.courierName) {
               assignedCarrierName = npRes.courierName;
             }
