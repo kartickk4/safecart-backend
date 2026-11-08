@@ -332,22 +332,21 @@ const createShipment = async (req, res) => {
       ? awbCode.trim().toUpperCase() 
       : `TC-${assignedCarrierSlug}-${Math.floor(1000000000 + Math.random() * 9000000000)}`;
 
-    const normalizedMode = (paymentMode || 'prepaid').toLowerCase();
+    const normalizedMode = (paymentMode || 'prepaid').toLowerCase() === 'cod' ? 'cod' : 'prepaid';
     const isCod = normalizedMode === 'cod';
-    const isOffline = normalizedMode === 'paid_offline';
-    const isPrepaidOrder = normalizedMode === 'paid_offline' || isPrepaid === true;
-    const shouldSkipPaymentLink = fundEscrow === true || normalizedMode === 'paid_offline' || isCod;
+    const isPrepaidOrder = !isCod;
+    const shouldSkipPaymentLink = true; // SecureKaro is a logistics courier aggregator; seller pays courier delivery fee and no buyer checkout links are generated.
 
     // ── Negative Wallet Balance Risk Control ──────────────────────────────────
-    // If seller wallet balance is negative, block COD and Offline Paid shipment bookings
+    // If seller wallet balance is negative, block shipment bookings until dues are cleared
     const currentWalletBal = Number(sender.walletBalance) || 0;
-    if (currentWalletBal < 0 && (isCod || isOffline)) {
+    if (currentWalletBal < 0) {
       return res.status(403).json({
         error: 'NEGATIVE_WALLET_BALANCE_RESTRICTION',
         code: 'NEGATIVE_WALLET_BLOCKED',
         walletBalance: currentWalletBal,
         dueAmount: Math.abs(currentWalletBal),
-        message: `Your seller wallet balance is negative (-₹${Math.abs(currentWalletBal).toFixed(2)}). COD and Offline Paid shipment bookings are suspended until your outstanding dues are cleared. Please recharge your wallet via UPI or fulfill prepaid delivery-protected orders to unlock COD and offline shipping.`
+        message: `Your seller wallet balance is negative (-₹${Math.abs(currentWalletBal).toFixed(2)}). Shipment bookings are suspended until outstanding dues are cleared. Please recharge your wallet via UPI to book shipments.`
       });
     }
 
@@ -458,34 +457,69 @@ const createShipment = async (req, res) => {
         codFeeTransactionRef = req.body.paymentTxnId || ('TXN_' + Date.now());
       }
     } else {
-      // Non-COD shipments: Ensure seller maintains the minimum dynamic security buffer
+      // ── Prepaid Shipment: Seller pays the courier delivery charge upfront from wallet ──
+      const rawDeliveryCharge = req.body.freightCharge !== undefined
+        ? Number(req.body.freightCharge)
+        : (req.body.totalCharge !== undefined
+          ? Math.round(Number(req.body.totalCharge))
+          : (Number(req.body.deliveryCharge) || selectedCarrierRate || 40));
+      deliveryCharge = Math.max(0, rawDeliveryCharge);
+
       const availableWallet = Number(sender.walletBalance) || 0;
-      if (availableWallet < requiredReserve) {
-        const shortfall = Math.max(0, requiredReserve - availableWallet);
-        return res.status(402).json({
-          error: 'INSUFFICIENT_SECURITY_BUFFER',
-          code: 'SECURITY_BUFFER_REQUIRED',
-          message: `You must maintain a minimum wallet security buffer of ₹${requiredReserve} for ${newActiveCount} active shipment(s) (₹100/shipment, max ₹1,000). Your current wallet balance is ₹${availableWallet}. Please top up ₹${shortfall} to book this shipment.`,
-          requiredReserve,
-          activeShipmentsCount,
-          walletBalance: availableWallet,
-          shortfall
-        });
+      const isPaidUpfront = Boolean(req.body.paidUpfront || req.body.paymentTxnId);
+      const totalRequiredForPrepaid = deliveryCharge + requiredReserve;
+
+      if (!isPaidUpfront) {
+        if (availableWallet >= totalRequiredForPrepaid) {
+          const balBefore = availableWallet;
+          sender.walletBalance = parseFloat(Math.max(0, availableWallet - deliveryCharge).toFixed(2));
+          await sender.save();
+
+          await recordTransaction({
+            userId: sender._id,
+            type: 'debit',
+            amount: deliveryCharge,
+            source: 'shipping_fee_deduction',
+            description: `Prepaid courier delivery fee for shipment ${shipmentId} (Delivery: ₹${deliveryCharge})`,
+            paymentGateway: 'system',
+            balanceBefore: balBefore,
+            balanceAfter: sender.walletBalance,
+            metadata: { shipmentId, deliveryCharge, requiredReserve }
+          });
+        } else {
+          const shortfall = Math.max(0, totalRequiredForPrepaid - availableWallet);
+          return res.status(402).json({
+            error: 'INSUFFICIENT_WALLET_BALANCE',
+            code: 'PREPAID_SHIPPING_PAYMENT_REQUIRED',
+            message: `Prepaid shipment requires ₹${deliveryCharge} courier delivery fee plus a minimum security reserve of ₹${requiredReserve} (${newActiveCount} active shipment(s) @ ₹100/shipment, max ₹1,000). Your wallet balance is ₹${availableWallet}. Total required: ₹${totalRequiredForPrepaid}. Please top up ₹${shortfall} in your wallet to book this shipment.`,
+            deliveryCharge,
+            totalCharge: deliveryCharge,
+            requiredReserve,
+            activeShipmentsCount,
+            totalRequired: totalRequiredForPrepaid,
+            walletBalance: availableWallet,
+            shortfall,
+            canAdjustWallet: false
+          });
+        }
+      } else {
+        if (availableWallet < requiredReserve) {
+          const shortfall = Math.max(0, requiredReserve - availableWallet);
+          return res.status(402).json({
+            error: 'INSUFFICIENT_SECURITY_BUFFER',
+            code: 'SECURITY_BUFFER_REQUIRED',
+            message: `You must maintain a minimum wallet security buffer of ₹${requiredReserve} for ${newActiveCount} active shipment(s) (₹100/shipment, max ₹1,000). Your current wallet balance is ₹${availableWallet}. Please top up ₹${shortfall} to book this shipment.`,
+            requiredReserve,
+            activeShipmentsCount,
+            walletBalance: availableWallet,
+            shortfall
+          });
+        }
       }
     }
 
-    // Create Cashfree Payment Link ONLY for online escrow payment mode (skip for COD and Prepaid)
-    let cfLink = { linkUrl: '', linkId: '' };
-    if (!shouldSkipPaymentLink) {
-      cfLink = await cashfreeService.createPaymentLink({
-        shipmentId,
-        amount,
-        receiverName,
-        receiverPhone,
-        description,
-        returnAllowed: isReturnAllowed
-      });
-    }
+    // SecureKaro does not collect product funds from buyers. No payment links are created.
+    const cfLink = { linkUrl: '', linkId: '' };
 
     // Generate SMS & WhatsApp text with parcel details, auto-assigned courier, and photo review links
     const smsRes = await smsService.sendPaymentLinkSms({
@@ -537,7 +571,7 @@ const createShipment = async (req, res) => {
       isPrepaid: isPrepaidOrder,
       codAmount: isCod ? Number(amount) : 0,
       codCharge: isCod ? codCharge : 0,
-      deliveryCharge: isCod ? deliveryCharge : (selectedCarrierRate || 0),
+      deliveryCharge: deliveryCharge,
       codUpfrontFee: isCod ? totalCodFees : 0,
       codFeePaid: isCod ? codFeePaid : false,
       codFeePaymentMethod: isCod ? codFeePaymentMethod : 'none',

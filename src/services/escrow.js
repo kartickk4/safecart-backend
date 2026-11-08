@@ -47,6 +47,13 @@ const releaseEscrow = async (shipmentId, receiverId) => {
     }
   }
 
+  // Authorization check: Verify caller identity matches shipment participant
+  if (receiverId && shipment.receiverId && shipment.receiverId.toString() !== receiverId.toString()) {
+    if (shipment.senderId && shipment.senderId.toString() !== receiverId.toString()) {
+      throw new Error('Unauthorized: User is not authorized to release this shipment payment');
+    }
+  }
+
   // Validate shipment state
   if (shipment.escrowStage === 6) {
     throw new Error('Order payment has already been released');
@@ -314,6 +321,13 @@ const lockEscrow = async (shipmentId, claimUser) => {
     }
   }
 
+  // Authorization check: Verify caller identity matches shipment participant
+  if (receiverId && shipment.receiverId && shipment.receiverId.toString() !== receiverId.toString()) {
+    if (shipment.senderId && shipment.senderId.toString() !== receiverId.toString()) {
+      throw new Error('Unauthorized: User is not authorized to release this shipment payment');
+    }
+  }
+
   shipment.status = 'Locked';
   shipment.escrowStage = -1;
   await shipment.save();
@@ -347,6 +361,13 @@ const cancelEscrow = async (shipmentId, userId, reason = 'Cancelled by user') =>
     const isAdmin = userId.role === 'Admin' || userId.role === 'super_admin';
     if (!isSender && !isReceiver && !isAdmin) {
       throw new Error('Unauthorized: User is not authorized to cancel this shipment');
+    }
+  }
+
+  // Authorization check: Verify caller identity matches shipment participant
+  if (receiverId && shipment.receiverId && shipment.receiverId.toString() !== receiverId.toString()) {
+    if (shipment.senderId && shipment.senderId.toString() !== receiverId.toString()) {
+      throw new Error('Unauthorized: User is not authorized to release this shipment payment');
     }
   }
 
@@ -408,6 +429,13 @@ const refundUndeliveredEscrow = async (shipmentId, reason = 'Carrier reported de
   
   if (!shipment) {
     throw new Error('Shipment not found');
+  }
+
+  // Authorization check: Verify caller identity matches shipment participant
+  if (receiverId && shipment.receiverId && shipment.receiverId.toString() !== receiverId.toString()) {
+    if (shipment.senderId && shipment.senderId.toString() !== receiverId.toString()) {
+      throw new Error('Unauthorized: User is not authorized to release this shipment payment');
+    }
   }
 
   if (shipment.status === 'Undelivered') {
@@ -543,6 +571,13 @@ const requestReturnEscrow = async (
     throw new Error('Shipment not found');
   }
 
+  // Authorization check: Verify caller identity matches shipment participant
+  if (receiverId && shipment.receiverId && shipment.receiverId.toString() !== receiverId.toString()) {
+    if (shipment.senderId && shipment.senderId.toString() !== receiverId.toString()) {
+      throw new Error('Unauthorized: User is not authorized to release this shipment payment');
+    }
+  }
+
   if (shipment.status === 'Released') {
     throw new Error('Cannot request return after order payment has been released');
   }
@@ -661,6 +696,13 @@ const approveReturnEscrow = async (shipmentId, courierData = {}, supplierId = nu
 
   if (!shipment) {
     throw new Error('Shipment not found');
+  }
+
+  // Authorization check: Verify caller identity matches shipment participant
+  if (receiverId && shipment.receiverId && shipment.receiverId.toString() !== receiverId.toString()) {
+    if (shipment.senderId && shipment.senderId.toString() !== receiverId.toString()) {
+      throw new Error('Unauthorized: User is not authorized to release this shipment payment');
+    }
   }
 
   // In partial discount returns, reverse courier is ONLY needed if buyer rejected the offer
@@ -811,6 +853,13 @@ const confirmReturnReceivedEscrow = async (shipmentId) => {
 
   if (!shipment) {
     throw new Error('Shipment not found');
+  }
+
+  // Authorization check: Verify caller identity matches shipment participant
+  if (receiverId && shipment.receiverId && shipment.receiverId.toString() !== receiverId.toString()) {
+    if (shipment.senderId && shipment.senderId.toString() !== receiverId.toString()) {
+      throw new Error('Unauthorized: User is not authorized to release this shipment payment');
+    }
   }
 
   // Calculate days held
@@ -1099,6 +1148,13 @@ const confirmDelivery = async (shipmentId, receiverId, { choice = 'keep_open_24h
     throw new Error('Shipment not found');
   }
 
+  // Authorization check: Verify caller identity matches shipment participant
+  if (receiverId && shipment.receiverId && shipment.receiverId.toString() !== receiverId.toString()) {
+    if (shipment.senderId && shipment.senderId.toString() !== receiverId.toString()) {
+      throw new Error('Unauthorized: User is not authorized to release this shipment payment');
+    }
+  }
+
   // Check if parcel delivery has already been confirmed (either with window closed or open)
   if (shipment.deliveryConfirmed || shipment.status === 'Released') {
     const isClosed = shipment.returnWindowClosed || shipment.status === 'Released' || shipment.returnWindowChoice === 'ImmediateClose';
@@ -1217,6 +1273,13 @@ const closeReturnRequest = async (shipmentId, receiverId) => {
     throw new Error('Shipment not found');
   }
 
+  // Authorization check: Verify caller identity matches shipment participant
+  if (receiverId && shipment.receiverId && shipment.receiverId.toString() !== receiverId.toString()) {
+    if (shipment.senderId && shipment.senderId.toString() !== receiverId.toString()) {
+      throw new Error('Unauthorized: User is not authorized to release this shipment payment');
+    }
+  }
+
   if (shipment.returnStatus !== 'Requested' && shipment.status !== 'Return Requested') {
     throw new Error('There is no active return request to close for this shipment');
   }
@@ -1295,6 +1358,13 @@ const closeReturnWindow = async (shipmentId, receiverId) => {
 
   if (!shipment) {
     throw new Error('Shipment not found');
+  }
+
+  // Authorization check: Verify caller identity matches shipment participant
+  if (receiverId && shipment.receiverId && shipment.receiverId.toString() !== receiverId.toString()) {
+    if (shipment.senderId && shipment.senderId.toString() !== receiverId.toString()) {
+      throw new Error('Unauthorized: User is not authorized to release this shipment payment');
+    }
   }
 
   if (shipment.status === 'Released' || shipment.returnWindowClosed) {
