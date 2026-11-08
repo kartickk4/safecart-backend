@@ -108,8 +108,14 @@ const releaseEscrow = async (shipmentId, receiverId) => {
   // Credit sender wallet balance if online escrow mode
   if (!isPaidOffline && sender) {
     const balBefore = Number(sender.walletBalance) || 0;
-    sender.walletBalance = parseFloat((balBefore + netPayout).toFixed(2));
-    await sender.save();
+    const updatedSender = await User.findOneAndUpdate(
+      { _id: sender._id },
+      { $inc: { walletBalance: netPayout } },
+      { new: true }
+    );
+    if (updatedSender) {
+      sender.walletBalance = updatedSender.walletBalance;
+    }
     try {
       const { recordTransaction } = require('./walletService');
       await recordTransaction({
@@ -802,8 +808,28 @@ const confirmReturnReceivedEscrow = async (shipmentId) => {
     await shipment.save();
 
     if (!isPaidOffline && supplier) {
-      supplier.walletBalance = parseFloat(((Number(supplier.walletBalance) || 0) + netPayout).toFixed(2));
-      await supplier.save();
+      const balBefore = Number(supplier.walletBalance) || 0;
+      const updatedSupplier = await User.findOneAndUpdate(
+        { _id: supplier._id },
+        { $inc: { walletBalance: netPayout } },
+        { new: true }
+      );
+      if (updatedSupplier) {
+        supplier.walletBalance = updatedSupplier.walletBalance;
+      }
+      try {
+        const { recordTransaction } = require('./walletService');
+        await recordTransaction({
+          userId: supplier._id,
+          type: 'credit',
+          amount: netPayout,
+          source: 'escrow_settlement',
+          description: `Replacement order payout for shipment ${shipment.shipmentId}`,
+          balanceBefore: balBefore,
+          balanceAfter: supplier.walletBalance,
+          metadata: { shipmentId: shipment.shipmentId }
+        });
+      } catch (e) {}
     }
 
     if (isPaidOffline) {
@@ -828,11 +854,8 @@ const confirmReturnReceivedEscrow = async (shipmentId) => {
         );
       }
     } else {
-      // Escrow / Prepaid: Release funds to supplier's wallet
+      // Escrow / Prepaid: Notify supplier of payout (credit already applied atomically above)
       if (supplier) {
-        supplier.walletBalance = parseFloat(((Number(supplier.walletBalance) || 0) + (Number(shipment.amount) || 0)).toFixed(2));
-        await supplier.save();
-
         await createNotification(
           supplier._id,
           'payments',
