@@ -37,9 +37,14 @@ const findReceiverUser = async (shipment, receiverId = null) => {
  */
 const releaseEscrow = async (shipmentId, receiverId) => {
   const shipment = await Shipment.findOne({ shipmentId: shipmentId.toUpperCase() });
-  
   if (!shipment) {
     throw new Error('Shipment not found');
+  }
+
+  if (receiverId && shipment.receiverId && shipment.receiverId.toString() !== receiverId.toString()) {
+    if (shipment.senderId && shipment.senderId.toString() !== receiverId.toString()) {
+      throw new Error('Unauthorized: User is not authorized to release this shipment payment');
+    }
   }
 
   // Validate shipment state
@@ -295,9 +300,18 @@ const releaseEscrow = async (shipmentId, receiverId) => {
  */
 const lockEscrow = async (shipmentId, claimUser) => {
   const shipment = await Shipment.findOne({ shipmentId: shipmentId.toUpperCase() });
-  
   if (!shipment) {
     throw new Error('Shipment not found');
+  }
+
+  if (claimUser) {
+    const claimUserId = claimUser._id ? claimUser._id.toString() : claimUser.toString();
+    const isReceiver = shipment.receiverId && shipment.receiverId.toString() === claimUserId;
+    const isSender = shipment.senderId && shipment.senderId.toString() === claimUserId;
+    const isAdmin = claimUser.role === 'Admin' || claimUser.role === 'super_admin';
+    if (!isReceiver && !isSender && !isAdmin) {
+      throw new Error('Unauthorized: Only shipment participants or admin can file a dispute claim');
+    }
   }
 
   shipment.status = 'Locked';
@@ -322,9 +336,18 @@ const lockEscrow = async (shipmentId, claimUser) => {
  */
 const cancelEscrow = async (shipmentId, userId, reason = 'Cancelled by user') => {
   const shipment = await Shipment.findOne({ shipmentId: shipmentId.toUpperCase() });
-  
   if (!shipment) {
     throw new Error('Shipment not found');
+  }
+
+  if (userId) {
+    const callerId = userId._id ? userId._id.toString() : userId.toString();
+    const isSender = shipment.senderId && shipment.senderId.toString() === callerId;
+    const isReceiver = shipment.receiverId && shipment.receiverId.toString() === callerId;
+    const isAdmin = userId.role === 'Admin' || userId.role === 'super_admin';
+    if (!isSender && !isReceiver && !isAdmin) {
+      throw new Error('Unauthorized: User is not authorized to cancel this shipment');
+    }
   }
 
   if (shipment.status === 'Cancelled') {

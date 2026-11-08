@@ -28,8 +28,9 @@ const invalidateDashboardCache = () => {
  * Helper: Generate Shipment ID in form SPL-XXXX-X
  */
 const generateShipmentId = () => {
-  const num = Math.floor(1000 + Math.random() * 9000);
-  const char = String.fromCharCode(65 + Math.floor(Math.random() * 26));
+  const crypto = require('crypto');
+  const num = 1000 + (crypto.randomBytes(2).readUInt16BE(0) % 9000);
+  const char = String.fromCharCode(65 + (crypto.randomBytes(1)[0] % 26));
   return `SPL-${num}-${char}`;
 };
 

@@ -7,8 +7,9 @@ const { createNotification } = require('../services/notification');
  * Helper: Generate Claim ID in form CLM-XXXX-X
  */
 const generateClaimId = () => {
-  const num = Math.floor(1000 + Math.random() * 9000);
-  const char = String.fromCharCode(65 + Math.floor(Math.random() * 26));
+  const crypto = require('crypto');
+  const num = 1000 + (crypto.randomBytes(2).readUInt16BE(0) % 9000);
+  const char = String.fromCharCode(65 + (crypto.randomBytes(1)[0] % 26));
   return `CLM-${num}-${char}`;
 };
 
@@ -81,7 +82,7 @@ const fileClaim = async (req, res) => {
       role: claimRole,
       reason,
       description: cleanDesc,
-      evidenceUrls: evidenceUrls || [],
+      evidenceUrls: Array.isArray(evidenceUrls) ? evidenceUrls.slice(0, 10).filter(u => typeof u === 'string' && (u.startsWith('http://') || u.startsWith('https://') || u.startsWith('data:image/'))).map(u => u.trim()) : [],
       status: 'Under Review'
     });
 

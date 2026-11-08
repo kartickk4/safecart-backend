@@ -1,3 +1,4 @@
+const UPI_REGEX = /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/;
 const crypto = require('crypto');
 const User = require('../models/User');
 const WalletTransaction = require('../models/WalletTransaction');
@@ -327,8 +328,8 @@ const withdrawCashback = async (req, res) => {
     if (isNaN(requested) || requested <= 0) {
       return res.status(400).json({ error: 'Invalid withdrawal amount.' });
     }
-    if (!upiId || upiId.trim() === '') {
-      return res.status(400).json({ error: 'UPI ID is required for withdrawal.' });
+    if (!upiId || !UPI_REGEX.test(upiId.trim())) {
+      return res.status(400).json({ error: 'Please provide a valid UPI ID (e.g., name@okhdfcbank, mobile@upi).' });
     }
 
     // ── Fee Logic ────────────────────────────────────────────────────────────
@@ -432,7 +433,7 @@ const withdrawCashback = async (req, res) => {
       type: 'debit',
       amount: requested,
       source: 'cashback_withdrawal',
-      description: `Buyer cashback withdrawal to UPI: ${upiId}${
+      description: `Buyer cashback withdrawal to UPI: ${upiId.replace(/^(.{3}).*(@.*)$/, "$1***$2")}${
         fee > 0 ? ` | Processing fee: ₹${fee} (amount < ₹${BUYER_FEE_THRESHOLD})` : ''
       }${requiresAdminApproval ? ' [High-Value Review Queued]' : ''}`,
       paymentGateway: 'system',
@@ -468,7 +469,7 @@ const withdrawCashback = async (req, res) => {
       } catch (_) {}
     }
 
-    console.log(`[Wallet] Buyer ${user._id} withdrew cashback ₹${requested} → Net ₹${netTransfer} (fee: ₹${fee}) to UPI: ${upiId} [Status: ${initialStatus}]`);
+    console.log(`[Wallet] Buyer ${user._id} withdrew cashback ₹${requested} → Net ₹${netTransfer} (fee: ₹${fee}) to UPI: ${upiId.replace(/^(.{3}).*(@.*)$/, "$1***$2")} [Status: ${initialStatus}]`);
 
     res.json({
       success: true,
@@ -509,8 +510,8 @@ const withdrawWallet = async (req, res) => {
     if (isNaN(requested) || requested <= 0) {
       return res.status(400).json({ error: 'Invalid withdrawal amount.' });
     }
-    if (!upiId || upiId.trim() === '') {
-      return res.status(400).json({ error: 'UPI ID is required for withdrawal.' });
+    if (!upiId || !UPI_REGEX.test(upiId.trim())) {
+      return res.status(400).json({ error: 'Please provide a valid UPI ID (e.g., name@okhdfcbank, mobile@upi).' });
     }
 
     // ── Fee Logic ────────────────────────────────────────────────────────────
@@ -616,7 +617,7 @@ const withdrawWallet = async (req, res) => {
       type: 'debit',
       amount: requested,
       source: 'withdrawal',
-      description: `Seller wallet withdrawal to UPI: ${upiId}${
+      description: `Seller wallet withdrawal to UPI: ${upiId.replace(/^(.{3}).*(@.*)$/, "$1***$2")}${
         fee > 0 ? ` | Processing fee: ₹${fee} (amount < ₹${SELLER_FEE_THRESHOLD})` : ''
       }${requiresAdminApproval ? ' [High-Value Review Queued]' : ''}`,
       paymentGateway: 'system',
@@ -651,7 +652,7 @@ const withdrawWallet = async (req, res) => {
       } catch (_) {}
     }
 
-    console.log(`[Wallet] Seller ${user._id} withdrew ₹${requested} → Net ₹${netTransfer} (fee: ₹${fee}) to UPI: ${upiId} [Status: ${initialStatus}]`);
+    console.log(`[Wallet] Seller ${user._id} withdrew ₹${requested} → Net ₹${netTransfer} (fee: ₹${fee}) to UPI: ${upiId.replace(/^(.{3}).*(@.*)$/, "$1***$2")} [Status: ${initialStatus}]`);
 
     res.json({
       success: true,
@@ -683,6 +684,11 @@ const withdrawWallet = async (req, res) => {
  */
 const handleWebhook = async (req, res) => {
   try {
+    const xVerify = req.headers['x-verify'];
+    if (xVerify && !phonepeService.verifyPhonePeWebhookSignature(req.body, xVerify)) {
+      console.warn('[Wallet Webhook Security] Invalid signature rejected');
+      return res.status(401).json({ error: 'Invalid webhook signature' });
+    }
     const event = req.body;
     console.log('[Wallet Webhook] Received gateway notification event:', event?.type || 'payment');
 
