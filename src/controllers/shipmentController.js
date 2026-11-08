@@ -3572,6 +3572,16 @@ const getPrintableShippingLabel = async (req, res) => {
       return res.status(404).send('<h3>Shipment not found</h3>');
     }
 
+    // Ownership check: only sender, receiver, or admin can access the printable label
+    if (req.user) {
+      const isSender = shipment.senderId && (shipment.senderId._id ? shipment.senderId._id.toString() : shipment.senderId.toString()) === req.user._id.toString();
+      const isReceiver = shipment.receiverId && shipment.receiverId.toString() === req.user._id.toString();
+      const isAdmin = req.user.role === 'Admin' || req.user.role === 'super_admin' || req.user.isAdmin;
+      if (!isSender && !isReceiver && !isAdmin) {
+        return res.status(403).send('<h3>Access denied: Unauthorized to view shipping label</h3>');
+      }
+    }
+
     // 1. Direct Redirect to the Official Courier Label PDF if already generated
     // (Exact PDF from Shiprocket, NimbusPost, Delhivery, or Shadowfax containing user's pickup address)
     if (

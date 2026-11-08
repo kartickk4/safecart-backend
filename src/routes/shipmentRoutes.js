@@ -238,7 +238,7 @@ router.route('/:id/parcel-photo')
 
 // ── In-Box QR Label (seller prints & puts inside parcel) ──────────────────
 router.route('/:id/label')
-  .get(getPrintableShippingLabel);
+  .get(protect, getPrintableShippingLabel);
 
 router.route('/:id/qr-label')
   .get(protect, getQrLabel);

@@ -86,13 +86,11 @@ const protect = async (req, res, next) => {
 };
 
 const admin = (req, res, next) => {
-  // SECURITY: Admin privilege must come ONLY from database role fields — never from a hardcoded email.
+  // SECURITY: Admin privilege must come strictly from database role
   if (
     req.user && (
       req.user.role === 'Admin' ||
-      req.user.role === 'super_admin' ||
-      req.user.isAdmin === true ||
-      !!req.user.adminRole
+      req.user.role === 'super_admin'
     )
   ) {
     req.user.isAdmin = true;

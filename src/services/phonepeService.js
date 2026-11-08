@@ -2,10 +2,10 @@ const axios = require('axios');
 const crypto = require('crypto');
 
 // ── PhonePe Environment Configuration ──────────────────────────────────────
-const PHONEPE_ENV = (process.env.PHONEPE_ENV || 'UAT').toUpperCase();
-const PHONEPE_MERCHANT_ID = process.env.PHONEPE_MERCHANT_ID || 'M23HQALFPZ522_2611071206';
-const RAW_SALT_KEY = process.env.PHONEPE_SALT_KEY || 'ce6c54c1-c195-421b-ace5-b3dc4f6c0bb4';
-const PHONEPE_SALT_INDEX = process.env.PHONEPE_SALT_INDEX || '1';
+const PHONEPE_ENV = (process.env.PHONEPE_ENV || 'PROD').toUpperCase();
+const PHONEPE_MERCHANT_ID = (process.env.PHONEPE_MERCHANT_ID || '').trim();
+const RAW_SALT_KEY = (process.env.PHONEPE_SALT_KEY || '').trim();
+const PHONEPE_SALT_INDEX = (process.env.PHONEPE_SALT_INDEX || '1').trim();
 
 // Intelligently resolve salt key (auto-decode base64 if needed)
 const resolveSaltKey = (key) => {
@@ -201,19 +201,19 @@ const verifyPhonePeWebhookSignature = (base64Response, xVerifyHeader) => {
  * @returns {Promise<{ verified: boolean, payment?: Object, error?: string, isMock?: boolean }>}
  */
 const verifyPaymentWithGateway = async ({ orderId, expectedAmount }) => {
-  const isUatOrMock = process.env.ALLOW_MOCK_PAYMENTS === 'true' || 
-                      process.env.PHONEPE_ENV === 'UAT' || 
-                      process.env.NODE_ENV !== 'production' || 
-                      !PHONEPE_MERCHANT_ID || 
-                      PHONEPE_MERCHANT_ID === 'PGTESTPAYUAT';
+  const isProd = process.env.NODE_ENV === 'production' || 
+                 PHONEPE_ENV === 'PROD' || 
+                 PHONEPE_ENV === 'PRODUCTION';
+
+  const isMockAllowed = !isProd && process.env.ALLOW_MOCK_PAYMENTS === 'true';
 
   const isSimulatedTestTxn = String(orderId || '').startsWith('WRECH_') || 
                              String(orderId || '').startsWith('sim_') || 
                              String(orderId || '').startsWith('PAY_');
 
-  // Check if test/mock mode is active for simulated wallet recharge or test transactions
-  if (isUatOrMock && (isSimulatedTestTxn || process.env.ALLOW_MOCK_PAYMENTS === 'true')) {
-    console.log(`[PhonePe Gateway Security] Test/Mock verification accepted for ${orderId}`);
+  // Strictly restrict mock bypass to non-production environments with explicit ALLOW_MOCK_PAYMENTS=true
+  if (isMockAllowed && isSimulatedTestTxn) {
+    console.warn(`[PhonePe Gateway Security] Dev mock verification accepted for ${orderId}`);
     return {
       verified: true,
       isMock: true,

@@ -319,8 +319,7 @@ const sendOtp = async (req, res) => {
     }
 
     res.json({
-      message: `Verification code sent to ${normalizedPhone} (${role} Portal). Valid for 5 minutes.`,
-      ...(process.env.NODE_ENV !== 'production' && { debugCode: otpCode })
+      message: `Verification code sent to ${normalizedPhone} (${role} Portal). Valid for 5 minutes.`
     });
   } catch (error) {
     console.error('Send Phone OTP Error:', error);
@@ -503,8 +502,7 @@ const sendEmailOtp = async (req, res) => {
         ? `Email verification code sent to ${normalizedEmail} (${role} Portal). Valid for 5 minutes.`
         : `Verification code generated for ${normalizedEmail}. ${emailWarning ? `(Notice: ${emailWarning})` : ''}`,
       emailStatus: validation.status || 'valid',
-      emailDispatched,
-      ...(process.env.NODE_ENV !== 'production' && { debugCode: otpCode })
+      emailDispatched
     });
   } catch (error) {
     console.error('Send Email OTP Error:', error);
@@ -671,8 +669,7 @@ const forgotPassword = async (req, res) => {
       message: `Password reset OTP sent to ${smsDispatched ? phoneToSendSms : (emailDispatched ? rawEmail : identifier)} (${role} Portal). Valid for 5 minutes.`,
       smsDispatched,
       emailDispatched,
-      identifier,
-      ...(process.env.NODE_ENV !== 'production' && { debugCode: otpCode })
+      identifier
     });
   } catch (error) {
     console.error('Forgot Password Error:', error);

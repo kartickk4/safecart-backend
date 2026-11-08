@@ -65,6 +65,7 @@ const WalletTransactionSchema = new mongoose.Schema({
   gatewayPaymentId: {
     type: String,
     sparse: true,
+    unique: true,
     index: true
   },
   idempotencyKey: {

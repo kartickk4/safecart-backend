@@ -135,20 +135,18 @@ const verifyPayment = async (req, res) => {
       }
     }
 
-    // 3. Fetch current balance snapshot
-    const userSnapshot = await User.findById(req.user._id);
-    if (!userSnapshot) {
-      return res.status(404).json({ error: 'User not found.' });
-    }
-    const balanceBefore = parseFloat((Number(userSnapshot.walletBalance) || 0).toFixed(2));
-
-    // 4. Atomic credit to User wallet to prevent race condition lost updates
-    const user = await User.findOneAndUpdate(
+    // 3. Atomic credit to User wallet with returnOriginal/new: false to eliminate TOCTOU race conditions
+    const userBefore = await User.findOneAndUpdate(
       { _id: req.user._id },
       { $inc: { walletBalance: numAmount } },
-      { new: true }
+      { new: false }
     );
-    const balanceAfter = parseFloat((Number(user.walletBalance) || 0).toFixed(2));
+    if (!userBefore) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+    const balanceBefore = parseFloat((Number(userBefore.walletBalance) || 0).toFixed(2));
+    const balanceAfter = parseFloat((balanceBefore + numAmount).toFixed(2));
+    const user = { ...userBefore.toObject(), walletBalance: balanceAfter };
 
     // 3. Record in WalletTransaction ledger
     const transaction = await WalletTransaction.create({
@@ -373,7 +371,7 @@ const withdrawCashback = async (req, res) => {
     }
 
     // ── Banking Security 3: Idempotency Key Guard (Anti-Duplicate Clicks) ──
-    const idempotencyKey = req.headers['x-idempotency-key'] || `IDEMP_CB_${req.user._id}_${requested}_${upiId}_${Math.floor(Date.now() / 30000)}`;
+    const idempotencyKey = req.headers['x-idempotency-key'] || req.body.idempotencyKey || `IDEMP_CB_${req.user._id}_${requested}_${upiId}_${Math.floor(Date.now() / 300000)}`;
     const existingTx = await WalletTransaction.findOne({
       idempotencyKey,
       status: { $in: ['success', 'pending'] }
@@ -560,7 +558,7 @@ const withdrawWallet = async (req, res) => {
     }
 
     // ── Banking Security 3: Idempotency Key Guard (Anti-Duplicate Clicks) ──
-    const idempotencyKey = req.headers['x-idempotency-key'] || `IDEMP_W_${req.user._id}_${requested}_${upiId}_${Math.floor(Date.now() / 30000)}`;
+    const idempotencyKey = req.headers['x-idempotency-key'] || req.body.idempotencyKey || `IDEMP_W_${req.user._id}_${requested}_${upiId}_${Math.floor(Date.now() / 300000)}`;
     const existingTx = await WalletTransaction.findOne({
       idempotencyKey,
       status: { $in: ['success', 'pending'] }

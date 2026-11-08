@@ -235,12 +235,19 @@ const releaseEscrow = async (shipmentId, receiverId) => {
         const referrer = await User.findById(sender.referredBy);
         if (referrer) {
           const REFERRAL_REWARD = 30;
-          const balBefore = Number(referrer.walletBalance) || 0;
+          const userBefore = await User.findOneAndUpdate(
+            { _id: referrer._id },
+            { 
+              $inc: { 
+                walletBalance: REFERRAL_REWARD,
+                referralCredits: REFERRAL_REWARD,
+                totalReferralEarned: REFERRAL_REWARD
+              } 
+            },
+            { new: false }
+          );
+          const balBefore = userBefore ? (Number(userBefore.walletBalance) || 0) : 0;
           const balAfter = parseFloat((balBefore + REFERRAL_REWARD).toFixed(2));
-          referrer.walletBalance = balAfter;
-          referrer.referralCredits = parseFloat(((Number(referrer.referralCredits) || 0) + REFERRAL_REWARD).toFixed(2));
-          referrer.totalReferralEarned = parseFloat(((Number(referrer.totalReferralEarned) || 0) + REFERRAL_REWARD).toFixed(2));
-          await referrer.save();
 
           try {
             await WalletTransaction.create({
@@ -442,11 +449,14 @@ const refundUndeliveredEscrow = async (shipmentId, reason = 'Carrier reported de
   // ── Handle supplier wallet & notifications ─────────────────────────────────
   const supplier = await User.findById(shipment.senderId);
   if (supplier) {
-    // Deduct RTO return freight from seller's wallet
-    const balBefore = parseFloat((Number(supplier.walletBalance) || 0).toFixed(2));
+    // Deduct RTO return freight from seller's wallet atomically
+    const supplierBefore = await User.findOneAndUpdate(
+      { _id: supplier._id },
+      { $inc: { walletBalance: -rtoFreightCharge } },
+      { new: false }
+    );
+    const balBefore = supplierBefore ? parseFloat((Number(supplierBefore.walletBalance) || 0).toFixed(2)) : 0;
     const balAfter = parseFloat((balBefore - rtoFreightCharge).toFixed(2));
-    supplier.walletBalance = balAfter;
-    await supplier.save();
 
     await recordTransaction({
       userId: supplier._id,
@@ -901,21 +911,28 @@ const confirmReturnReceivedEscrow = async (shipmentId) => {
     // If supplier has sufficient wallet balance, adjust from supplier wallet to receiver wallet;
     // otherwise notify both parties to settle offline refund directly.
     const principalNum = Number(shipment.amount) || 0;
-    if (supplier && (Number(supplier.walletBalance) || 0) >= principalNum && receiver) {
-      supplier.walletBalance = parseFloat(Math.max(0, (Number(supplier.walletBalance) || 0) - principalNum).toFixed(2));
-      await supplier.save();
-
-      receiver.walletBalance = parseFloat(((Number(receiver.walletBalance) || 0) + principalNum).toFixed(2));
-      await receiver.save();
-
-      await createNotification(
-        receiver._id,
-        'payments',
-        `Return Processed: Refund Credited — ${shipment.shipmentId}`,
-        `Returned parcel ${shipment.shipmentId} arrived at supplier. Refund of ${formattedPrincipal} has been adjusted from supplier and credited to your wallet.`,
-        'payment',
-        shipment.shipmentId
+    if (supplier && receiver) {
+      const updatedSupplier = await User.findOneAndUpdate(
+        { _id: supplier._id, walletBalance: { $gte: principalNum } },
+        { $inc: { walletBalance: -principalNum } },
+        { new: true }
       );
+
+      if (updatedSupplier) {
+        await User.findOneAndUpdate(
+          { _id: receiver._id },
+          { $inc: { walletBalance: principalNum } }
+        );
+
+        await createNotification(
+          receiver._id,
+          'payments',
+          `Return Processed: Refund Credited — ${shipment.shipmentId}`,
+          `Returned parcel ${shipment.shipmentId} arrived at supplier. Refund of ${formattedPrincipal} has been adjusted from supplier and credited to your wallet.`,
+          'payment',
+          shipment.shipmentId
+        );
+      }
     } else {
       // Direct offline settlement notice
       if (receiver) {
@@ -980,10 +997,13 @@ const confirmReturnReceivedEscrow = async (shipmentId) => {
   await shipment.save();
 
   if (supplier) {
-    const balBefore = Number(supplier.walletBalance) || 0;
+    const supplierBefore = await User.findOneAndUpdate(
+      { _id: supplier._id },
+      { $inc: { walletBalance: -revCourierFreight } },
+      { new: false }
+    );
+    const balBefore = supplierBefore ? (Number(supplierBefore.walletBalance) || 0) : 0;
     const balAfter = parseFloat((balBefore - revCourierFreight).toFixed(2));
-    supplier.walletBalance = balAfter;
-    await supplier.save();
 
     try {
       const { recordTransaction } = require('./walletService');
@@ -1478,8 +1498,10 @@ const respondToDiscount = async (shipmentId, responderId, accepted, isSupplier =
 
     const receiver = await findReceiverUser(shipment);
     if (receiver) {
-      receiver.walletBalance = parseFloat(((Number(receiver.walletBalance) || 0) + buyerCredit).toFixed(2));
-      await receiver.save();
+      await User.findOneAndUpdate(
+        { _id: receiver._id },
+        { $inc: { walletBalance: buyerCredit } }
+      );
       const notifMsg = isSupplier
         ? `A partial refund of ${fmt(buyerCredit)} for order #${shipment.shipmentId} was auto-completed after the 15-hour response window expired with no response from buyer. The amount is credited to your SecureKaro wallet and you keep the item.`
         : `A partial refund of ${fmt(buyerCredit)} for order #${shipment.shipmentId} has been credited to your SecureKaro wallet. You keep the item.`;
@@ -1495,8 +1517,10 @@ const respondToDiscount = async (shipmentId, responderId, accepted, isSupplier =
 
     const supplier = await User.findById(shipment.senderId);
     if (supplier) {
-      supplier.walletBalance = parseFloat(((Number(supplier.walletBalance) || 0) + supplierCredit).toFixed(2));
-      await supplier.save();
+      await User.findOneAndUpdate(
+        { _id: supplier._id },
+        { $inc: { walletBalance: supplierCredit } }
+      );
       const supplierNotifMsg = isSupplier
         ? `Your discount offer of ${fmt(buyerCredit)} was auto-completed after 15 hours of buyer inactivity. The remaining balance of ${fmt(supplierCredit)} has been released to your wallet.`
         : `The buyer accepted your partial discount offer of ${fmt(buyerCredit)}. The remaining balance of ${fmt(supplierCredit)} has been released to your wallet.`;
@@ -1875,8 +1899,10 @@ const confirmReplacementDelivery = async (shipmentId, receiverId) => {
   const supplier = await User.findById(shipment.senderId);
 
   if (!isPaidOffline && supplier) {
-    supplier.walletBalance = parseFloat(((Number(supplier.walletBalance) || 0) + netPayout).toFixed(2));
-    await supplier.save();
+    await User.findOneAndUpdate(
+      { _id: supplier._id },
+      { $inc: { walletBalance: netPayout } }
+    );
   }
 
   // Add CarrierJourney milestone

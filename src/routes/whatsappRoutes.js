@@ -79,7 +79,13 @@ const sendWhatsAppReply = async (toPhone, replyBody) => {
 const verifyMetaSignature = (req) => {
   const signature = req.headers['x-hub-signature-256'];
   const appSecret = process.env.META_APP_SECRET;
-  if (!appSecret) return true; // Pass if app secret not configured in dev
+  if (!appSecret) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[WhatsApp Security] META_APP_SECRET is not configured on production. Rejecting webhook request.');
+      return false;
+    }
+    return true; // Allow local dev testing only
+  }
   if (!signature || !signature.startsWith('sha256=')) return false;
 
   try {
@@ -130,10 +136,11 @@ router.post('/webhook', async (req, res) => {
     if (lower === 'track' || lower === 'status' || lower.startsWith('track ')) {
       let shipment = null;
       if (Shipment) {
+        const sanitizedDigits = raw10Digits.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         shipment = await Shipment.findOne({
           $or: [
-            { receiverPhone: new RegExp(raw10Digits) },
-            { senderPhone: new RegExp(raw10Digits) }
+            { receiverPhone: { $regex: sanitizedDigits, $options: 'i' } },
+            { senderPhone: { $regex: sanitizedDigits, $options: 'i' } }
           ]
         }).sort({ createdAt: -1 });
       }
