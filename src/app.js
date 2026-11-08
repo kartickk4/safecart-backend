@@ -260,6 +260,8 @@ app.get('/', (req, res) => {
   });
 });
 
+app.get('/api/v1/health', (req, res) => res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() }));
+
 app.get('/health', (req, res) => {
   const dbStatusMap = {
     0: 'disconnected',
