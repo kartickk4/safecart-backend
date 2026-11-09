@@ -372,10 +372,16 @@ const getReferralStats = async (req, res) => {
  * @access  Private
  */
 const sendPhoneVerificationOtp = async (req, res) => {
-  const targetPhone = (req.body?.phone || req.user?.phone || '').toString().trim();
+  const isOldPhoneStep = Boolean(req.body?.isOldPhoneStep);
+  // If verifying old/current phone, always use authenticated user's current registered phone
+  const targetPhone = isOldPhoneStep
+    ? (req.user?.phone || '').toString().trim()
+    : (req.body?.phone || req.user?.phone || '').toString().trim();
 
   if (!targetPhone) {
-    return res.status(400).json({ error: 'Please enter a valid mobile number.' });
+    return res.status(400).json({ 
+      error: isOldPhoneStep ? 'No existing registered phone found on your account.' : 'Please enter a valid mobile number.' 
+    });
   }
 
   const normalizedPhone = targetPhone.replace(/\s+/g, '');
@@ -386,31 +392,33 @@ const sendPhoneVerificationOtp = async (req, res) => {
   }
 
   try {
-    const last10 = digits.slice(-10);
-    const phoneVariants = [
-      normalizedPhone,
-      last10,
-      `+91${last10}`,
-      `+91 ${last10}`
-    ];
+    // If this is the NEW phone step, make sure it is not taken by another user with the same role
+    if (!isOldPhoneStep) {
+      const last10 = digits.slice(-10);
+      const phoneVariants = [
+        normalizedPhone,
+        last10,
+        `+91${last10}`,
+        `+91 ${last10}`
+      ];
 
-    // Check if phone already registered to another user with the same role
-    const existingUsers = await User.find({
-      phone: { $in: phoneVariants },
-      role: req.user.role,
-      _id: { $ne: req.user._id }
-    });
+      const existingUsers = await User.find({
+        phone: { $in: phoneVariants },
+        role: req.user.role,
+        _id: { $ne: req.user._id }
+      });
 
-    for (const existing of existingUsers) {
-      const isPlaceholder = existing.email && (
-        existing.email.endsWith('@securekaro-otp.in') ||
-        existing.email.endsWith('@safecart-otp.in') ||
-        existing.email.includes('-otp.in')
-      );
-      if (isPlaceholder) {
-        await User.deleteOne({ _id: existing._id });
-      } else if (existing.email && existing.email.toLowerCase().trim() !== req.user.email?.toLowerCase().trim()) {
-        return res.status(400).json({ error: 'This mobile number is already registered and verified with another account.' });
+      for (const existing of existingUsers) {
+        const isPlaceholder = existing.email && (
+          existing.email.endsWith('@securekaro-otp.in') ||
+          existing.email.endsWith('@safecart-otp.in') ||
+          existing.email.includes('-otp.in')
+        );
+        if (isPlaceholder) {
+          await User.deleteOne({ _id: existing._id });
+        } else if (existing.email && existing.email.toLowerCase().trim() !== req.user.email?.toLowerCase().trim()) {
+          return res.status(400).json({ error: 'This mobile number is already registered and verified with another account.' });
+        }
       }
     }
 
@@ -441,6 +449,7 @@ const sendPhoneVerificationOtp = async (req, res) => {
 
     return res.json({
       message: `Verification OTP sent to ${normalizedPhone}. Valid for 5 minutes.`,
+      isOldPhoneStep,
       ...(process.env.NODE_ENV !== 'production' && { debugOtp: otpCode })
     });
   } catch (error) {
@@ -450,13 +459,16 @@ const sendPhoneVerificationOtp = async (req, res) => {
 };
 
 /**
- * @desc    Verify phone OTP and mark user.isPhoneVerified = true
+ * @desc    Verify phone OTP (supports Step 1 old phone authorization and Step 2 new phone commit)
  * @route   POST /api/v1/profile/verify-phone-otp
  * @access  Private
  */
 const verifyPhoneOtp = async (req, res) => {
-  const { phone, otp } = req.body;
-  const targetPhone = (phone || req.user?.phone || '').toString().trim();
+  const { phone, otp, isOldPhoneStep } = req.body;
+  const isOld = Boolean(isOldPhoneStep);
+  const targetPhone = isOld
+    ? (req.user?.phone || phone || '').toString().trim()
+    : (phone || req.user?.phone || '').toString().trim();
 
   if (!targetPhone || !otp) {
     return res.status(400).json({ error: 'Both mobile number and 6-digit OTP code are required.' });
@@ -480,7 +492,15 @@ const verifyPhoneOtp = async (req, res) => {
     // Delete used OTP
     await Otp.deleteOne({ _id: validOtp._id });
 
-    // Clean up any placeholder accounts holding this phone
+    // STEP 1: If verifying old phone, return success token without changing user profile phone
+    if (isOld) {
+      return res.json({
+        message: 'Current mobile number verified! Please proceed to enter and verify your new mobile number.',
+        oldPhoneVerified: true
+      });
+    }
+
+    // STEP 2: Verifying new phone number and committing to profile
     const last10 = normalizedPhone.replace(/\D/g, '').slice(-10);
     const phoneVariants = [
       normalizedPhone,
@@ -513,7 +533,7 @@ const verifyPhoneOtp = async (req, res) => {
     }
 
     return res.json({
-      message: 'Mobile number verified successfully!',
+      message: 'Mobile number updated and verified successfully!',
       isPhoneVerified: true,
       phone: user.phone,
       user
