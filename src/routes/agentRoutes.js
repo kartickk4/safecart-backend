@@ -74,8 +74,8 @@ router.get('/bulk-status/:jobId', protect, getBulkStatus);
 // Download completed bulk booking report (.xlsx)
 router.get('/bulk-report/:jobId', protect, downloadBulkReport);
 
-// Carrier rate comparison (for carrier card in frontend)
-router.post('/carrier-rates', protect, getCarrierRatesHandler);
+// Carrier rate comparison (Public endpoint for rate calculator widget & carrier card)
+router.post('/carrier-rates', getCarrierRatesHandler);
 
 // Restore session state for floating widget
 router.get('/session/:sessionId', protect, getSession);
