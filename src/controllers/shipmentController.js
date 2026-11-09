@@ -4,7 +4,6 @@ const User = require('../models/User');
 const carrierTracking = require('../services/carrierTracking');
 const escrow = require('../services/escrow');
 const phonepeService = require('../services/phonepeService');
-const cashfreeService = phonepeService; // Backwards-compatible alias
 const { createNotification } = require('../services/notification');
 const { grantDeliveryConfirmCashback, grantPrepaymentCashback } = require('../services/rewardService');
 const smsService = require('../services/smsService');
@@ -519,7 +518,7 @@ const createShipment = async (req, res) => {
     }
 
     // SecureKaro does not collect product funds from buyers. No payment links are created.
-    const cfLink = { linkUrl: '', linkId: '' };
+    const paymentLinkInfo = { linkUrl: '', linkId: '' };
 
     // Generate SMS & WhatsApp text with parcel details, auto-assigned courier, and photo review links
     const smsRes = await smsService.sendPaymentLinkSms({
@@ -528,7 +527,7 @@ const createShipment = async (req, res) => {
       amount,
       description,
       carrierSlug: assignedCarrierSlug,
-      linkUrl: cfLink.linkUrl,
+      linkUrl: paymentLinkInfo.linkUrl,
       returnAllowed: isReturnAllowed,
       receiverName,
       paymentMode: isCod ? 'cod' : isPrepaidOrder ? 'prepaid' : 'online',
@@ -563,8 +562,7 @@ const createShipment = async (req, res) => {
       awbCode: shouldSkipPaymentLink ? assignedAwbCode : null,
       shippingLabelUrl: shouldSkipPaymentLink ? `/api/v1/shipments/${shipmentId}/label?format=pdf` : '',
       pickupStatus: shouldSkipPaymentLink ? 'Scheduled' : 'Pending Buyer Payment',
-      paymentLink: cfLink.linkUrl,
-      cashfreeLinkId: cfLink.linkId,
+      paymentLink: paymentLinkInfo.linkUrl,
       returnAllowed: isReturnAllowed,
       paymentLinkSmsText: smsRes.smsText,
       paymentMode: isCod ? 'cod' : (paymentMode || 'prepaid'),
@@ -1039,9 +1037,9 @@ const publicPayShipment = async (req, res) => {
     }
 
     // In production, verify with PhonePe that the payment was genuinely completed
-    if (process.env.NODE_ENV === 'production' && (shipment.phonepeMerchantTransactionId || shipment.cashfreeLinkId)) {
+    if (process.env.NODE_ENV === 'production' && shipment.phonepeMerchantTransactionId) {
       try {
-        const targetId = shipment.phonepeMerchantTransactionId || shipment.cashfreeLinkId;
+        const targetId = shipment.phonepeMerchantTransactionId;
         const linkDetails = await phonepeService.getPaymentStatus(targetId);
         const isSuccess = linkDetails?.success && linkDetails?.code === 'PAYMENT_SUCCESS';
         if (!isSuccess) {
@@ -1073,43 +1071,42 @@ const publicPayShipment = async (req, res) => {
   }
 };
 
-// In-memory idempotency guard for Cashfree webhooks (24h TTL)
-const processedCashfreeEventIds = new Map();
-const CASHFREE_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+// In-memory idempotency guard for PhonePe payment webhooks (24h TTL)
+const processedPhonepeEventIds = new Map();
+const PHONEPE_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 
-const isCashfreeEventProcessed = (eventId) => {
+const isPhonepeEventProcessed = (eventId) => {
   if (!eventId) return false;
-  const ts = processedCashfreeEventIds.get(eventId);
+  const ts = processedPhonepeEventIds.get(eventId);
   if (!ts) return false;
-  if (Date.now() - ts > CASHFREE_IDEMPOTENCY_TTL_MS) {
-    processedCashfreeEventIds.delete(eventId);
+  if (Date.now() - ts > PHONEPE_IDEMPOTENCY_TTL_MS) {
+    processedPhonepeEventIds.delete(eventId);
     return false;
   }
   return true;
 };
 
-const markCashfreeEventProcessed = (eventId) => {
+const markPhonepeEventProcessed = (eventId) => {
   if (!eventId) return;
-  processedCashfreeEventIds.set(eventId, Date.now());
-  if (processedCashfreeEventIds.size > 20000) {
-    const cutoff = Date.now() - CASHFREE_IDEMPOTENCY_TTL_MS;
-    for (const [id, ts] of processedCashfreeEventIds.entries()) {
-      if (ts < cutoff) processedCashfreeEventIds.delete(id);
+  processedPhonepeEventIds.set(eventId, Date.now());
+  if (processedPhonepeEventIds.size > 20000) {
+    const cutoff = Date.now() - PHONEPE_IDEMPOTENCY_TTL_MS;
+    for (const [id, ts] of processedPhonepeEventIds.entries()) {
+      if (ts < cutoff) processedPhonepeEventIds.delete(id);
     }
   }
 };
 
 /**
- * @desc    Payment gateway webhook (PhonePe / Unified PG Callback)
+ * @desc    Payment gateway webhook (PhonePe Webhook Callback)
  * @route   POST /api/v1/shipments/webhook/payment
  * @access  Public
  */
 const paymentWebhookHandler = async (req, res) => {
   try {
-    const event = req.body;
     console.log('[Shipment Payment Webhook] Inbound payment event received');
 
-    // ── 0. Handle Inbound PhonePe Webhook Format ──────────────────────────────
+    // ── Handle Inbound PhonePe Webhook Format ──────────────────────────────
     if (req.body && req.body.response) {
       const base64Response = req.body.response;
       const xVerify = req.headers['x-verify'];
@@ -1135,7 +1132,7 @@ const paymentWebhookHandler = async (req, res) => {
         return res.status(200).json({ status: 'OK', note: 'Non-success acknowledged' });
       }
 
-      if (phonepeTxId && isCashfreeEventProcessed(phonepeTxId)) {
+      if (phonepeTxId && isPhonepeEventProcessed(phonepeTxId)) {
         console.log(`[PhonePe Webhook] Duplicate transaction ignored (idempotent): ${phonepeTxId}`);
         return res.status(200).json({ status: 'OK', note: 'Transaction already processed' });
       }
@@ -1143,7 +1140,6 @@ const paymentWebhookHandler = async (req, res) => {
       const shipment = await Shipment.findOne({
         $or: [
           { phonepeMerchantTransactionId: merchantTxId },
-          { cashfreeLinkId: merchantTxId },
           { shipmentId: merchantTxId?.replace(/^MT_/, '')?.split('_')?.[0] }
         ]
       });
@@ -1167,108 +1163,11 @@ const paymentWebhookHandler = async (req, res) => {
         }
       }
 
-      if (phonepeTxId) markCashfreeEventProcessed(phonepeTxId);
+      if (phonepeTxId) markPhonepeEventProcessed(phonepeTxId);
       return res.status(200).json({ status: 'OK' });
     }
 
-    // ── 1. Legacy / Fallback Gateway Signature Verification ─────────────────
-    const signature = req.headers['x-webhook-signature'];
-    const timestamp = req.headers['x-webhook-timestamp'];
-    const hasSecret = Boolean(process.env.CASHFREE_SECRET_KEY);
-    const isMockBypass = process.env.NODE_ENV !== 'production' && !hasSecret;
-
-    if (!isMockBypass) {
-      if (!signature) {
-        console.warn('[Shipment Webhook Security] Rejected: Missing required x-webhook-signature header');
-        return res.status(401).json({ error: 'Missing webhook signature' });
-      }
-      const rawPayload = req.rawBody ? req.rawBody.toString('utf8') : JSON.stringify(req.body);
-      const isValid = cashfreeService.verifyCashfreeWebhookSignature(rawPayload, signature, timestamp);
-      if (!isValid) {
-        console.warn('[Shipment Webhook Security] Rejected: Invalid HMAC signature');
-        return res.status(401).json({ error: 'Invalid webhook signature' });
-      }
-    }
-
-    // 2. Idempotency & Replay Prevention
-    const eventId = String(
-      event?.event_id || 
-      event?.data?.payment?.cf_payment_id || 
-      event?.data?.order?.order_id || 
-      event?.payment_id || 
-      ''
-    );
-    if (eventId && isCashfreeEventProcessed(eventId)) {
-      console.log(`[Shipment Webhook Security] Duplicate event ignored (idempotent): ${eventId}`);
-      return res.status(200).json({ status: 'OK', note: 'Event already processed' });
-    }
-
-    // 3. Status Verification: Ensure payment actually SUCCEEDED
-    const eventType = String(event?.type || '').toUpperCase();
-    const paymentStatus = String(
-      event?.data?.payment?.payment_status || 
-      event?.data?.order?.order_status || 
-      event?.status || 
-      ''
-    ).toUpperCase();
-
-    const isSuccessEvent = eventType.includes('SUCCESS') || paymentStatus === 'SUCCESS' || paymentStatus === 'PAID';
-    if (!isSuccessEvent) {
-      console.log(`[Shipment Webhook] Non-success payment event acknowledged (type: ${eventType}, status: ${paymentStatus})`);
-      if (eventId) markCashfreeEventProcessed(eventId);
-      return res.status(200).json({ status: 'OK', note: 'Non-success event acknowledged' });
-    }
-
-    // 4. Currency Verification: Must be INR
-    const currency = String(event?.data?.payment?.payment_currency || event?.data?.order?.order_currency || 'INR').toUpperCase();
-    if (currency !== 'INR') {
-      console.warn(`[Shipment Webhook Security] Currency mismatch: ${currency} !== INR`);
-      return res.status(400).json({ error: 'Invalid currency' });
-    }
-
-    const targetRef = event?.data?.order?.order_id || 
-                      event?.data?.payment_link_id || 
-                      event?.order_id || 
-                      event?.link_id ||
-                      event?.txnid;
-
-    if (targetRef) {
-      const cleanRef = String(targetRef).toUpperCase();
-      const shipment = await Shipment.findOne({
-        $or: [
-          { shipmentId: cleanRef },
-          { cashfreeLinkId: targetRef },
-          { shipmentId: cleanRef.replace(/^SPL_/, '').replace(/^ORD_/, '') }
-        ]
-      });
-
-      if (shipment) {
-        // 5. Amount Cross-Verification: Prevent underpayment exploits
-        const paidAmount = Number(
-          event?.data?.payment?.payment_amount || 
-          event?.data?.order?.order_amount || 
-          event?.amount || 
-          0
-        );
-        const expectedAmount = Number(shipment.escrowAmount || shipment.totalAmount || shipment.itemPrice || 0);
-
-        if (expectedAmount > 0 && paidAmount > 0 && Math.abs(paidAmount - expectedAmount) > 1.0) {
-          console.warn(`[Shipment Webhook Security Alert] Amount mismatch for ${shipment.shipmentId}: Paid ₹${paidAmount}, expected ₹${expectedAmount}`);
-          return res.status(400).json({ error: 'Payment amount mismatch' });
-        }
-
-        if (!shipment.receiverPaymentDone) {
-          await executeOrderPaymentAndCourierBooking(shipment, {
-            transactionRef: event?.data?.payment?.cf_payment_id || event?.payment_id || `WH_${Date.now()}`,
-            gateway: 'cashfree_webhook'
-          });
-          console.log(`[Shipment Payment Webhook] Successfully verified payment and booked courier for ${shipment.shipmentId}`);
-        }
-      }
-    }
-
-    if (eventId) markCashfreeEventProcessed(eventId);
-    res.status(200).json({ status: 'OK' });
+    return res.status(200).json({ status: 'OK', note: 'No actionable PhonePe payload found' });
   } catch (error) {
     console.error('[Shipment Payment Webhook] Error:', error);
     res.status(200).json({ status: 'OK' });
@@ -1779,7 +1678,7 @@ const generatePaymentLink = async (req, res) => {
     }
 
     if (!shipment.paymentLink) {
-      const cfLink = await cashfreeService.createPaymentLink({
+      const ppLink = await phonepeService.createPaymentLink({
         shipmentId: shipment.shipmentId,
         amount: shipment.amount,
         receiverName: shipment.receiverName,
@@ -1787,8 +1686,8 @@ const generatePaymentLink = async (req, res) => {
         description: shipment.description
       });
 
-      shipment.paymentLink = cfLink.linkUrl;
-      shipment.cashfreeLinkId = cfLink.linkId;
+      shipment.paymentLink = ppLink.linkUrl;
+      shipment.phonepeMerchantTransactionId = ppLink.linkId;
 
       const smsRes = await smsService.sendPaymentLinkSms({
         phone: shipment.receiverPhone,
@@ -1810,14 +1709,13 @@ const generatePaymentLink = async (req, res) => {
       receiverName: shipment.receiverName,
       receiverPhone: shipment.receiverPhone,
       paymentLink: shipment.paymentLink,
-      cashfreeLinkId: shipment.cashfreeLinkId,
       returnAllowed: shipment.returnAllowed !== false,
       paymentLinkSmsText: shipment.paymentLinkSmsText,
       status: 'SUCCESS'
     });
   } catch (error) {
     console.error('Generate Payment Link Error:', error);
-    res.status(500).json({ error: 'Failed to generate Cashfree payment link' });
+    res.status(500).json({ error: 'Failed to generate PhonePe payment link' });
   }
 };
 

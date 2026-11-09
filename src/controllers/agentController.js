@@ -16,7 +16,6 @@ const { verifyAddressAndPredictRto } = require('../services/addressRtoService');
 const { checkDelhiveryServiceability } = require('../services/delhiveryService');
 const { sendPaymentLinkWhatsApp, sendBookingConfirmationWhatsApp } = require('../services/whatsappService');
 const phonepeService = require('../services/phonepeService');
-const cashfreeService = phonepeService; // Backwards-compatible alias
 const smsService = require('../services/smsService');
 const { createNotification } = require('../services/notification');
 const { calculateServiceFee } = require('../utils/feeConfig');
@@ -1569,17 +1568,21 @@ const handleChat = async (req, res) => {
             }
           }
 
-          // Create Cashfree payment link ONLY for Prepaid shipments
-          let cfLink = { linkUrl: '', linkId: '' };
+          // Prepaid shipments: seller pays upfront courier freight from wallet; no buyer payment links
+          let paymentLinkUrl = '';
           if (isPrepaidOrder) {
-            cfLink = await cashfreeService.createPaymentLink({
-              shipmentId,
-              amount: data.amount,
-              receiverName: data.receiverName,
-              receiverPhone: data.receiverPhone,
-              description: data.description,
-              returnAllowed: data.returnAllowed
-            });
+            if (availableWallet >= deliveryCharge) {
+              user.walletBalance = parseFloat(Math.max(0, availableWallet - deliveryCharge).toFixed(2));
+              await user.save();
+            } else {
+              agentReply = 
+                `⚠️ *Insufficient Wallet Balance for Prepaid Shipment*\n\n` +
+                `Prepaid shipment booking requires upfront courier delivery fee of *₹${deliveryCharge}*.\n\n` +
+                `💼 *Current Wallet Balance:* ₹${availableWallet}\n` +
+                `🔻 *Shortfall:* ₹${(deliveryCharge - availableWallet).toFixed(2)}\n\n` +
+                `Please top up your wallet in the *Wallet* tab or switch this shipment to *COD* by replying *"edit mode"*.`;
+              break;
+            }
           }
 
           // Create Shipment document
@@ -1596,8 +1599,7 @@ const handleChat = async (req, res) => {
             carrierSlug:     sel.slug,
             awbCode,
             returnAllowed:   data.returnAllowed,
-            paymentLink:     cfLink.linkUrl || '',
-            cashfreeLinkId:  cfLink.linkId || '',
+            paymentLink:     paymentLinkUrl,
             paymentMode:     isCod ? 'cod' : 'prepaid',
             isPrepaid:       isPrepaidOrder,
             codCharge:       codCharge,
@@ -2118,8 +2120,7 @@ async function processBulkRows(job, user) {
         carrierSlug:       sel.slug,
         awbCode,
         returnAllowed:     row.returnAllowed,
-        paymentLink:       cfLink.linkUrl,
-        cashfreeLinkId:    cfLink.linkId,
+        paymentLink:       '',
         paymentMode:       row.paymentMode,
         isPrepaid:         isPrepaid,
         codAmount:         isCod ? (row.codAmount || row.amount) : 0,

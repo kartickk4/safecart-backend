@@ -3,7 +3,6 @@ const crypto = require('crypto');
 const User = require('../models/User');
 const WalletTransaction = require('../models/WalletTransaction');
 const phonepeService = require('../services/phonepeService');
-const cashfreeService = phonepeService; // Backwards-compatible alias
 const { getActiveShipmentsCount, calculateSecurityReserve } = require('../utils/securityReserve');
 const {
   checkCoolingPeriod,
@@ -118,10 +117,8 @@ const verifyPayment = async (req, res) => {
       });
     }
 
-    // 2. Gateway Verification: Never trust client-side claims alone
-    const normalizedGateway = (gateway || 'phonepe').toLowerCase();
-    if (normalizedGateway === 'phonepe' || normalizedGateway === 'cashfree') {
-      const verification = await phonepeService.verifyPaymentWithGateway({
+    // 2. Gateway Verification: Never trust client-side claims alone (PhonePe Gateway)
+    const verification = await phonepeService.verifyPaymentWithGateway({
         orderId: orderId || effectivePaymentId,
         paymentId: effectivePaymentId,
         expectedAmount: calculatedTotal || numAmount,
@@ -134,7 +131,6 @@ const verifyPayment = async (req, res) => {
           error: verification.error || 'Payment verification failed with PhonePe gateway. Wallet was not credited.'
         });
       }
-    }
 
     // 3. Atomic credit to User wallet with returnOriginal/new: false to eliminate TOCTOU race conditions
     const userBefore = await User.findOneAndUpdate(

@@ -4,7 +4,6 @@ const Reward = require('../models/Reward');
 const WalletTransaction = require('../models/WalletTransaction');
 const { createNotification } = require('./notification');
 const { calculateServiceFee } = require('../utils/feeConfig');
-const cashfreeService = require('./cashfreeService');
 const { recordTransaction } = require('./walletService');
 
 /**
@@ -144,38 +143,6 @@ const releaseEscrow = async (shipmentId, receiverId) => {
   }
 
   // ── Seller Shipping Cashback disabled ─────────────────────────────────
-
-  // ── Cashfree Fast Escrow Payout (IMPS / UPI) ──────────────────────────────
-  // IMPS ensures 30–60 min settlement (24/7) vs 1–2 day NEFT batch processing
-  let payoutResult = null;
-  if (!isPaidOffline && sender && netPayout > 0) {
-    const hasUpi = Boolean(sender.bankDetails?.upiId);
-    // UPI for amounts <= ₹1L if UPI ID configured, otherwise IMPS (up to ₹5L limit)
-    const selectedMode = (hasUpi && netPayout <= 100000) ? 'UPI' : 'IMPS';
-
-    const payoutPayload = {
-      beneficiary_id: sender.cashfreeBeneficiaryId || `BEN_${sender._id.toString()}`,
-      amount: netPayout,
-      transfer_mode: selectedMode, // IMPS ensures 30-60 min settlement (24/7) vs 1-2 day NEFT batch processing
-      remarks: `SecureKaro Payout - Order ${shipment.shipmentId}`,
-      beneficiary_details: {
-        account_number: sender.bankDetails?.accountNumber || '',
-        ifsc: sender.bankDetails?.ifscCode || '',
-        upi_id: sender.bankDetails?.upiId || '',
-        name: sender.bankDetails?.accountHolderName || sender.fullName
-      }
-    };
-
-    try {
-      payoutResult = await cashfreeService.requestPayout(payoutPayload);
-      shipment.payoutTransferMode = payoutPayload.transfer_mode;
-      shipment.payoutTransferId = payoutResult.transferId;
-      shipment.payoutStatus = payoutResult.status;
-      await shipment.save();
-    } catch (payoutErr) {
-      console.warn(`[Escrow Payout] Non-blocking Cashfree payout trigger notice:`, payoutErr.message);
-    }
-  }
 
   // Generate payment summary details
   const formattedAmount = `₹${new Intl.NumberFormat('en-IN').format(shipment.amount)}`;

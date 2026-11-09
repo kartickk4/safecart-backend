@@ -66,7 +66,6 @@ const {
   publicNdrResolve,
   getNdrShipments
 } = loadMod('controllers', 'shipmentController');
-const { createPaymentSessionForShipment } = loadMod('controllers', 'youpiWebhookController');
 const { getSupportedCouriersList, getPincodeInfo } = loadMod('services', 'carrierRateService');
 const { protect } = loadMod('middleware', 'auth');
 
@@ -97,14 +96,8 @@ router.get('/serviceability/pincode/:pincode', async (req, res) => {
 router.route('/public/pay/:id')
   .post(publicPayShipment);
 
-router.route('/public/youpi-link/:id')
-  .post(createPaymentSessionForShipment);
-
 router.route('/webhook/payment')
   .post(paymentWebhookHandler);
-
-router.route('/:id/generate-youpi-link')
-  .post(protect, createPaymentSessionForShipment);
 
 router.route('/')
   .get(protect, getShipments)
