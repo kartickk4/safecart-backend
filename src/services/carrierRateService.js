@@ -251,54 +251,74 @@ const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = nu
   // charge higher rates (+₹18 per slab, min ₹55) for doorstep reverse pickup & QC verification
   const REVERSE_SURCHARGE_PER_SLAB = isReverse ? 18 : 0;
 
-  const quotes = Object.entries(rates).map(([slug, baseRate]) => {
-    const rawForwardPrice = parseFloat((baseRate * weightSlabs).toFixed(2));
-    const isSfx = slug.includes('shadowfax');
-    const surcharge = isReverse ? (isSfx ? 0 : parseFloat((REVERSE_SURCHARGE_PER_SLAB * weightSlabs).toFixed(2))) : 0;
-    
-    // COD Handling fee dynamically aligned with Shiprocket rate card for declared amount
-    let codCharge = 0;
-    if (isCod) {
-      const val = parseFloat(declaredValue) || 3000;
-      if (slug.includes('delhivery')) codCharge = val >= 3000 ? 99.00 : 54.00;
-      else if (slug.includes('xpressbees')) codCharge = val >= 3000 ? 75.00 : 48.00;
-      else if (slug.includes('shadowfax')) codCharge = 0; // Shadowfax 360: ₹0 COD handling fee
-      else codCharge = Math.max(54.00, parseFloat((val * 0.03).toFixed(2)));
-    }
+  const REVERSE_CARRIER_NAMES = {
+    shadowfax: 'Shadowfax Reverse 360 (Doorstep QC)',
+    delhivery: 'Delhivery Reverse QC Express',
+    xpressbees: 'Xpressbees Reverse Logistics',
+    ekart: 'Ekart Doorstep Return & QC',
+    ecom_express: 'Ecom Express Reverse Pickup',
+    bluedart: 'BlueDart Apex Reverse'
+  };
 
-    // Secure Shipment insurance fee
-    const secureCharge = (!isReverse && isSecureShipment) ? 54.00 : 0;
-    const whatsappCharge = (!isReverse) ? 5.00 : 0;
+  const REVERSE_SUPPORTED_SLUGS = new Set(['shadowfax', 'delhivery', 'xpressbees', 'ekart', 'ecom_express', 'bluedart']);
 
-    const finalPrice = parseFloat((isReverse 
-      ? (isSfx ? Math.max(34, rawForwardPrice - 5) : Math.max(55, rawForwardPrice + surcharge))
-      : (rawForwardPrice + codCharge + secureCharge + whatsappCharge)
-    ).toFixed(2));
+  const quotes = Object.entries(rates)
+    .filter(([slug]) => !isReverse || REVERSE_SUPPORTED_SLUGS.has(slug))
+    .map(([slug, baseRate]) => {
+      const rawForwardPrice = parseFloat((baseRate * weightSlabs).toFixed(2));
+      const isSfx = slug.includes('shadowfax');
+      const surcharge = isReverse ? (isSfx ? 0 : parseFloat((REVERSE_SURCHARGE_PER_SLAB * weightSlabs).toFixed(2))) : 0;
+      
+      // COD Handling fee dynamically aligned with Shiprocket rate card for declared amount
+      let codCharge = 0;
+      if (isCod && !isReverse) {
+        const val = parseFloat(declaredValue) || 3000;
+        if (slug.includes('delhivery')) codCharge = val >= 3000 ? 99.00 : 54.00;
+        else if (slug.includes('xpressbees')) codCharge = val >= 3000 ? 75.00 : 48.00;
+        else if (slug.includes('shadowfax')) codCharge = 0; // Shadowfax 360: ₹0 COD handling fee
+        else codCharge = Math.max(54.00, parseFloat((val * 0.03).toFixed(2)));
+      }
 
-    return {
-      slug,
-      name:       CARRIER_NAMES[slug] || slug,
-      price:      finalPrice,
-      exactRate:  finalPrice,
-      freightCharge: rawForwardPrice,
-      codCharge:  codCharge,
-      whatsappCharge: whatsappCharge,
-      secureShipmentCharge: secureCharge,
-      isSecureShipment,
-      forwardBasePrice: rawForwardPrice,
-      reverseSurcharge: surcharge,
-      isReverse,
-      isCod,
-      eta:        etas[slug] || '3-5 days',
-      rating:     CARRIER_RATINGS[slug] || 4.5,
-      aggregator: 'shiprocket',
-      aggregatorName: 'Shiprocket',
-      courierPartner: CARRIER_NAMES[slug] || slug,
-      apiSource:  'Shiprocket Rate Engine',
-      zone:       zoneKey,
-      serviceType: isReverse ? 'Reverse Logistics & Doorstep QC' : (isCod ? 'Cash on Delivery (COD)' : 'Prepaid Express Delivery')
-    };
-  });
+      // Secure Shipment insurance fee
+      const secureCharge = (!isReverse && isSecureShipment) ? 54.00 : 0;
+      const whatsappCharge = (!isReverse) ? 5.00 : 0;
+
+      const finalPrice = parseFloat((isReverse 
+        ? (isSfx ? Math.max(34, rawForwardPrice - 5) : Math.max(55, rawForwardPrice + surcharge))
+        : (rawForwardPrice + codCharge + secureCharge + whatsappCharge)
+      ).toFixed(2));
+
+      const carrierDisplayName = isReverse 
+        ? (REVERSE_CARRIER_NAMES[slug] || `${CARRIER_NAMES[slug] || slug} Reverse`)
+        : (CARRIER_NAMES[slug] || slug);
+
+      return {
+        slug,
+        name:       carrierDisplayName,
+        price:      finalPrice,
+        exactRate:  finalPrice,
+        totalRate:  finalPrice,
+        freightCharge: rawForwardPrice,
+        codCharge:  isReverse ? 0 : codCharge,
+        whatsappCharge: isReverse ? 0 : whatsappCharge,
+        secureShipmentCharge: isReverse ? 0 : secureCharge,
+        isSecureShipment: !isReverse && isSecureShipment,
+        forwardBasePrice: rawForwardPrice,
+        reverseSurcharge: surcharge,
+        isReverse,
+        hasDoorstepQC: isReverse,
+        doorstepQC: isReverse,
+        isCod: isReverse ? false : isCod,
+        eta:        etas[slug] || (isReverse ? '3-4 days' : '3-5 days'),
+        rating:     CARRIER_RATINGS[slug] || 4.5,
+        aggregator: 'shiprocket',
+        aggregatorName: 'Shiprocket Reverse',
+        courierPartner: carrierDisplayName,
+        apiSource:  isReverse ? 'Reverse Logistics Engine' : 'Shiprocket Rate Engine',
+        zone:       zoneKey,
+        serviceType: isReverse ? 'Reverse Logistics & Doorstep QC' : (isCod ? 'Cash on Delivery (COD)' : 'Prepaid Express Delivery')
+      };
+    });
 
   // Enrich quotes with Cost-to-Deliver and Pincode Delivery Success Rates
   quotes.forEach(q => enrichQuoteWithCostToDeliver(q, zoneKey, isCod));
@@ -769,12 +789,18 @@ function attachSmartBadges(quotes, isCod = false, weightKg = 0.5, orderValue = 0
     const isCheapest = Math.abs(total - cheapestTotal) < 0.5;
 
     // 🏆 Best for COD — Shadowfax has ₹0 COD handling fee
-    if (isCod && isShadowfax) {
+    if (isCod && isShadowfax && !q.isReverse) {
       badges.push({ label: 'Best for COD', icon: '🏆', color: 'gold', reason: '₹0 COD handling fee' });
     }
 
+    // 🔍 Doorstep QC Verified & ↩️ Reverse Logistics
+    if (q.isReverse) {
+      badges.push({ label: 'Doorstep QC Included', icon: '🔍', color: 'emerald', reason: 'Doorstep quality check verification included' });
+      badges.push({ label: 'Reverse Pickup', icon: '↩️', color: 'blue', reason: 'Customer doorstep return pickup' });
+    }
+
     // 🛡️ RTO Shield — Shadowfax has ₹0 RTO charge
-    if (isShadowfax) {
+    if (isShadowfax && !q.isReverse) {
       badges.push({ label: 'RTO Shield', icon: '🛡️', color: 'green', reason: '₹0 RTO return charge' });
     }
 
@@ -824,6 +850,29 @@ function attachSmartBadges(quotes, isCod = false, weightKg = 0.5, orderValue = 0
 function getSmartRecommendation(quotes, isCod = false, weightKg = 0.5, orderValue = 0, toPin = '') {
   if (!Array.isArray(quotes) || quotes.length === 0) {
     return { carrier: null, reason: 'No quotes available', badges: [] };
+  }
+
+  // Rule 0: Reverse Logistics & Doorstep QC
+  const isReverseShipment = quotes.some(q => q.isReverse);
+  if (isReverseShipment) {
+    const shadowfax = quotes.find(q => {
+      const s = (q.slug || q.baseSlug || '').toLowerCase();
+      const n = (q.name || q.courierPartner || '').toLowerCase();
+      return s.includes('shadowfax') || n.includes('shadowfax');
+    });
+    if (shadowfax) return {
+      carrier: shadowfax.slug || shadowfax.baseSlug || 'shadowfax',
+      reason: '↩️ Top Reverse Partner — Shadowfax Reverse 360 offers lowest return rates with integrated app-based doorstep visual QC.',
+      badges: [
+        { label: 'Doorstep QC Included', icon: '🔍', color: 'emerald' },
+        { label: 'Lowest Rate', icon: '💰', color: 'blue' }
+      ]
+    };
+    return {
+      carrier: quotes[0]?.slug || quotes[0]?.baseSlug,
+      reason: `↩️ Cheapest Reverse Courier — ${quotes[0]?.name || 'Carrier'} with verified customer doorstep return pickup.`,
+      badges: [{ label: 'Doorstep Return', icon: '↩️', color: 'blue' }]
+    };
   }
 
   // Rule 1: ODA pincode → India Post

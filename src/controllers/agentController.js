@@ -2279,16 +2279,18 @@ const getCarrierRatesHandler = async (req, res) => {
   try {
     const { 
       fromPincode, toPincode, weightKg, length, width, height, dimensions, 
-      paymentMode, cod, declaredValue, amount, isSecureShipment, secureShipment 
+      paymentMode, cod, declaredValue, amount, isSecureShipment, secureShipment,
+      isReverse, shipmentType
     } = req.body;
     if (!fromPincode || !toPincode) {
       return res.status(400).json({ error: 'fromPincode and toPincode are required.' });
     }
-    const isCod = cod === 1 || cod === '1' || paymentMode === 'cod';
+    const isReverseShipment = isReverse === true || isReverse === 'true' || shipmentType === 'reverse';
+    const isCod = !isReverseShipment && (cod === 1 || cod === '1' || paymentMode === 'cod');
     const decVal = parseFloat(declaredValue || amount) || 0;
     const isSecure = isSecureShipment === true || isSecureShipment === 'true' || secureShipment === true || secureShipment === 'true' || isSecureShipment === 1;
     const dims = dimensions || (length && width && height ? { length, width, height } : null);
-    const quotes = await getCarrierRatesAsync(fromPincode, toPincode, parseFloat(weightKg) || 0.5, dims, false, isCod, decVal, isSecure);
+    const quotes = await getCarrierRatesAsync(fromPincode, toPincode, parseFloat(weightKg) || 0.5, dims, isReverseShipment, isCod, decVal, isSecure);
     const parsedWeight = parseFloat(weightKg) || 0.5;
     const quotesWithBadges = attachSmartBadges(quotes, isCod, parsedWeight, decVal, toPincode);
     const smartRecommendation = getSmartRecommendation(quotesWithBadges, isCod, parsedWeight, decVal, toPincode);
@@ -2296,7 +2298,8 @@ const getCarrierRatesHandler = async (req, res) => {
       quotes: quotesWithBadges, 
       smartRecommendation,
       fromZone: getPincodeInfo(fromPincode), 
-      toZone: getPincodeInfo(toPincode) 
+      toZone: getPincodeInfo(toPincode),
+      isReverse: isReverseShipment
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
