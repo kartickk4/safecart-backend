@@ -1,17 +1,21 @@
 /**
  * geminiService.js
  * Google Gemini Generative AI Service for SecureKaro Logistics Copilot.
- * Optimized for ultra-low latency (<2s responses) using gemini-3.5-flash-lite
- * with automatic fallback to gemini-flash-lite-latest and gemini-3.5-flash.
+ * Optimized for ultra-low latency (<2s responses) using gemini-2.0-flash-lite
+ * with automatic fallback to gemini-2.5-flash-lite and gemini-2.0-flash.
  */
 
 const https = require('https');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
-// Low-latency priority: gemini-3.5-flash-lite provides 1-2s instant responses
-// avoiding the 40+ second deep thinking loops of full flash models.
-const MODELS = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.5-flash'];
+// Model priority: fastest → most capable. Vision OCR needs at least gemini-2.0-flash-lite.
+// gemini-2.0-flash-lite: free tier, 1-2s, supports image input (vision OCR)
+// gemini-2.5-flash-lite: newer, slightly slower, also supports vision
+// gemini-2.0-flash: full model, highest accuracy, used as final fallback
+const MODELS = ['gemini-2.0-flash-lite', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'];
+// Legacy alias fallbacks tried if above all fail
+const LEGACY_MODELS = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.5-flash'];
 
 /**
  * Make a direct HTTPS POST request to Gemini generateContent endpoint
@@ -63,11 +67,12 @@ async function callGemini(model, body) {
 }
 
 /**
- * Executes a Gemini request with ultra-fast fallback
+ * Executes a Gemini request with ultra-fast fallback across standard & legacy models
  */
 async function generateWithFallback(body) {
   let lastError = null;
-  for (const model of MODELS) {
+  const candidateModels = [...MODELS, ...LEGACY_MODELS];
+  for (const model of candidateModels) {
     try {
       const response = await callGemini(model, body);
       const text = response.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -91,11 +96,11 @@ async function extractOrderFromText(rawText) {
   if (!GEMINI_API_KEY) return null;
 
   const systemInstruction = 
-    "You are an expert Indian e-commerce logistics parser for SecureKaro. " +
-    "Extract shipping and parcel details from unstructured messages, customer WhatsApp chats, or address blocks. " +
+    "You are an expert Indian e-commerce logistics parser for SecureKaro.\n" +
+    "Extract shipping and parcel details from unstructured messages, customer WhatsApp chats, or address blocks.\n" +
     "Return strict JSON matching this schema:\n" +
     "{\n" +
-    '  "isOrder": boolean, // true if this text contains an order/recipient address or intent to ship\n' +
+    '  "isOrder": boolean, // ALWAYS set true if text contains any delivery address, recipient name, phone, or pincode\n' +
     '  "receiverName": string or null,\n' +
     '  "receiverPhone": string or null (10-digit Indian mobile number without +91 or leading 0),\n' +
     '  "receiverAddress": string or null (street address, landmarks, area, building),\n' +
@@ -106,7 +111,7 @@ async function extractOrderFromText(rawText) {
     '  "paymentMode": "cod" or "prepaid" (default to "cod" if cash on delivery mentioned or ambiguous with an amount, "prepaid" if prepaid/online/paid mentioned),\n' +
     '  "description": string or null (item name, e.g. "2 Saree", "Sneakers")\n' +
     "}\n" +
-    "If the text is just a general question or greeting (not an order/address), set isOrder: false.";
+    "Only set isOrder: false if the input is purely a greeting or irrelevant conversation with zero address/contact info.";
 
   const body = {
     contents: [
@@ -124,17 +129,18 @@ async function extractOrderFromText(rawText) {
   try {
     const rawJson = await generateWithFallback(body);
     const parsed = JSON.parse(rawJson);
-    if (parsed && parsed.isOrder) {
-      // Clean phone number
+    if (parsed) {
       if (parsed.receiverPhone) {
         parsed.receiverPhone = String(parsed.receiverPhone).replace(/\D/g, '').slice(-10);
       }
-      // Clean pincode
       if (parsed.receiverPincode) {
         const pinMatch = String(parsed.receiverPincode).match(/\b\d{6}\b/);
         parsed.receiverPincode = pinMatch ? pinMatch[0] : null;
       }
-      return parsed;
+      if (parsed.isOrder || parsed.receiverName || parsed.receiverPhone || parsed.receiverPincode || parsed.receiverAddress) {
+        parsed.isOrder = true;
+        return parsed;
+      }
     }
     return null;
   } catch (err) {
@@ -193,7 +199,7 @@ async function answerMerchantQuery({ query, user, context }) {
 
 /**
  * 1-Click Vision / OCR Order Extractor
- * Reads photos, screenshots (WhatsApp chat, SMS, handwritten slips, shipping labels, invoices)
+ * Reads photos, screenshots (WhatsApp chat, SMS, handwritten slips/chits, shipping labels, invoices)
  * and extracts shipping recipient and parcel details into structured JSON.
  */
 async function extractOrderFromImage(imageBase64, imageMimeType = 'image/jpeg') {
@@ -217,22 +223,27 @@ async function extractOrderFromImage(imageBase64, imageMimeType = 'image/jpeg') 
   if (cleanBase64.length < 50) return null;
 
   const systemInstruction = 
-    "You are an expert Indian e-commerce OCR and logistics parcel parser for SecureKaro.\n" +
-    "You are given an image (e.g. WhatsApp conversation screenshot, customer address chit, paper invoice, handwritten label, or courier slip).\n" +
-    "Carefully inspect the image, transcribe any shipping recipient details, item description, and order values, and return strict JSON matching this schema:\n" +
+    "You are an expert Indian logistics OCR parser for SecureKaro.\n" +
+    "You are given an image that may contain an Indian customer address, handwritten paper slip/chit, WhatsApp chat screenshot, parcel label, or invoice.\n" +
+    "Indian handwritten chits often have:\n" +
+    "- Receiver Name (e.g. Raju Das, Rahul Sharma)\n" +
+    "- Street / Locality (e.g. Padma 1st lane, Nimta, Flat 2B)\n" +
+    "- City and PIN code (e.g. Kolkata - 700041, Delhi 110001)\n" +
+    "- 10-digit Mobile number (e.g. 7921814321, 9876543210)\n\n" +
+    "Carefully transcribe all readable text, extract the shipping recipient details, and return strict JSON matching this schema:\n" +
     "{\n" +
-    '  "isOrder": boolean, // true if this image contains an order/recipient address or intent to ship\n' +
+    '  "isOrder": boolean, // ALWAYS set true if image contains an address, person name, Indian phone number, or 6-digit pincode\n' +
     '  "receiverName": string or null,\n' +
     '  "receiverPhone": string or null (10-digit Indian mobile number without +91 or leading 0),\n' +
     '  "receiverAddress": string or null (full street address, house/flat/building, landmark, area),\n' +
     '  "receiverPincode": string or null (6-digit Indian PIN code),\n' +
     '  "city": string or null,\n' +
-    '  "weightKg": number or null (e.g. 0.5, 1.0, 2.0 - default to 0.5 if not found),\n' +
+    '  "weightKg": number or null (default 0.5 if not explicitly written),\n' +
     '  "amount": number or null (item value or COD amount in INR),\n' +
-    '  "paymentMode": "cod" or "prepaid" (default to "cod" if cash on delivery or amount is mentioned, "prepaid" if paid/online mentioned),\n' +
-    '  "description": string or null (item/product description, e.g. \"Saree\", \"Shoes\", \"Kurtis\")\n' +
+    '  "paymentMode": "cod" or "prepaid" (default to "cod" if amount mentioned, else "prepaid"),\n' +
+    '  "description": string or null (item/product description if mentioned, else null)\n' +
     "}\n" +
-    "If the image does not show an address, customer details, or order, set isOrder: false.";
+    "Only set isOrder: false if the image has zero text or contains completely unrelated content (e.g. random landscape photo).";
 
   const body = {
     contents: [
@@ -262,7 +273,7 @@ async function extractOrderFromImage(imageBase64, imageMimeType = 'image/jpeg') 
   try {
     const rawJson = await generateWithFallback(body);
     const parsed = JSON.parse(rawJson);
-    if (parsed && parsed.isOrder) {
+    if (parsed) {
       if (parsed.receiverPhone) {
         parsed.receiverPhone = String(parsed.receiverPhone).replace(/\D/g, '').slice(-10);
       }
@@ -270,7 +281,10 @@ async function extractOrderFromImage(imageBase64, imageMimeType = 'image/jpeg') 
         const pinMatch = String(parsed.receiverPincode).match(/\b\d{6}\b/);
         parsed.receiverPincode = pinMatch ? pinMatch[0] : null;
       }
-      return parsed;
+      if (parsed.isOrder || parsed.receiverName || parsed.receiverPhone || parsed.receiverPincode || parsed.receiverAddress) {
+        parsed.isOrder = true;
+        return parsed;
+      }
     }
     return null;
   } catch (err) {
