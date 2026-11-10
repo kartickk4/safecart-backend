@@ -9,13 +9,11 @@ const https = require('https');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
-// Model priority: fastest → most capable. Vision OCR needs at least gemini-2.0-flash-lite.
-// gemini-2.0-flash-lite: free tier, 1-2s, supports image input (vision OCR)
-// gemini-2.5-flash-lite: newer, slightly slower, also supports vision
-// gemini-2.0-flash: full model, highest accuracy, used as final fallback
-const MODELS = ['gemini-2.0-flash-lite', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'];
-// Legacy alias fallbacks tried if above all fail
-const LEGACY_MODELS = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.5-flash'];
+// Primary models: gemini-3.5-flash-lite provides 1-2s instant responses and excellent vision OCR.
+// gemini-3.5-flash provides higher capacity fallback.
+const MODELS = ['gemini-3.5-flash-lite', 'gemini-3.5-flash', 'gemini-flash-lite-latest'];
+// Additional fallbacks
+const LEGACY_MODELS = ['gemini-2.5-flash-lite', 'gemini-2.0-flash'];
 
 /**
  * Make a direct HTTPS POST request to Gemini generateContent endpoint
