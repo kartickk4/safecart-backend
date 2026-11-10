@@ -757,8 +757,32 @@ const createShipment = async (req, res) => {
     // Refresh affected dashboard summaries
     invalidateDashboardCache();
 
+    // 🎁 Probabilistic Seller Cashback: 85% chance ₹7-8, 10% chance ₹8-9, 5% chance ₹10
+    const cbRand = Math.random() * 100;
+    let sellerCashback = 10;
+    if (cbRand < 85) {
+      sellerCashback = Math.random() < 0.5 ? 7 : 8;
+    } else if (cbRand < 95) {
+      sellerCashback = Math.random() < 0.5 ? 8 : 9;
+    } else {
+      sellerCashback = 10;
+    }
+
+    try {
+      sender.walletBalance = parseFloat(((sender.walletBalance || 0) + sellerCashback).toFixed(2));
+      sender.totalCashbackEarned = parseFloat(((sender.totalCashbackEarned || 0) + sellerCashback).toFixed(2));
+      await sender.save();
+
+      shipment.supplierCashbackPaid = sellerCashback;
+      shipment.supplierCashbackAmount = sellerCashback;
+      await shipment.save();
+    } catch (cbSaveErr) {
+      console.warn('[CASHBACK] Note on saving seller cashback:', cbSaveErr.message);
+    }
+
     res.status(201).json({
       ...shipment.toObject(),
+      cashbackEarned: sellerCashback,
       serviceFee: feeCalc.fee,
       serviceFeeRate: feeCalc.rate,
       serviceFeeNote: feeCalc.note,

@@ -38,18 +38,24 @@ const generateDeliveryCashback = async () => {
 };
 
 /**
- * Calculates weighted random cashback amount between ₹10 and ₹50.
+ * Calculates weighted random cashback amount:
+ * - 85% chance: ₹7 to ₹8
+ * - 10% chance: ₹8 to ₹9
+ * - 5% chance: ₹10
  */
 const generateWeightedCashback = () => {
   const rand = Math.random() * 100;
   if (rand < 85) {
-    // 85%: ₹3 or ₹4
-    const amounts = [3, 4];
+    // 85% chance: ₹7 or ₹8
+    const amounts = [7, 8];
+    return amounts[Math.floor(Math.random() * amounts.length)];
+  } else if (rand < 95) {
+    // 10% chance: ₹8 or ₹9
+    const amounts = [8, 9];
     return amounts[Math.floor(Math.random() * amounts.length)];
   } else {
-    // 15%: ₹5 or ₹6
-    const amounts = [5, 6];
-    return amounts[Math.floor(Math.random() * amounts.length)];
+    // 5% chance: ₹10
+    return 10;
   }
 };
 
@@ -100,14 +106,8 @@ const grantSellerCashback = async (shipmentId) => {
       console.warn('[Reward Service] Config lookup fallback for seller cashback amount:', cErr.message);
     }
 
-    // Determine cashback amount in rupees (e.g. ₹3 to ₹6)
-    const pool = [];
-    for (let a = Math.round(minAmt); a <= Math.round(maxAmt); a++) {
-      pool.push(a);
-    }
-    const cashbackAmount = pool.length > 0 
-      ? pool[Math.floor(Math.random() * pool.length)] 
-      : 4;
+    // Determine cashback amount in rupees (85% ₹7-8, 10% ₹8-9, 5% ₹10)
+    const cashbackAmount = generateWeightedCashback();
 
     // Credit seller cashback balance
     seller.cashbackBalance = parseFloat(((seller.cashbackBalance || 0) + cashbackAmount).toFixed(2));
