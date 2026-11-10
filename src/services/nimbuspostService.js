@@ -169,15 +169,15 @@ async function fetchLiveNimbusRates(fromPincode, toPincode, weightKg = 0.5, dime
  */
 function getRealisticNimbusQuotes(fromPincode, toPincode, weightKg = 0.5, isCod = false, declaredValue = 0, isSecureShipment = true, isReverse = false) {
   const weightSlabs = Math.max(1, Math.ceil(weightKg / 0.5));
-  
+
   if (isReverse) {
     // Exact NimbusPost RVP (Reverse Pickup) & Doorstep QC rates per slab (including 18% GST & fuel surcharge)
     // No platform discount subsidy on returns: seller/order covers exact carrier cost down to each paisa
     const nimbusReverseRates = {
-      shadowfax: { baseFreight: 50.72, reverseSurcharge: 0.00, mode: 'Surface', name: 'Shadowfax Reverse 360 (via NimbusPost)', eta: '2-3 Days', rating: 4.7 },
-      ekart: { baseFreight: 44.60, reverseSurcharge: 18.00, mode: 'Surface', name: 'Ekart Doorstep QC Return (via NimbusPost)', eta: '2-3 Days', rating: 4.7 },
-      xpressbees: { baseFreight: 44.60, reverseSurcharge: 18.00, mode: 'Surface', name: 'Xpressbees Reverse (via NimbusPost)', eta: '2-3 Days', rating: 4.6 },
-      delhivery: { baseFreight: 49.56, reverseSurcharge: 18.00, mode: 'Surface', name: 'Delhivery Reverse QC (via NimbusPost)', eta: '2-3 Days', rating: 4.8 }
+      shadowfax: { baseFreight: 93.22, reverseSurcharge: 0.00, mode: 'Surface', name: 'Shadowfax Reverse 360 (via NimbusPost)', eta: '2-3 Days', rating: 4.7 },
+      ekart: { baseFreight: 101.48, reverseSurcharge: 0.00, mode: 'Surface', name: 'Ekart Doorstep QC Return (via NimbusPost)', eta: '2-3 Days', rating: 4.7 },
+      xpressbees: { baseFreight: 103.84, reverseSurcharge: 0.00, mode: 'Surface', name: 'Xpressbees Reverse (via NimbusPost)', eta: '2-3 Days', rating: 4.6 },
+      delhivery: { baseFreight: 110.92, reverseSurcharge: 0.00, mode: 'Surface', name: 'Delhivery Reverse QC (via NimbusPost)', eta: '2-3 Days', rating: 4.8 }
     };
 
     return Object.entries(nimbusReverseRates).map(([slug, data]) => {

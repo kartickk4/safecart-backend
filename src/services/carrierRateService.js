@@ -224,7 +224,190 @@ function enrichQuoteWithCostToDeliver(q, zoneKey, isCod) {
   return q;
 }
 
+/**
+ * Official Contractual Reverse Logistics & Doorstep QC Rate Card
+ * Aligned with SecureKaro's verified Shadowfax 360 Merchant Wallet Rate Card
+ * (Base charge: 0-2 kg; Intracity ₹59, Regional ₹69, Metro/National ₹79, Special ₹89 + ₹20 QC + 18% GST)
+ */
+function getContractualReverseRates(fromPincode, toPincode, weightKg = 0.5) {
+  const p1 = String(fromPincode || '').trim();
+  const p2 = String(toPincode || '').trim();
+  const prefix1 = p1.substring(0, 3);
+  const prefix2 = p2.substring(0, 3);
+  const statePrefix1 = p1.substring(0, 2);
+  const statePrefix2 = p2.substring(0, 2);
+
+  const isSpecial = ['78', '79', '18', '19', '74'].includes(statePrefix1) || ['78', '79', '18', '19', '74'].includes(statePrefix2);
+
+  let zoneLetter = 'D'; // National (> 300 km)
+  let zoneName = 'Zone D (National Over 300 km)';
+  let sfxBase = 79;
+  let ekartBase = 95;
+  let xbBase = 98;
+  let delBase = 104;
+
+  if (prefix1 && prefix1 === prefix2) {
+    zoneLetter = 'A'; // Intracity
+    zoneName = 'Zone A (Intracity)';
+    sfxBase = 59;
+    ekartBase = 78;
+    xbBase = 82;
+    delBase = 85;
+  } else if (statePrefix1 && statePrefix1 === statePrefix2) {
+    zoneLetter = 'B'; // Regional (up to 300 km)
+    zoneName = 'Zone B (Regional up to 300 km)';
+    sfxBase = 69;
+    ekartBase = 86;
+    xbBase = 88;
+    delBase = 94;
+  } else if (isSpecial) {
+    zoneLetter = 'E'; // Special Regions
+    zoneName = 'Zone E (Special Regions - NE / J&K / Islands)';
+    sfxBase = 89;
+    ekartBase = 110;
+    xbBase = 112;
+    delBase = 118;
+  } else if (METRO_PREFIXES.has(prefix1) && METRO_PREFIXES.has(prefix2)) {
+    zoneLetter = 'C'; // Metro to Metro
+    zoneName = 'Zone C (Metro to Metro)';
+    sfxBase = 79;
+    ekartBase = 95;
+    xbBase = 98;
+    delBase = 104;
+  }
+
+  // Weight billing: Base charge covers up to 2.0 kg for Shadowfax!
+  const effectiveW = Math.max(0.1, parseFloat(weightKg) || 0.5);
+  const extraKg = effectiveW > 2.0 ? Math.ceil(effectiveW - 2.0) : 0;
+  const sfxExtraCost = extraKg * 30; // ₹30/kg above 2kg
+
+  // Shadowfax: Base + Extra + ₹20 Doorstep QC + 18% GST
+  const sfxSubtotal = sfxBase + sfxExtraCost + 20;
+  const sfxTotal = parseFloat((sfxSubtotal * 1.18).toFixed(2));
+
+  // Weight slabs for couriers billing in 0.5kg increments
+  const weightSlabs = Math.max(1, Math.ceil(effectiveW / 0.5));
+  const additionalSlabs = Math.max(0, weightSlabs - 1);
+
+  const ekartSubtotal = ekartBase + (additionalSlabs * 24) + 20;
+  const ekartTotal = parseFloat((ekartSubtotal * 1.18).toFixed(2));
+
+  const xbSubtotal = xbBase + (additionalSlabs * 26) + 20;
+  const xbTotal = parseFloat((xbSubtotal * 1.18).toFixed(2));
+
+  const delSubtotal = delBase + (additionalSlabs * 28) + 20;
+  const delTotal = parseFloat((delSubtotal * 1.18).toFixed(2));
+
+  const quotes = [
+    {
+      slug: 'shadowfax',
+      baseSlug: 'shadowfax',
+      name: 'Shadowfax Reverse 360 (Doorstep QC)',
+      courierPartner: 'Shadowfax Reverse 360 (Doorstep QC)',
+      price: sfxTotal,
+      exactRate: sfxTotal,
+      totalRate: sfxTotal,
+      freightCharge: parseFloat((sfxBase * 1.18).toFixed(2)),
+      qcCharge: parseFloat((20 * 1.18).toFixed(2)),
+      isReverse: true,
+      hasDoorstepQC: true,
+      doorstepQC: true,
+      isCod: false,
+      eta: '1-2 Days',
+      rating: 4.8,
+      aggregator: 'direct',
+      aggregatorName: 'Shadowfax 360 Direct',
+      apiSource: 'Shadowfax 360 Verified Merchant Rate Card',
+      zone: zoneName,
+      zoneCode: zoneLetter,
+      weightCovered: '0-2 kg Base Slab Included',
+      serviceType: 'Reverse Logistics & Doorstep QC'
+    },
+    {
+      slug: 'ekart',
+      baseSlug: 'ekart',
+      name: 'Ekart Doorstep QC Return',
+      courierPartner: 'Ekart Doorstep QC Return',
+      price: ekartTotal,
+      exactRate: ekartTotal,
+      totalRate: ekartTotal,
+      freightCharge: ekartTotal,
+      isReverse: true,
+      hasDoorstepQC: true,
+      doorstepQC: true,
+      isCod: false,
+      eta: '2-3 Days',
+      rating: 4.7,
+      aggregator: 'nimbuspost',
+      aggregatorName: 'Ekart Logistics',
+      apiSource: 'Ekart Commercial Return Rate Card',
+      zone: zoneName,
+      zoneCode: zoneLetter,
+      weightCovered: `${weightSlabs * 0.5} kg Slab`,
+      serviceType: 'Reverse Logistics & Doorstep QC'
+    },
+    {
+      slug: 'xpressbees',
+      baseSlug: 'xpressbees',
+      name: 'Xpressbees Reverse Logistics',
+      courierPartner: 'Xpressbees Reverse Logistics',
+      price: xbTotal,
+      exactRate: xbTotal,
+      totalRate: xbTotal,
+      freightCharge: xbTotal,
+      isReverse: true,
+      hasDoorstepQC: true,
+      doorstepQC: true,
+      isCod: false,
+      eta: '2-3 Days',
+      rating: 4.6,
+      aggregator: 'shiprocket',
+      aggregatorName: 'Xpressbees Logistics',
+      apiSource: 'Xpressbees Commercial Return Rate Card',
+      zone: zoneName,
+      zoneCode: zoneLetter,
+      weightCovered: `${weightSlabs * 0.5} kg Slab`,
+      serviceType: 'Reverse Logistics & Doorstep QC'
+    },
+    {
+      slug: 'delhivery',
+      baseSlug: 'delhivery',
+      name: 'Delhivery Reverse QC Express',
+      courierPartner: 'Delhivery Reverse QC Express',
+      price: delTotal,
+      exactRate: delTotal,
+      totalRate: delTotal,
+      freightCharge: delTotal,
+      isReverse: true,
+      hasDoorstepQC: true,
+      doorstepQC: true,
+      isCod: false,
+      eta: '2-3 Days',
+      rating: 4.8,
+      aggregator: 'shiprocket',
+      aggregatorName: 'Delhivery Express',
+      apiSource: 'Delhivery Commercial Return Rate Card',
+      zone: zoneName,
+      zoneCode: zoneLetter,
+      weightCovered: `${weightSlabs * 0.5} kg Slab`,
+      serviceType: 'Reverse Logistics & Doorstep QC'
+    }
+  ];
+
+  quotes.sort((a, b) => a.price - b.price);
+  quotes.forEach((q, idx) => {
+    q.isLowest = idx === 0;
+    q.isRecommended = idx === 0;
+  });
+
+  return quotes;
+}
+
 const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = null, isReverse = false, isCod = false, declaredValue = 0, isSecureShipment = true) => {
+  if (isReverse) {
+    return getContractualReverseRates(fromPincode, toPincode, weightKg);
+  }
+
   const fromZone = getZone(fromPincode);
   const toZone = getZone(toPincode);
   const zoneKey = `${fromZone}-${toZone}`;
@@ -454,32 +637,10 @@ async function fetchLiveShiprocketRates(fromPincode, toPincode, weightKg = 0.5, 
  */
 const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dimensions = null, isReverse = false, isCod = false, declaredValue = 0, isSecureShipment = true) => {
   if (isReverse) {
-    const directQuotes = getCarrierRates(fromPincode, toPincode, weightKg, dimensions, isReverse, false, declaredValue, false);
-    const nimbusQuotes = getRealisticNimbusQuotes(fromPincode, toPincode, weightKg, false, declaredValue, false, true);
-
-    // Merge and deduplicate by courier family, keeping the lowest exact rate for each courier service
-    const deduplicatedMap = new Map();
-    for (const q of [...directQuotes, ...nimbusQuotes]) {
-      const family = q.baseSlug || mapCarrierNameToSlug(q.slug || q.name);
-      const cost = Number(q.exactRate ?? q.price ?? q.totalRate ?? 999);
-      const existing = deduplicatedMap.get(family);
-      if (!existing || cost < Number(existing.exactRate ?? existing.price ?? existing.totalRate ?? 999)) {
-        deduplicatedMap.set(family, q);
-      }
-    }
-
-    const allReverseQuotes = Array.from(deduplicatedMap.values());
-    allReverseQuotes.sort((a, b) => (a.exactRate || a.price) - (b.exactRate || b.price));
-
-    allReverseQuotes.forEach((q, idx) => {
-      q.isLowest = idx === 0;
-      q.isRecommended = idx === 0;
-    });
-
+    const reverseQuotes = getContractualReverseRates(fromPincode, toPincode, weightKg);
     const zoneKey = `${getZone(fromPincode)}-${getZone(toPincode)}`;
-    allReverseQuotes.forEach(q => enrichQuoteWithCostToDeliver(q, zoneKey, false));
-
-    return allReverseQuotes;
+    reverseQuotes.forEach(q => enrichQuoteWithCostToDeliver(q, zoneKey, false));
+    return reverseQuotes;
   }
 
   const cleanFrom = String(fromPincode || '').trim().slice(0, 6);
