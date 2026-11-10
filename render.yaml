@@ -99,3 +99,7 @@ services:
       - key: CLOUDFLARE_R2_PUBLIC_URL
         sync: false
 
+      # Google Gemini Generative AI (Vision OCR & Copilot)
+      - key: GEMINI_API_KEY
+        sync: false
+

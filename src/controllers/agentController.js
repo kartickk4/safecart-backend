@@ -671,43 +671,48 @@ const handleChat = async (req, res) => {
       let agentReply = '';
       const data = session.collectedData;
       try {
-        const aiOrder = await geminiService.extractOrderFromImage(imageBase64, imageMimeType);
-        if (aiOrder && aiOrder.isOrder) {
-          if (aiOrder.receiverName) data.receiverName = aiOrder.receiverName;
-          if (aiOrder.receiverPhone) data.receiverPhone = aiOrder.receiverPhone;
-          if (aiOrder.receiverAddress) data.receiverAddress = aiOrder.receiverAddress;
-          if (aiOrder.receiverPincode) data.receiverPincode = aiOrder.receiverPincode;
-          if (aiOrder.weightKg) data.weightKg = aiOrder.weightKg;
-          if (aiOrder.amount) data.amount = aiOrder.amount;
-          if (aiOrder.paymentMode) data.paymentMode = aiOrder.paymentMode;
-          if (aiOrder.description) data.description = aiOrder.description;
-
-          if (isReadyToConfirm(data)) {
-            const senderPincode = data.senderPincode || user.pincode || '110001';
-            const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-            const quotes = getCarrierRates(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims);
-            session.carrierQuotes = quotes;
-            session.selectedCarrier = quotes[0];
-            agentReply = `📸 *1-Click AI Order Extracted from Image!* ⚡\n\n` + buildSummaryConfirmation(session, data, user);
-            session.step = STEPS.CONFIRMATION;
-          } else if (data.receiverName || data.receiverPhone || data.receiverPincode || data.receiverAddress) {
-            let missingPrompt = '';
-            if (!data.receiverAddress) missingPrompt = 'full delivery address';
-            else if (!data.receiverPincode) missingPrompt = '6-digit destination pincode';
-            else if (!data.receiverPhone) missingPrompt = '10-digit receiver mobile number';
-            else if (!data.weightKg) missingPrompt = 'parcel weight (e.g. 1 kg) and value';
-            else if (!data.paymentMode) missingPrompt = 'payment mode: type *1* for Prepaid or *2* for COD';
-
-            const nameLabel = data.receiverName ? ` for ${data.receiverName}` : '';
-            agentReply = `📸 *Scanned Details from Image${nameLabel}!* ` +
-              (data.receiverPincode ? `(PIN: ${data.receiverPincode})` : '') +
-              `\n\nTo complete booking, please provide the *${missingPrompt}*:`;
-            session.step = !data.receiverAddress ? STEPS.RECEIVER_ADDRESS : (!data.receiverPincode ? STEPS.RECEIVER_PINCODE : (!data.receiverPhone ? STEPS.RECEIVER_PHONE : (!data.weightKg ? STEPS.PARCEL_DETAILS : STEPS.PAYMENT_MODE)));
-          } else {
-            agentReply = '📸 *Image Scanned:* I could not detect clear order or customer details. Please ensure the receiver name, mobile number, full address, and 6-digit PIN are visible, or simply type them here.';
-          }
+        if (!process.env.GEMINI_API_KEY) {
+          console.warn('[AGENT] GEMINI_API_KEY is not configured in production environment.');
+          agentReply = '⚠️ *AI Vision Offline:* Gemini AI Vision is not yet configured in server environment variables (missing GEMINI_API_KEY in Render). Please set GEMINI_API_KEY in Render Environment Variables, or paste the text address directly.';
         } else {
-          agentReply = '📸 *Image Scanned:* No shipping address or order details were recognized in this image. Please ensure the picture is clear and legible, or paste the text directly.';
+          const aiOrder = await geminiService.extractOrderFromImage(imageBase64, imageMimeType);
+          if (aiOrder && aiOrder.isOrder) {
+            if (aiOrder.receiverName) data.receiverName = aiOrder.receiverName;
+            if (aiOrder.receiverPhone) data.receiverPhone = aiOrder.receiverPhone;
+            if (aiOrder.receiverAddress) data.receiverAddress = aiOrder.receiverAddress;
+            if (aiOrder.receiverPincode) data.receiverPincode = aiOrder.receiverPincode;
+            if (aiOrder.weightKg) data.weightKg = aiOrder.weightKg;
+            if (aiOrder.amount) data.amount = aiOrder.amount;
+            if (aiOrder.paymentMode) data.paymentMode = aiOrder.paymentMode;
+            if (aiOrder.description) data.description = aiOrder.description;
+
+            if (isReadyToConfirm(data)) {
+              const senderPincode = data.senderPincode || user.pincode || '110001';
+              const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
+              const quotes = getCarrierRates(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims);
+              session.carrierQuotes = quotes;
+              session.selectedCarrier = quotes[0];
+              agentReply = `📸 *1-Click AI Order Extracted from Image!* ⚡\n\n` + buildSummaryConfirmation(session, data, user);
+              session.step = STEPS.CONFIRMATION;
+            } else if (data.receiverName || data.receiverPhone || data.receiverPincode || data.receiverAddress) {
+              let missingPrompt = '';
+              if (!data.receiverAddress) missingPrompt = 'full delivery address';
+              else if (!data.receiverPincode) missingPrompt = '6-digit destination pincode';
+              else if (!data.receiverPhone) missingPrompt = '10-digit receiver mobile number';
+              else if (!data.weightKg) missingPrompt = 'parcel weight (e.g. 1 kg) and value';
+              else if (!data.paymentMode) missingPrompt = 'payment mode: type *1* for Prepaid or *2* for COD';
+
+              const nameLabel = data.receiverName ? ` for ${data.receiverName}` : '';
+              agentReply = `📸 *Scanned Details from Image${nameLabel}!* ` +
+                (data.receiverPincode ? `(PIN: ${data.receiverPincode})` : '') +
+                `\n\nTo complete booking, please provide the *${missingPrompt}*:`;
+              session.step = !data.receiverAddress ? STEPS.RECEIVER_ADDRESS : (!data.receiverPincode ? STEPS.RECEIVER_PINCODE : (!data.receiverPhone ? STEPS.RECEIVER_PHONE : (!data.weightKg ? STEPS.PARCEL_DETAILS : STEPS.PAYMENT_MODE)));
+            } else {
+              agentReply = '📸 *Image Scanned:* I could not detect clear order or customer details. Please ensure the receiver name, mobile number, full address, and 6-digit PIN are visible, or simply type them here.';
+            }
+          } else {
+            agentReply = '📸 *Image Scanned:* No shipping address or order details were recognized in this image. Please ensure the picture is clear and legible, or paste the text directly.';
+          }
         }
       } catch (imgErr) {
         console.warn('[AGENT] Vision extraction error:', imgErr.message);
