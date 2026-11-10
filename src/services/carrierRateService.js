@@ -592,8 +592,7 @@ const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dime
     });
 
     // Merge quotes: Direct Delhivery + Nimbus Delhivery + Direct Shadowfax + Nimbus Shadowfax + other carriers
-    // This guarantees Direct Shadowfax and Direct Delhivery are NEVER discarded!
-    const combinedQuotes = [
+    const rawQuotes = [
       ...(directDelhiveryQuote ? [directDelhiveryQuote] : []),
       ...nimbusDelhiveryQuotes,
       ...(directShadowfaxQuote ? [directShadowfaxQuote] : []),
@@ -602,8 +601,30 @@ const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dime
       ...nonArbitragedShiprocketQuotes
     ];
 
+    // Deduplicate carriers: Keep only the single CHEAPEST/BEST rate for each carrier family
+    const deduplicatedMap = new Map();
+    for (const q of rawQuotes) {
+      const family = (q.baseSlug || q.slug || '').toLowerCase().replace(/^(nimbus_|direct_|shiprocket_)/, '').split('_')[0];
+      const cost = Number(q.exactRate || q.price || q.freightCharge || 999);
+      const existing = deduplicatedMap.get(family);
+      if (!existing || cost < Number(existing.exactRate || existing.price || existing.freightCharge || 999)) {
+        deduplicatedMap.set(family, q);
+      }
+    }
+
+    const combinedQuotes = Array.from(deduplicatedMap.values());
+
+    // Ensure totalRate and totalCodRate are explicitly normalized on all quotes
+    combinedQuotes.forEach(q => {
+      const finalPrice = Number(q.exactRate || q.price || 0);
+      q.totalRate = finalPrice;
+      q.totalCodRate = isCod ? finalPrice : parseFloat((finalPrice + Number(q.codCharge || 0)).toFixed(2));
+      q.exactRate = finalPrice;
+      q.price = finalPrice;
+    });
+
     // Sort all carrier quotes cheapest first
-    combinedQuotes.sort((a, b) => a.price - b.price);
+    combinedQuotes.sort((a, b) => (a.exactRate || a.price) - (b.exactRate || b.price));
 
     // Clear previous lowest flags and set the recommended cheapest carrier overall
     combinedQuotes.forEach(q => {
