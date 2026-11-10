@@ -454,7 +454,32 @@ async function fetchLiveShiprocketRates(fromPincode, toPincode, weightKg = 0.5, 
  */
 const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dimensions = null, isReverse = false, isCod = false, declaredValue = 0, isSecureShipment = true) => {
   if (isReverse) {
-    return getCarrierRates(fromPincode, toPincode, weightKg, dimensions, isReverse, isCod, declaredValue, isSecureShipment);
+    const directQuotes = getCarrierRates(fromPincode, toPincode, weightKg, dimensions, isReverse, false, declaredValue, false);
+    const nimbusQuotes = getRealisticNimbusQuotes(fromPincode, toPincode, weightKg, false, declaredValue, false, true);
+
+    // Merge and deduplicate by courier family, keeping the lowest exact rate for each courier service
+    const deduplicatedMap = new Map();
+    for (const q of [...directQuotes, ...nimbusQuotes]) {
+      const family = q.baseSlug || mapCarrierNameToSlug(q.slug || q.name);
+      const cost = Number(q.exactRate ?? q.price ?? q.totalRate ?? 999);
+      const existing = deduplicatedMap.get(family);
+      if (!existing || cost < Number(existing.exactRate ?? existing.price ?? existing.totalRate ?? 999)) {
+        deduplicatedMap.set(family, q);
+      }
+    }
+
+    const allReverseQuotes = Array.from(deduplicatedMap.values());
+    allReverseQuotes.sort((a, b) => (a.exactRate || a.price) - (b.exactRate || b.price));
+
+    allReverseQuotes.forEach((q, idx) => {
+      q.isLowest = idx === 0;
+      q.isRecommended = idx === 0;
+    });
+
+    const zoneKey = `${getZone(fromPincode)}-${getZone(toPincode)}`;
+    allReverseQuotes.forEach(q => enrichQuoteWithCostToDeliver(q, zoneKey, false));
+
+    return allReverseQuotes;
   }
 
   const cleanFrom = String(fromPincode || '').trim().slice(0, 6);
@@ -705,21 +730,26 @@ const getSupportedCouriersList = async () => {
  */
 const getCheapestPickupCarrier = (fromPincode, toPincode, weightKg = 0.5, dimensions = null, isReverse = false) => {
   const srQuotes = getCarrierRates(fromPincode, toPincode, weightKg, dimensions, isReverse);
-  const nimbusQuotes = getRealisticNimbusQuotes(fromPincode, toPincode, weightKg, false, 0, !isReverse);
+  const nimbusQuotes = getRealisticNimbusQuotes(fromPincode, toPincode, weightKg, false, 0, !isReverse, isReverse);
   
-  // Combine all quotes from both Shiprocket and NimbusPost
-  const allQuotes = [...srQuotes, ...nimbusQuotes];
-  allQuotes.sort((a, b) => a.price - b.price);
-
-  allQuotes.forEach(q => {
-    q.isLowest = false;
-    q.isRecommended = false;
-  });
-
-  if (allQuotes.length > 0) {
-    allQuotes[0].isLowest = true;
-    allQuotes[0].isRecommended = true;
+  // Combine all quotes and deduplicate keeping the lowest for each courier partner
+  const deduplicatedMap = new Map();
+  for (const q of [...srQuotes, ...nimbusQuotes]) {
+    const family = q.baseSlug || mapCarrierNameToSlug(q.slug || q.name);
+    const cost = Number(q.exactRate || q.price || q.totalRate || 999);
+    const existing = deduplicatedMap.get(family);
+    if (!existing || cost < Number(existing.exactRate || existing.price || existing.totalRate || 999)) {
+      deduplicatedMap.set(family, q);
+    }
   }
+
+  const allQuotes = Array.from(deduplicatedMap.values());
+  allQuotes.sort((a, b) => (a.exactRate || a.price) - (b.exactRate || b.price));
+
+  allQuotes.forEach((q, idx) => {
+    q.isLowest = idx === 0;
+    q.isRecommended = idx === 0;
+  });
 
   const cheapest = allQuotes[0];
   const highest = allQuotes[allQuotes.length - 1];
@@ -727,10 +757,10 @@ const getCheapestPickupCarrier = (fromPincode, toPincode, weightKg = 0.5, dimens
 
   return {
     cheapest,
-    comparison: allQuotes, // All popular courier partners compared across Shiprocket & NimbusPost
+    comparison: allQuotes, // All popular courier partners compared across Direct, Shiprocket & NimbusPost
     allQuotes,
     isReverse,
-    apiProvider: 'SecureKaro Hybrid Logistics Engine (Shiprocket + NimbusPost)',
+    apiProvider: 'SecureKaro Multi-Carrier Reverse Engine (Delhivery + Shadowfax + NimbusPost + Shiprocket)',
     totalCouriersCompared: allQuotes.length,
     savingsAmount
   };
