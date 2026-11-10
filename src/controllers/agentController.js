@@ -711,6 +711,8 @@ const handleChat = async (req, res) => {
             } else {
               agentReply = '📸 *Image Scanned:* I could not detect clear order or customer details. Please ensure the receiver name, mobile number, full address, and 6-digit PIN are visible, or simply type them here.';
             }
+          } else if (aiOrder && aiOrder.error) {
+            agentReply = `⚠️ *Image OCR notice:* ${aiOrder.error}. Please try again or paste the text directly.`;
           } else {
             agentReply = '📸 *Image Scanned:* No shipping address or order details were recognized in this image. Please ensure the picture is clear and legible, or paste the text directly.';
           }

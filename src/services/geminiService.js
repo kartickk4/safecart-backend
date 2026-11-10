@@ -7,7 +7,9 @@
 
 const https = require('https');
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+function getApiKey() {
+  return (process.env.GEMINI_API_KEY || '').trim();
+}
 
 // Primary models: gemini-3.5-flash-lite provides 1-2s instant responses and excellent vision OCR.
 // gemini-3.5-flash provides higher capacity fallback.
@@ -19,7 +21,8 @@ const LEGACY_MODELS = ['gemini-2.5-flash-lite', 'gemini-2.0-flash'];
  * Make a direct HTTPS POST request to Gemini generateContent endpoint
  */
 async function callGemini(model, body) {
-  if (!GEMINI_API_KEY) {
+  const apiKey = getApiKey();
+  if (!apiKey) {
     throw new Error('GEMINI_API_KEY is not configured in environment variables');
   }
 
@@ -27,7 +30,7 @@ async function callGemini(model, body) {
     const postData = JSON.stringify(body);
     const req = https.request({
       hostname: 'generativelanguage.googleapis.com',
-      path: `/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+      path: `/v1beta/models/${model}:generateContent?key=${apiKey}`,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -91,7 +94,7 @@ async function generateWithFallback(body) {
  */
 async function extractOrderFromText(rawText) {
   if (!rawText || rawText.trim().length < 8) return null;
-  if (!GEMINI_API_KEY) return null;
+  if (!getApiKey()) return null;
 
   const systemInstruction = 
     "You are an expert Indian e-commerce logistics parser for SecureKaro.\n" +
@@ -152,7 +155,7 @@ async function extractOrderFromText(rawText) {
  * Understands English, Hindi, and Hinglish queries about SecureKaro logistics.
  */
 async function answerMerchantQuery({ query, user, context }) {
-  if (!GEMINI_API_KEY) return null;
+  if (!getApiKey()) return null;
 
   const systemInstruction = 
     "You are the official SecureKaro AI Agent — an autonomous, polite, and highly skilled e-commerce logistics copilot in India.\n" +
@@ -202,7 +205,10 @@ async function answerMerchantQuery({ query, user, context }) {
  */
 async function extractOrderFromImage(imageBase64, imageMimeType = 'image/jpeg') {
   if (!imageBase64 || typeof imageBase64 !== 'string') return null;
-  if (!GEMINI_API_KEY) return null;
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    return { isOrder: false, error: 'GEMINI_API_KEY is not configured in server environment' };
+  }
 
   // Clean base64 string and detect mime type if data URI was passed
   let cleanBase64 = imageBase64.trim();
@@ -228,7 +234,7 @@ async function extractOrderFromImage(imageBase64, imageMimeType = 'image/jpeg') 
     "- Street / Locality (e.g. Padma 1st lane, Nimta, Flat 2B)\n" +
     "- City and PIN code (e.g. Kolkata - 700041, Delhi 110001)\n" +
     "- 10-digit Mobile number (e.g. 7921814321, 9876543210)\n\n" +
-    "Carefully transcribe all readable text, extract the shipping recipient details, and return strict JSON matching this schema:\n" +
+    "Carefully transcribe all readable text (even if handwritten, rotated, or slanted), extract the shipping recipient details, and return strict JSON matching this schema:\n" +
     "{\n" +
     '  "isOrder": boolean, // ALWAYS set true if image contains an address, person name, Indian phone number, or 6-digit pincode\n' +
     '  "receiverName": string or null,\n' +
@@ -284,10 +290,10 @@ async function extractOrderFromImage(imageBase64, imageMimeType = 'image/jpeg') 
         return parsed;
       }
     }
-    return null;
+    return { isOrder: false, error: 'No address or contact details detected in parsed output' };
   } catch (err) {
     console.warn('[Gemini Vision] Image order extraction failed:', err.message);
-    return null;
+    return { isOrder: false, error: err.message };
   }
 }
 
