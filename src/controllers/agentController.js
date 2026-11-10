@@ -486,13 +486,14 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
   // 11D. True Cost-to-Deliver Courier Routing
   else if (/\b(cost to deliver|true cost|cheapest courier|best courier|courier routing|courier rank|allocation)\b/i.test(msg)) {
     intelligentReply =
-      `📊 *True Cost-to-Deliver vs Cheap Freight Mirage*\n\n` +
-      `Most aggregators route your orders to whatever courier gives them the highest margin, advertising a deceptively cheap base freight (e.g. ₹42).\n\n` +
-      `⚠️ **The Hidden Trap:** A courier charging ₹42 with a 24% RTO rate and frequent ₹120 weight penalties ends up costing you **₹89+ per delivered parcel**!\n\n` +
-      `⭐ **SecureKaro Cost-to-Deliver Algorithm:**\n` +
-      `\\(\\text{Expected Total Cost} = \\text{Freight} + (P_{\\text{RTO}} \\times \\text{Return Cost}) + (P_{\\text{Dispute}} \\times \\text{Penalty})\\)\n\n` +
-      `• Every courier quote shows real **Pincode Delivery Success Rate** (e.g. 94% Success).\n` +
-      `• Automatically highlights the **⭐ Lowest Expected Total Cost** winner so you pocket maximum profit!`;
+      `📊 *True Cost-to-Deliver vs Cheap Freight*\n\n` +
+      `Many aggregators advertise deceptively cheap base freight (e.g. ₹42), but assign carriers with 20%+ RTO failure rates and frequent ₹120 weight penalties — resulting in a real cost of **₹85+ per delivered parcel**!\n\n` +
+      `⭐ *How SecureKaro Optimizes Your Shipping Cost:*\n` +
+      `• **Real Cost Formula:** Freight + (RTO Failure Risk × Return Fee) + Weight Dispute Risk\n` +
+      `• **Delivery Reliability:** Quotes show real Pincode Delivery Success Rates (e.g. 94% Success).\n` +
+      `• **AI Profit Winner:** Automatically highlights the courier with the lowest total expected cost.\n\n` +
+      `🚚 *Want to check exact rates for your route?*\n` +
+      `Type: *"Rate from 110001 to 700049 for 0.5 kg"* or tap the **Rates** tab below!`;
   }
 
   // 11E. Instant Pincode & Courier Rate Checker Tool
