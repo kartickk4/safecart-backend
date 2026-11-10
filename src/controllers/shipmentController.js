@@ -252,8 +252,13 @@ const createShipment = async (req, res) => {
     parcelWeight: bodyWeight,
     parcelLength: bodyLength,
     parcelWidth: bodyWidth,
-    parcelHeight: bodyHeight
+    parcelHeight: bodyHeight,
+    shipmentType: bodyShipmentType,
+    isReverse: bodyIsReverse
   } = req.body;
+
+  const isReverseShipment = bodyShipmentType === 'reverse' || bodyIsReverse === true || bodyIsReverse === 'true';
+  const effectiveShipmentType = isReverseShipment ? 'reverse' : 'forward';
 
   try {
     if (!receiverName || !receiverPhone || !description || !amount) {
@@ -301,10 +306,31 @@ const createShipment = async (req, res) => {
     let selectedCarrierRate = null;
     let allCarrierQuotes = [];
 
-    const checkIsCod = (paymentMode || '').toLowerCase() === 'cod';
+    const checkIsCod = !isReverseShipment && (paymentMode || '').toLowerCase() === 'cod';
     if (senderPincodeForRate && receiverPincodeForRate) {
-      // Both pincodes present — run rate comparison with volumetric weight & live Shiprocket rates
-      allCarrierQuotes = await getCarrierRatesAsync(senderPincodeForRate, receiverPincodeForRate, weightKgForRate, dimensionsForRate, false, checkIsCod);
+      if (isReverseShipment) {
+        // Reverse route: Customer Doorstep (receiverPincode) -> Seller Warehouse (senderPincode)
+        allCarrierQuotes = await getCarrierRatesAsync(
+          receiverPincodeForRate,
+          senderPincodeForRate,
+          weightKgForRate,
+          dimensionsForRate,
+          true,
+          false,
+          Number(amount) || 0
+        );
+      } else {
+        // Forward route: Seller Warehouse (senderPincode) -> Customer Doorstep (receiverPincode)
+        allCarrierQuotes = await getCarrierRatesAsync(
+          senderPincodeForRate,
+          receiverPincodeForRate,
+          weightKgForRate,
+          dimensionsForRate,
+          false,
+          checkIsCod,
+          Number(amount) || 0
+        );
+      }
     }
 
     // If caller explicitly passed a carrier, honour it; otherwise auto-select cheapest
@@ -478,19 +504,23 @@ const createShipment = async (req, res) => {
             userId: sender._id,
             type: 'debit',
             amount: deliveryCharge,
-            source: 'shipping_fee_deduction',
-            description: `Prepaid courier delivery fee for shipment ${shipmentId} (Delivery: ₹${deliveryCharge})`,
+            source: isReverseShipment ? 'reverse_shipping_fee_deduction' : 'shipping_fee_deduction',
+            description: isReverseShipment
+              ? `Reverse courier return freight for shipment ${shipmentId} (Customer Doorstep to Seller Hub: ₹${deliveryCharge})`
+              : `Prepaid courier delivery fee for shipment ${shipmentId} (Delivery: ₹${deliveryCharge})`,
             paymentGateway: 'system',
             balanceBefore: balBefore,
             balanceAfter: sender.walletBalance,
-            metadata: { shipmentId, deliveryCharge, requiredReserve }
+            metadata: { shipmentId, deliveryCharge, requiredReserve, isReverse: isReverseShipment }
           });
         } else {
           const shortfall = Math.max(0, totalRequiredForPrepaid - availableWallet);
           return res.status(402).json({
             error: 'INSUFFICIENT_WALLET_BALANCE',
-            code: 'PREPAID_SHIPPING_PAYMENT_REQUIRED',
-            message: `Prepaid shipment requires ₹${deliveryCharge} courier delivery fee plus a minimum security reserve of ₹${requiredReserve} (${newActiveCount} active shipment(s) @ ₹100/shipment, max ₹1,000). Your wallet balance is ₹${availableWallet}. Total required: ₹${totalRequiredForPrepaid}. Please top up ₹${shortfall} in your wallet to book this shipment.`,
+            code: isReverseShipment ? 'REVERSE_SHIPPING_PAYMENT_REQUIRED' : 'PREPAID_SHIPPING_PAYMENT_REQUIRED',
+            message: isReverseShipment
+              ? `Reverse pickup shipment requires ₹${deliveryCharge} return freight plus a minimum security reserve of ₹${requiredReserve}. Your wallet balance is ₹${availableWallet}. Total required: ₹${totalRequiredForPrepaid}. Please recharge ₹${shortfall} in your wallet to book reverse pickup.`
+              : `Prepaid shipment requires ₹${deliveryCharge} courier delivery fee plus a minimum security reserve of ₹${requiredReserve} (${newActiveCount} active shipment(s) @ ₹100/shipment, max ₹1,000). Your wallet balance is ₹${availableWallet}. Total required: ₹${totalRequiredForPrepaid}. Please top up ₹${shortfall} in your wallet to book this shipment.`,
             deliveryCharge,
             totalCharge: deliveryCharge,
             requiredReserve,
@@ -588,8 +618,20 @@ const createShipment = async (req, res) => {
       deliveryOtp: String(Math.floor(100000 + Math.random() * 900000)),
       deliveryOtpExpiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       deliveryOtpUsed: false,
-      status: shouldSkipPaymentLink ? 'Pending Pickup' : 'Awaiting Payment',
-      escrowStage: shouldSkipPaymentLink ? 3 : 1
+      shipmentType: effectiveShipmentType,
+      isReverse: isReverseShipment,
+      returnStatus: isReverseShipment ? 'In Return Transit' : 'None',
+      returnAwbCode: isReverseShipment ? assignedAwbCode : '',
+      returnCarrierSlug: isReverseShipment ? assignedCarrierSlug : '',
+      returnCarrierName: isReverseShipment ? assignedCarrierName : '',
+      returnShippingRate: isReverseShipment ? deliveryCharge : 0,
+      returnShippingChargeDeducted: isReverseShipment ? deliveryCharge : 0,
+      returnShippingChargeStatus: isReverseShipment ? 'Deducted' : 'Pending',
+      returnShippingChargeDeductedAt: isReverseShipment ? new Date() : undefined,
+      returnOriginPincode: isReverseShipment ? receiverPincodeForRate : '',
+      returnDestinationPincode: isReverseShipment ? senderPincodeForRate : '',
+      status: isReverseShipment ? 'Reverse Pickup Booked' : (shouldSkipPaymentLink ? 'Pending Pickup' : 'Awaiting Payment'),
+      escrowStage: isReverseShipment ? 3 : (shouldSkipPaymentLink ? 3 : 1)
     });
 
     if (shouldSkipPaymentLink) {

@@ -460,9 +460,19 @@ const ShipmentSchema = new mongoose.Schema({
       'Return Requested',
       'Return In Transit',
       'Returned & Refunded',
-      'Replacement In Transit'
+      'Replacement In Transit',
+      'Reverse Pickup Booked'
     ],
     default: 'Awaiting Payment'
+  },
+  shipmentType: {
+    type: String,
+    enum: ['forward', 'reverse'],
+    default: 'forward'
+  },
+  isReverse: {
+    type: Boolean,
+    default: false
   },
   escrowStage: {
     type: Number,
