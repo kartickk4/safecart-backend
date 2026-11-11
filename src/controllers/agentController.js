@@ -687,6 +687,11 @@ const handleChat = async (req, res) => {
             if (aiOrder.paymentMode) data.paymentMode = aiOrder.paymentMode;
             if (aiOrder.description) data.description = aiOrder.description;
 
+            // Apply standard e-commerce defaults for handwritten slips/chits if not written
+            if (!data.weightKg) data.weightKg = 0.5;
+            if (!data.amount) data.amount = 500;
+            if (!data.description) data.description = 'General Merchandise';
+
             if (isReadyToConfirm(data)) {
               const senderPincode = data.senderPincode || user.pincode || '110001';
               const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
@@ -696,18 +701,38 @@ const handleChat = async (req, res) => {
               agentReply = `📸 *1-Click AI Order Extracted from Image!* ⚡\n\n` + buildSummaryConfirmation(session, data, user);
               session.step = STEPS.CONFIRMATION;
             } else if (data.receiverName || data.receiverPhone || data.receiverPincode || data.receiverAddress) {
-              let missingPrompt = '';
-              if (!data.receiverAddress) missingPrompt = 'full delivery address';
-              else if (!data.receiverPincode) missingPrompt = '6-digit destination pincode';
-              else if (!data.receiverPhone) missingPrompt = '10-digit receiver mobile number';
-              else if (!data.weightKg) missingPrompt = 'parcel weight (e.g. 1 kg) and value';
-              else if (!data.paymentMode) missingPrompt = 'payment mode: type *1* for Prepaid or *2* for COD';
+              const detailsBlock = [
+                `📸 *Customer Details Scanned from Chit:* ⚡`,
+                `• **Recipient:** ${data.receiverName || '⚠️ Not clearly visible'}`,
+                `• **Mobile:** ${data.receiverPhone || '⚠️ Not clearly visible'}`,
+                `• **Address:** ${data.receiverAddress || '⚠️ Not clearly visible'}`,
+                `• **PIN Code:** ${data.receiverPincode || '⚠️ Not clearly visible'}`,
+                `• **Weight:** ${data.weightKg} kg (Standard 0.5 kg)`,
+                `• **Declared Value:** ₹${data.amount}`
+              ].join('\n');
 
-              const nameLabel = data.receiverName ? ` for ${data.receiverName}` : '';
-              agentReply = `📸 *Scanned Details from Image${nameLabel}!* ` +
-                (data.receiverPincode ? `(PIN: ${data.receiverPincode})` : '') +
-                `\n\nTo complete booking, please provide the *${missingPrompt}*:`;
-              session.step = !data.receiverAddress ? STEPS.RECEIVER_ADDRESS : (!data.receiverPincode ? STEPS.RECEIVER_PINCODE : (!data.receiverPhone ? STEPS.RECEIVER_PHONE : (!data.weightKg ? STEPS.PARCEL_DETAILS : STEPS.PAYMENT_MODE)));
+              let missingPrompt = '';
+              if (!data.receiverAddress) {
+                missingPrompt = 'full delivery address';
+                session.step = STEPS.RECEIVER_ADDRESS;
+              } else if (!data.receiverPincode) {
+                missingPrompt = '6-digit destination pincode';
+                session.step = STEPS.RECEIVER_PINCODE;
+              } else if (!data.receiverPhone) {
+                missingPrompt = '10-digit receiver mobile number';
+                session.step = STEPS.RECEIVER_PHONE;
+              } else if (!data.paymentMode) {
+                missingPrompt = 'Payment Mode: Tap *Prepaid* or *Cash on Delivery (COD)* below to compare live courier rates';
+                session.step = STEPS.PAYMENT_MODE;
+              } else if (!data.amount) {
+                missingPrompt = 'parcel amount / declared value in ₹';
+                session.step = STEPS.PARCEL_DETAILS;
+              } else {
+                missingPrompt = 'payment mode: tap *Prepaid* or *COD* below';
+                session.step = STEPS.PAYMENT_MODE;
+              }
+
+              agentReply = `${detailsBlock}\n\n👉 *Next Step:* Please select ${missingPrompt}:`;
             } else {
               agentReply = '📸 *Image Scanned:* I could not detect clear order or customer details. Please ensure the receiver name, mobile number, full address, and 6-digit PIN are visible, or simply type them here.';
             }
@@ -790,6 +815,11 @@ const handleChat = async (req, res) => {
             if (aiOrder.paymentMode) data.paymentMode = aiOrder.paymentMode;
             if (aiOrder.description) data.description = aiOrder.description;
 
+            // Apply standard e-commerce defaults
+            if (!data.weightKg) data.weightKg = 0.5;
+            if (!data.amount) data.amount = 500;
+            if (!data.description) data.description = 'General Merchandise';
+
             if (isReadyToConfirm(data)) {
               const senderPincode = data.senderPincode || user.pincode || '110001';
               const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
@@ -799,19 +829,36 @@ const handleChat = async (req, res) => {
               agentReply = `🎯 *1-Click AI Order Extracted from Message!* 🚀\n\n` + buildSummaryConfirmation(session, data, user);
               session.step = STEPS.CONFIRMATION;
               break;
-            } else if (data.receiverName && (data.receiverPhone || data.receiverPincode)) {
-              // Partial order detected — prompt for missing fields
-              let missingPrompt = '';
-              if (!data.receiverAddress) missingPrompt = 'full delivery address';
-              else if (!data.receiverPincode) missingPrompt = '6-digit destination pincode';
-              else if (!data.receiverPhone) missingPrompt = '10-digit receiver mobile number';
-              else if (!data.weightKg) missingPrompt = 'parcel weight (e.g. 1 kg) and value';
-              else if (!data.paymentMode) missingPrompt = 'payment mode: type *1* for Prepaid or *2* for COD';
+            } else if (data.receiverName && (data.receiverPhone || data.receiverPincode || data.receiverAddress)) {
+              const detailsBlock = [
+                `✨ *Order Details Extracted!* 🚀`,
+                `• **Recipient:** ${data.receiverName || 'Not detected'}`,
+                `• **Mobile:** ${data.receiverPhone || 'Not detected'}`,
+                `• **Address:** ${data.receiverAddress || 'Not detected'}`,
+                `• **PIN Code:** ${data.receiverPincode || 'Not detected'}`,
+                `• **Weight:** ${data.weightKg} kg`,
+                `• **Declared Value:** ₹${data.amount}`
+              ].join('\n');
 
-              agentReply = `✨ *I detected an order for ${data.receiverName}!*` +
-                (data.receiverPincode ? ` (PIN: ${data.receiverPincode})` : '') +
-                `\n\nTo complete booking, please provide the *${missingPrompt}*:`;
-              session.step = !data.receiverAddress ? STEPS.RECEIVER_ADDRESS : (!data.receiverPincode ? STEPS.RECEIVER_PINCODE : (!data.receiverPhone ? STEPS.RECEIVER_PHONE : (!data.weightKg ? STEPS.PARCEL_DETAILS : STEPS.PAYMENT_MODE)));
+              let missingPrompt = '';
+              if (!data.receiverAddress) {
+                missingPrompt = 'full delivery address';
+                session.step = STEPS.RECEIVER_ADDRESS;
+              } else if (!data.receiverPincode) {
+                missingPrompt = '6-digit destination pincode';
+                session.step = STEPS.RECEIVER_PINCODE;
+              } else if (!data.receiverPhone) {
+                missingPrompt = '10-digit receiver mobile number';
+                session.step = STEPS.RECEIVER_PHONE;
+              } else if (!data.paymentMode) {
+                missingPrompt = 'Payment Mode: Tap *Prepaid* or *COD* below to compare courier rates';
+                session.step = STEPS.PAYMENT_MODE;
+              } else {
+                missingPrompt = 'payment mode: type *1* for Prepaid or *2* for COD';
+                session.step = STEPS.PAYMENT_MODE;
+              }
+
+              agentReply = `${detailsBlock}\n\n👉 *Next Step:* Please select ${missingPrompt}:`;
               break;
             }
           }
