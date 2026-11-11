@@ -404,7 +404,7 @@ function getContractualReverseRates(fromPincode, toPincode, weightKg = 0.5) {
   return quotes;
 }
 
-const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = null, isReverse = false, isCod = false, declaredValue = 0, isSecureShipment = true) => {
+const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = null, isReverse = false, isCod = false, declaredValue = 0, isSecureShipment = false) => {
   if (isReverse) {
     return getContractualReverseRates(fromPincode, toPincode, weightKg);
   }
@@ -453,19 +453,19 @@ const getCarrierRates = (fromPincode, toPincode, weightKg = 0.5, dimensions = nu
       const isSfx = slug.includes('shadowfax');
       const surcharge = isReverse ? (isSfx ? 0 : parseFloat((REVERSE_SURCHARGE_PER_SLAB * weightSlabs).toFixed(2))) : 0;
       
-      // COD Handling fee dynamically aligned with Shiprocket rate card for declared amount
+      // COD Handling fee dynamically aligned with standard carrier rate cards
       let codCharge = 0;
       if (isCod && !isReverse) {
-        const val = parseFloat(declaredValue) || 3000;
-        if (slug.includes('delhivery')) codCharge = val >= 3000 ? 99.00 : 54.00;
-        else if (slug.includes('xpressbees')) codCharge = val >= 3000 ? 75.00 : 48.00;
+        const val = parseFloat(declaredValue) || 500;
+        if (slug.includes('delhivery')) codCharge = val >= 3000 ? 50.00 : 35.00;
+        else if (slug.includes('xpressbees')) codCharge = val >= 3000 ? 45.00 : 32.00;
         else if (slug.includes('shadowfax')) codCharge = 0; // Shadowfax 360: ₹0 COD handling fee
-        else codCharge = Math.max(54.00, parseFloat((val * 0.03).toFixed(2)));
+        else codCharge = Math.max(35.00, parseFloat((val * 0.02).toFixed(2)));
       }
 
-      // Secure Shipment insurance fee
+      // Secure Shipment insurance fee (Only if explicitly selected)
       const secureCharge = (!isReverse && isSecureShipment) ? 54.00 : 0;
-      const whatsappCharge = (!isReverse) ? 5.00 : 0;
+      const whatsappCharge = 0;
 
       const finalPrice = parseFloat((isReverse 
         ? (isSfx ? Math.max(34, rawForwardPrice - 5) : Math.max(55, rawForwardPrice + surcharge))
@@ -636,7 +636,7 @@ async function fetchLiveShiprocketRates(fromPincode, toPincode, weightKg = 0.5, 
  * 3. Single-Flight request coalescing to completely prevent Cache Stampedes.
  * 4. Fallback to deterministic local pricing engine if upstream aggregators fail.
  */
-const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dimensions = null, isReverse = false, isCod = false, declaredValue = 0, isSecureShipment = true) => {
+const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dimensions = null, isReverse = false, isCod = false, declaredValue = 0, isSecureShipment = false) => {
   if (isReverse) {
     const reverseQuotes = getContractualReverseRates(fromPincode, toPincode, weightKg);
     const zoneKey = `${getZone(fromPincode)}-${getZone(toPincode)}`;

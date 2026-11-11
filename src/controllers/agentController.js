@@ -111,7 +111,9 @@ const isReadyToConfirm = (d) => !!(
 const buildSummaryConfirmation = (session, data, user) => {
   const senderPincode = data.senderPincode || user.pincode || '110001';
   const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-  const quotes = getCarrierRates(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims);
+  const quotes = (session.carrierQuotes && session.carrierQuotes.length > 0)
+    ? session.carrierQuotes
+    : getCarrierRates(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, data.paymentMode === 'cod', data.amount || 500, false);
   session.carrierQuotes = quotes;
   if (!session.selectedCarrier?.slug) {
     session.selectedCarrier = quotes[0];
@@ -706,7 +708,8 @@ const handleChat = async (req, res) => {
             if (isReadyToConfirm(data)) {
               const senderPincode = data.senderPincode || user.pincode || '110001';
               const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-              const quotes = getCarrierRates(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims);
+              const isCod = data.paymentMode === 'cod';
+              const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, isCod, data.amount || 500, false);
               session.carrierQuotes = quotes;
               session.selectedCarrier = quotes[0];
               agentReply = `📸 *1-Click AI Order Extracted from Image!* ⚡\n\n` + buildSummaryConfirmation(session, data, user);
@@ -834,7 +837,8 @@ const handleChat = async (req, res) => {
             if (isReadyToConfirm(data)) {
               const senderPincode = data.senderPincode || user.pincode || '110001';
               const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-              const quotes = getCarrierRates(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims);
+              const isCod = data.paymentMode === 'cod';
+              const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, isCod, data.amount || 500, false);
               session.carrierQuotes = quotes;
               session.selectedCarrier = quotes[0];
               agentReply = `🎯 *1-Click AI Order Extracted from Message!* 🚀\n\n` + buildSummaryConfirmation(session, data, user);
@@ -1167,7 +1171,7 @@ const handleChat = async (req, res) => {
             data.returnAllowed = true;
             session.step = STEPS.CARRIER_SELECTION;
             const senderPincode = data.senderPincode || user.pincode || '110001';
-            const quotes = getCarrierRates(senderPincode, data.receiverPincode, data.weightKg, dims);
+            const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg, dims, false, true, data.amount || 500, false);
             session.carrierQuotes = quotes;
             session.selectedCarrier = quotes[0]; // Auto-select cheapest
 
@@ -1188,6 +1192,11 @@ const handleChat = async (req, res) => {
           if (session.isEditing || isReadyToConfirm(data)) {
             session.isEditing = false;
             session.editingField = '';
+            const senderPincode = data.senderPincode || user.pincode || '110001';
+            const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
+            const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, false, data.amount || 500, false);
+            session.carrierQuotes = quotes;
+            session.selectedCarrier = quotes[0];
             agentReply = `💳 Payment Mode: *Prepaid (Delivery Protected)* ✅\n\n` + buildSummaryConfirmation(session, data, user);
             session.step = STEPS.CONFIRMATION;
             break;
@@ -1234,7 +1243,7 @@ const handleChat = async (req, res) => {
           data.returnAllowed = true;
           session.step = STEPS.CARRIER_SELECTION;
           const senderPincode = data.senderPincode || user.pincode || '110001';
-          const quotes = getCarrierRates(senderPincode, data.receiverPincode, data.weightKg, dims);
+          const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg, dims, false, data.paymentMode === 'cod', data.amount || 500, false);
           session.carrierQuotes = quotes;
           session.selectedCarrier = quotes[0]; // Auto-select cheapest
 
