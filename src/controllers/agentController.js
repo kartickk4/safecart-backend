@@ -205,7 +205,18 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
 
   // 1. Initial Empty Greeting / Page Load
   if (!msg) {
-    // Reset any stale session step so opening the chatbot is always welcoming and never asks for receiver name
+    // If the user already has an active booking in progress with collected data, preserve it!
+    if (session.step > STEPS.GREETING && (session.collectedData?.receiverName || session.collectedData?.receiverAddress || session.collectedData?.receiverPhone)) {
+      const lastAgentMsg = session.messages && session.messages.length > 0
+        ? [...session.messages].reverse().find(m => m.role === 'agent')
+        : null;
+      return {
+        handled: true,
+        reply: lastAgentMsg ? lastAgentMsg.content : `👋 Welcome back! Let's continue booking your shipment.`
+      };
+    }
+
+    // Reset only for fresh sessions
     session.step = STEPS.GREETING;
     session.collectedData = user.address ? { senderAddress: user.address } : {};
     session.isEditing = false;
