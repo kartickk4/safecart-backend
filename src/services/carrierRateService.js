@@ -808,10 +808,18 @@ const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dime
       ...nonArbitragedShiprocketQuotes
     ];
 
-    // Deduplicate carriers: Keep only the single CHEAPEST/BEST rate for each carrier family
+    // Deduplicate carriers: Keep only the single CHEAPEST/BEST rate per carrier family,
+    // while ALWAYS preserving Direct carrier integrations (Shadowfax Direct, Delhivery Direct) alongside aggregators.
     const deduplicatedMap = new Map();
     for (const q of rawQuotes) {
-      const family = (q.baseSlug || q.slug || '').toLowerCase().replace(/^(nimbus_|direct_|shiprocket_)/, '').split('_')[0];
+      const isDirectCarrier = Boolean(
+        q.isDirectShadowfax ||
+        q.isDirectDelhivery ||
+        q.aggregator === 'shadowfax_direct' ||
+        q.aggregator === 'delhivery_direct'
+      );
+      const baseFamily = (q.baseSlug || q.slug || '').toLowerCase().replace(/^(nimbus_|direct_|shiprocket_)/, '').split('_')[0];
+      const family = isDirectCarrier ? `${baseFamily}_direct` : baseFamily;
       const cost = Number(q.exactRate || q.price || q.freightCharge || 999);
       const existing = deduplicatedMap.get(family);
       if (!existing || cost < Number(existing.exactRate || existing.price || existing.freightCharge || 999)) {

@@ -58,12 +58,30 @@ function mapNimbusCarrierToSlug(name) {
   if (n.includes('shadowfax')) return 'shadowfax';
   if (n.includes('xpressbees')) return 'xpressbees';
   if (n.includes('ekart')) return 'ekart';
+  if (n.includes('amazon') || n.includes('ats')) return 'amazon';
   if (n.includes('ecom')) return 'ecom_express';
   if (n.includes('dtdc')) return 'dtdc';
   if (n.includes('blue dart') || n.includes('bluedart')) return 'bluedart';
   if (n.includes('rapido')) return 'rapido';
+  if (n.includes('smartr')) return 'smartr';
+  if (n.includes('trackon')) return 'trackon';
+  if (n.includes('professional') || n.includes('tpc')) return 'tpc';
   if (n.includes('post')) return 'indiapost';
   return (name || '').toLowerCase().replace(/[^a-z0-9]/g, '_');
+}
+
+function cleanNimbusCourierName(rawName) {
+  let clean = String(rawName || '')
+    .replace(/\s*\(via\s+nimbus(?:post)?\)/gi, '')
+    .replace(/_stressed/gi, '')
+    .replace(/\bDS\b/g, '')
+    .replace(/\b\d+(?:\.\d+)?\s*(?:k\.?g\.?|kg|gms?|g)\b/gi, '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  if (!clean) return 'Express Courier';
+  if (/^ekart$/i.test(clean)) return 'Ekart Logistics';
+  return clean;
 }
 
 /**
@@ -121,8 +139,8 @@ async function fetchLiveNimbusRates(fromPincode, toPincode, weightKg = 0.5, dime
       const minWeightKg = minWeightGrams / 1000;
       const weightSlabText = minWeightKg >= 1 ? `${minWeightKg} K.G` : `${minWeightKg} K.G`;
       const isSurface = (c.name || '').toLowerCase().includes('surface') || minWeightGrams >= 2000 || c.is_surface === 1 || c.is_surface === true;
-      const rawCourierName = c.name || c.courier_name || 'Courier';
-      const courierDisplayName = `${rawCourierName} ${weightSlabText}`;
+      const rawCourierName = c.name || c.courier_name || 'Express Courier';
+      const courierDisplayName = cleanNimbusCourierName(rawCourierName);
       const isCloseToWeight = minWeightGrams <= Math.max(1500, targetWeightGrams * 2);
 
       return {
@@ -131,8 +149,8 @@ async function fetchLiveNimbusRates(fromPincode, toPincode, weightKg = 0.5, dime
         aggregator: 'nimbuspost',
         aggregatorName: 'NimbusPost',
         courierCompanyId: c.id || c.courier_id,
-        name: `${courierDisplayName} (via Nimbus)`,
-        courierPartner: courierDisplayName,
+        name: courierDisplayName,
+        courierPartner: `${courierDisplayName} (${weightSlabText})`,
         rawName: rawCourierName,
         minWeightGrams,
         minWeightKg,
@@ -220,12 +238,12 @@ function getRealisticNimbusQuotes(fromPincode, toPincode, weightKg = 0.5, isCod 
   // Nimbus base rates per 500g slab (often 5-10% cheaper on Shadowfax & Ekart than Shiprocket)
   // Accurately aligned with live NimbusPost Zone B commercial rate card
   const nimbusBaseRates = {
-    xpressbees: { baseFreight: 44.60, codFee: 54.50, mode: 'Air', name: 'Xpressbees Air (via NimbusPost)' },
-    ekart: { baseFreight: 44.60, codFee: 56.00, mode: 'Surface', name: 'Ekart Logistics (via NimbusPost)' },
-    shadowfax: { baseFreight: 51.54, codFee: 50.25, mode: 'Surface', name: 'Shadowfax Surface (via NimbusPost)' },
-    delhivery: { baseFreight: 49.56, codFee: 54.50, mode: 'Surface', name: 'Delhivery Surface (via NimbusPost)' },
-    dtdc: { baseFreight: 69.00, codFee: 54.50, mode: 'Surface', name: 'DTDC Priority (via NimbusPost)' },
-    bluedart: { baseFreight: 90.00, codFee: 55.00, mode: 'Air', name: 'BlueDart Air (via NimbusPost)' }
+    xpressbees: { baseFreight: 44.60, codFee: 54.50, mode: 'Air', name: 'Xpressbees Air' },
+    ekart: { baseFreight: 44.60, codFee: 56.00, mode: 'Surface', name: 'Ekart Logistics' },
+    shadowfax: { baseFreight: 51.54, codFee: 50.25, mode: 'Surface', name: 'Shadowfax Surface' },
+    delhivery: { baseFreight: 49.56, codFee: 54.50, mode: 'Surface', name: 'Delhivery Surface' },
+    dtdc: { baseFreight: 69.00, codFee: 54.50, mode: 'Surface', name: 'DTDC Priority' },
+    bluedart: { baseFreight: 90.00, codFee: 55.00, mode: 'Air', name: 'BlueDart Air' }
   };
 
   return Object.entries(nimbusBaseRates).map(([slug, data]) => {

@@ -86,7 +86,7 @@ const extractPaymentMode = (text) => {
 /** Is this a "yes" answer? */
 const isYes = (text) => /^(yes|y|yeah|haan|ok|okay|sure|ha|enable|allow|on)/i.test(text.trim());
 /** Is this a "no" answer? */
-const isNo  = (text) => /^(no|n|nope|nahi|disable|not|off|naa|final)/i.test(text.trim());
+const isNo = (text) => /^(no|n|nope|nahi|disable|not|off|naa|final)/i.test(text.trim());
 
 // ── Carrier Quote Formatting ──────────────────────────────────────────────────
 
@@ -156,7 +156,7 @@ const buildSummaryConfirmation = (session, data, user) => {
     })() +
     `↩️ *Returns:* ${data.returnAllowed !== false ? 'Enabled (24h)' : 'Disabled (Final Sale)'}\n` +
     `🚚 *Carrier:* ${sel.name} — ${fmt(sel.price)} · ${sel.eta}\n\n` +
-    (isCod 
+    (isCod
       ? `*Note for COD:*\n• Courier collects ${fmt(data.amount)} cash/UPI from buyer at delivery\n• Courier fee (${fmt(sel.price)}) + COD handling (₹40) settled via wallet\n• No buyer payment link will be sent ✅\n\n`
       : `*Note for Prepaid (Delivery Protected):*\n• Buyer pays via secure payment link sent via WhatsApp & SMS\n• Courier pickup is auto-booked once payment is confirmed\n• Funds released to sender after delivery is confirmed ✅\n\n`) +
     `Type *"confirm"* to book, or *"edit"* to change something.`
@@ -286,7 +286,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
       };
       const stageText = stageNames[s.escrowStage] || s.status;
 
-      let card = 
+      let card =
         `📦 *Live Shipment Telemetry — ${s.shipmentId}*\n\n` +
         `• *Current Status:* *${s.status}* (${stageText})\n` +
         `• *Receiver:* ${s.receiverName} (${s.receiverPhone})\n` +
@@ -305,7 +305,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
       if (s.returnStatus && s.returnStatus !== 'None') {
         card += `\n↩️ *Return/Replacement Status:* *${s.returnStatus}*\n`;
         if (s.returnType === 'replacement') {
-          card += 
+          card +=
             `🔄 *4-Step Replacement Milestones:*\n` +
             `• Step 1: Buyer Request — ✅ Verified\n` +
             `• Step 2: Reverse Pickup — ${s.replacementPickupAwbCode ? '✅ (' + s.replacementPickupAwbCode + ')' : '⏳ Scheduled'}\n` +
@@ -450,7 +450,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
         activeDisputes.map(s => {
           const statusIcon = s.weightDisputeStatus === 'Won' ? '🏆 Won (Deduction Reversed)' :
             s.weightDisputeStatus === 'Disputed' ? '⏳ Auto-Dispute Submitted with Photo Proof' :
-            s.weightDisputeStatus === 'Detected' ? '⚠️ Discrepancy Detected' : '❌ Closed';
+              s.weightDisputeStatus === 'Detected' ? '⚠️ Discrepancy Detected' : '❌ Closed';
           return '• *' + s.shipmentId + '*: Billed ' + (s.courierReportedWeightKg || s.parcelWeight) + 'kg vs Declared ' + s.parcelWeight + 'kg — ' + statusIcon;
         }).join('\n');
     }
@@ -518,7 +518,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
     let servInfo = null;
     try {
       servInfo = await checkDelhiveryServiceability(targetPin);
-    } catch (_) {}
+    } catch (_) { }
 
     // Get live quotes for a standard 0.5kg parcel
     let rates = [];
@@ -529,7 +529,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
         weight: 0.5,
         paymentMode: msg.toLowerCase().includes('prepaid') ? 'prepaid' : 'cod'
       });
-    } catch (_) {}
+    } catch (_) { }
 
     const isCodAvail = servInfo?.cod !== false;
     const isPrepaidAvail = servInfo?.prepaid !== false;
@@ -648,7 +648,7 @@ const handleChat = async (req, res) => {
   try {
     const { message = '', sessionId, imageBase64, imageMimeType } = req.body;
     const userId = req.user._id;
-    const user   = req.user;
+    const user = req.user;
 
     // Load or create session
     let session;
@@ -672,9 +672,9 @@ const handleChat = async (req, res) => {
 
     // Save user message to history
     if (imageBase64) {
-      session.messages.push({ 
-        role: 'user', 
-        content: message.trim() ? `${message.trim()}\n📷 [Order Photo / Screenshot]` : '📷 [Order Photo / Screenshot]' 
+      session.messages.push({
+        role: 'user',
+        content: message.trim() ? `${message.trim()}\n📷 [Order Photo / Screenshot]` : '📷 [Order Photo / Screenshot]'
       });
     } else if (message.trim()) {
       session.messages.push({ role: 'user', content: message.trim() });
@@ -894,7 +894,7 @@ const handleChat = async (req, res) => {
           if (embeddedWeight) data.weightKg = embeddedWeight;
           if (embeddedAmount) data.amount = embeddedAmount;
           if (embeddedMode) data.paymentMode = embeddedMode;
-          
+
           // Try to extract name (e.g. "to Rahul" or words at start)
           const nameMatch = message.match(/(?:to|receiver:?)\s*([A-Za-z\s]{2,30})/i);
           if (nameMatch) {
@@ -904,7 +904,7 @@ const handleChat = async (req, res) => {
           if (isReadyToConfirm(data)) {
             const senderPincode = data.senderPincode || user.pincode || '110001';
             const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-            const quotes = getCarrierRates(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims);
+            const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, data.paymentMode === 'cod', data.amount || 500, false);
             session.carrierQuotes = quotes;
             session.selectedCarrier = quotes[0];
             agentReply = `🎯 Parsed all details from your message! ✅\n\n` + buildSummaryConfirmation(session, data, user);
@@ -1011,7 +1011,7 @@ const handleChat = async (req, res) => {
           data.receiverPincode = embeddedPin;
           const senderPincode = data.senderPincode || user.pincode || '110001';
           const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-          const quotes = getCarrierRates(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims);
+          const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, data.paymentMode === 'cod', data.amount || 500, false);
           session.carrierQuotes = quotes;
           session.selectedCarrier = quotes[0];
         }
@@ -1039,7 +1039,7 @@ const handleChat = async (req, res) => {
 
         const senderPincode = data.senderPincode || user.pincode || '110001';
         const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-        const quotes = getCarrierRates(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims);
+        const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, data.paymentMode === 'cod', data.amount || 500, false);
         session.carrierQuotes = quotes;
         session.selectedCarrier = quotes[0];
 
@@ -1060,8 +1060,8 @@ const handleChat = async (req, res) => {
       // ── STEP 5: PARCEL DETAILS (weight + dimensions + description) ────────
       case STEPS.PARCEL_DETAILS: {
         const weight = extractWeight(message);
-        const dims   = extractDimension(message);
-        
+        const dims = extractDimension(message);
+
         // Extract description: remove numbers and units, clean up
         const descClean = message
           .replace(/\d+(?:\.\d+)?\s*(?:kg|kilo|gram|g|cm|x|×|\*)/gi, '')
@@ -1083,7 +1083,7 @@ const handleChat = async (req, res) => {
         if (weight && weight > 0) data.weightKg = weight;
         if (dims) {
           data.lengthCm = dims.l;
-          data.widthCm  = dims.w;
+          data.widthCm = dims.w;
           data.heightCm = dims.h;
         }
         if (descClean && descClean.length >= 3) {
@@ -1093,7 +1093,7 @@ const handleChat = async (req, res) => {
         if (data.receiverPincode) {
           const senderPincode = data.senderPincode || user.pincode || '110001';
           const currentDims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-          const quotes = getCarrierRates(senderPincode, data.receiverPincode, data.weightKg || 0.5, currentDims);
+          const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, currentDims, false, data.paymentMode === 'cod', data.amount || 500, false);
           session.carrierQuotes = quotes;
           session.selectedCarrier = quotes[0];
         }
@@ -1144,7 +1144,7 @@ const handleChat = async (req, res) => {
       case STEPS.PAYMENT_MODE: {
         const mode = extractPaymentMode(message);
         if (!mode) {
-          agentReply = 
+          agentReply =
             `⚠️ Please select a valid payment mode:\n\n` +
             `• Reply *"1"* or *"prepaid"* for Prepaid\n` +
             `• Reply *"2"* or *"cod"* for Cash on Delivery (COD)`;
@@ -1287,7 +1287,7 @@ const handleChat = async (req, res) => {
         // Fetch carrier quotes
         const senderPincode = data.senderPincode || user.pincode || '110001';
         const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-        const quotes = getCarrierRates(senderPincode, data.receiverPincode, data.weightKg, dims);
+        const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg, dims, false, data.paymentMode === 'cod', data.amount || 500, false);
         session.carrierQuotes = quotes;
         session.selectedCarrier = quotes[0]; // Auto-select cheapest
 
@@ -1370,14 +1370,14 @@ const handleChat = async (req, res) => {
         // Check if user wants to change carrier
         const numChoice = parseInt(msg);
         const byNumber = !isNaN(numChoice) && numChoice >= 1 && numChoice <= quotes.length;
-        const byName   = quotes.find(q => q.name.toLowerCase().includes(lowerMsg) || q.slug.toLowerCase().includes(lowerMsg));
+        const byName = quotes.find(q => q.name.toLowerCase().includes(lowerMsg) || q.slug.toLowerCase().includes(lowerMsg));
         // Accept "confirm courier", "confirm & book", "confirm", "ok", "yes", empty, or any carrier name match
         const confirmed = isYes(msg) || lowerMsg === 'ok' || lowerMsg === 'confirm' || lowerMsg === 'confirm courier' || lowerMsg === 'confirm & book' || !msg;
         // "Change Courier" button → go to carrier selection again (stay in same step, refresh quotes list)
         if (lowerMsg === 'change courier' || lowerMsg === 'change carrier' || lowerMsg === 'carrier') {
           const senderPincode2 = data.senderPincode || user.pincode || '110001';
           const dims2 = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-          const freshQuotes = getCarrierRates(senderPincode2, data.receiverPincode, data.weightKg, dims2);
+          const freshQuotes = await getCarrierRatesAsync(senderPincode2, data.receiverPincode, data.weightKg, dims2, false, data.paymentMode === 'cod', data.amount || 500, false);
           session.carrierQuotes = freshQuotes;
           agentReply = `🚚 *Choose a carrier:*\n\n${formatCarrierQuotes(freshQuotes)}\n\nReply with number (1-${freshQuotes.length}) or carrier name:`;
           break;
@@ -1481,7 +1481,7 @@ const handleChat = async (req, res) => {
           session.editingField = 'carrier';
           const senderPincode = data.senderPincode || user.pincode || '110001';
           const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-          const quotes = getCarrierRates(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims);
+          const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, data.paymentMode === 'cod', data.amount || 500, false);
           session.carrierQuotes = quotes;
           agentReply = `🚚 *Choose a carrier:*\n\n${formatCarrierQuotes(quotes)}\n\nReply with number (1-${quotes.length}) or carrier name:`;
           break;
@@ -1541,7 +1541,7 @@ const handleChat = async (req, res) => {
               data.receiverPincode = pin;
               const senderPincode = data.senderPincode || user.pincode || '110001';
               const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-              session.carrierQuotes = getCarrierRates(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims);
+              session.carrierQuotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, data.paymentMode === 'cod', data.amount || 500, false);
               session.selectedCarrier = session.carrierQuotes[0];
             }
             agentReply = `✅ Delivery address updated to *${addr}*.\n\n` + buildSummaryConfirmation(session, data, user);
@@ -1554,7 +1554,7 @@ const handleChat = async (req, res) => {
             data.receiverPincode = pin;
             const senderPincode = data.senderPincode || user.pincode || '110001';
             const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-            session.carrierQuotes = getCarrierRates(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims);
+            session.carrierQuotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, data.paymentMode === 'cod', data.amount || 500, false);
             session.selectedCarrier = session.carrierQuotes[0];
             agentReply = `✅ Pincode updated to *${pin}*.\n\n` + buildSummaryConfirmation(session, data, user);
             break;
@@ -1570,7 +1570,7 @@ const handleChat = async (req, res) => {
             data.weightKg = w;
             const senderPincode = data.senderPincode || user.pincode || '110001';
             const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-            session.carrierQuotes = getCarrierRates(senderPincode, data.receiverPincode, data.weightKg, dims);
+            session.carrierQuotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg, dims, false, data.paymentMode === 'cod', data.amount || 500, false);
             session.selectedCarrier = session.carrierQuotes[0];
             agentReply = `✅ Weight updated to *${w} kg*.\n\n` + buildSummaryConfirmation(session, data, user);
             break;
@@ -1612,7 +1612,7 @@ const handleChat = async (req, res) => {
 
           // Block COD and Offline Paid booking if seller wallet balance is negative
           if (availableWallet < 0 && (isCod || isOffline)) {
-            agentReply = 
+            agentReply =
               `🚫 *COD / Offline Shipping Suspended — Negative Wallet Balance*\n\n` +
               `Your seller wallet balance is negative (*-₹${Math.abs(availableWallet).toFixed(2)}*).\n\n` +
               `COD and Offline Paid shipment bookings are suspended until outstanding dues are cleared.\n\n` +
@@ -1633,7 +1633,7 @@ const handleChat = async (req, res) => {
               codFeeTransactionRef = 'WAL_' + Date.now();
             } else {
               // Insufficient wallet balance for COD fees
-              agentReply = 
+              agentReply =
                 `⚠️ *Insufficient Wallet Balance for COD Shipment*\n\n` +
                 `COD booking requires an upfront courier fee of *₹${totalCodFees}* (Courier Delivery: ₹${deliveryCharge} + COD Handling: ₹${codCharge}).\n\n` +
                 `💼 *Current Wallet Balance:* ₹${availableWallet}\n` +
@@ -1650,7 +1650,7 @@ const handleChat = async (req, res) => {
               user.walletBalance = parseFloat(Math.max(0, availableWallet - deliveryCharge).toFixed(2));
               await user.save();
             } else {
-              agentReply = 
+              agentReply =
                 `⚠️ *Insufficient Wallet Balance for Prepaid Shipment*\n\n` +
                 `Prepaid shipment booking requires upfront courier delivery fee of *₹${deliveryCharge}*.\n\n` +
                 `💼 *Current Wallet Balance:* ₹${availableWallet}\n` +
@@ -1663,38 +1663,38 @@ const handleChat = async (req, res) => {
           // Create Shipment document
           const shipment = new Shipment({
             shipmentId,
-            senderId:        userId,
-            receiverName:    data.receiverName,
-            receiverPhone:   data.receiverPhone,
+            senderId: userId,
+            receiverName: data.receiverName,
+            receiverPhone: data.receiverPhone,
             receiverAddress: data.receiverAddress,
             receiverPincode: data.receiverPincode,
-            description:     data.description,
-            amount:          data.amount,
-            city:            `${data.senderPincode || 'Sender'} → ${data.receiverPincode}`,
-            carrierSlug:     sel.slug,
+            description: data.description,
+            amount: data.amount,
+            city: `${data.senderPincode || 'Sender'} → ${data.receiverPincode}`,
+            carrierSlug: sel.slug,
             awbCode,
-            returnAllowed:   data.returnAllowed,
-            paymentLink:     paymentLinkUrl,
-            paymentMode:     isCod ? 'cod' : 'prepaid',
-            isPrepaid:       isPrepaidOrder,
-            codCharge:       codCharge,
-            deliveryCharge:  deliveryCharge,
-            totalCodFees:    totalCodFees,
-            codFeePaid:      codFeePaid,
+            returnAllowed: data.returnAllowed,
+            paymentLink: paymentLinkUrl,
+            paymentMode: isCod ? 'cod' : 'prepaid',
+            isPrepaid: isPrepaidOrder,
+            codCharge: codCharge,
+            deliveryCharge: deliveryCharge,
+            totalCodFees: totalCodFees,
+            codFeePaid: codFeePaid,
             codFeePaymentMethod,
             codFeePaidAt,
             codFeeTransactionRef,
             rtoProtectionEnabled: (!isCod && data.rtoProtectionEnabled === true),
-            bookedViaAgent:  true,
-            agentSessionId:  session.sessionId,
-            parcelWeight:    data.weightKg,
-            parcelLength:    data.lengthCm || 15,
-            parcelWidth:     data.widthCm || 10,
-            parcelHeight:    data.heightCm || 5,
+            bookedViaAgent: true,
+            agentSessionId: session.sessionId,
+            parcelWeight: data.weightKg,
+            parcelLength: data.lengthCm || 15,
+            parcelWidth: data.widthCm || 10,
+            parcelHeight: data.heightCm || 5,
             serviceFeeDeducted: calculateServiceFee(data.amount).fee,
-            serviceFeeRate:  calculateServiceFee(data.amount).rate,
-            status:          isCod ? 'Pending Pickup' : 'Awaiting Payment',
-            escrowStage:     isCod ? 3 : 1
+            serviceFeeRate: calculateServiceFee(data.amount).rate,
+            status: isCod ? 'Pending Pickup' : 'Awaiting Payment',
+            escrowStage: isCod ? 3 : 1
           });
           await shipment.save();
 
@@ -1714,12 +1714,12 @@ const handleChat = async (req, res) => {
           // For prepaid: send payment link to buyer via WhatsApp (SMS restricted per policy)
           if (isPrepaidOrder && cfLink.linkUrl) {
             await sendPaymentLinkWhatsApp({
-              phone:        data.receiverPhone,
+              phone: data.receiverPhone,
               receiverName: data.receiverName,
               shipmentId,
-              amount:       data.amount,
-              description:  data.description,
-              linkUrl:      cfLink.linkUrl
+              amount: data.amount,
+              description: data.description,
+              linkUrl: cfLink.linkUrl
             });
           }
 
@@ -1890,12 +1890,12 @@ const resolvePaymentMode = (val) => {
 const resolveCarrierPref = (val) => {
   const v = (val || '').toLowerCase().trim();
   if (!v || v === 'auto' || v === '-' || v === 'any') return 'auto';
-  if (v.includes('delhivery'))  return 'delhivery';
+  if (v.includes('delhivery')) return 'delhivery';
   if (v.includes('bluedart') || v.includes('blue dart')) return 'bluedart';
-  if (v.includes('dtdc'))       return 'dtdc';
-  if (v.includes('ekart'))      return 'ekart';
-  if (v.includes('shadowfax'))  return 'shadowfax';
-  if (v.includes('rapido'))     return 'rapido';
+  if (v.includes('dtdc')) return 'dtdc';
+  if (v.includes('ekart')) return 'ekart';
+  if (v.includes('shadowfax')) return 'shadowfax';
+  if (v.includes('rapido')) return 'rapido';
   if (v.includes('xpressbee') || v.includes('xpressbees')) return 'xpressbees';
   if (v.includes('ecom') || v.includes('ecom_express')) return 'ecom_express';
   if (v.includes('india post') || v.includes('indiapost')) return 'indiapost';
@@ -1920,28 +1920,28 @@ const REQUIRED_COLUMNS = [
 ];
 
 const COLUMN_ALIASES = {
-  receiver_name:         ['receiver_name', 'name', 'customer_name', 'buyer_name', 'recipient_name'],
-  receiver_phone:        ['receiver_phone', 'phone', 'mobile', 'contact', 'phone_number', 'mobile_number'],
-  receiver_email:        ['receiver_email', 'email', 'email_id', 'buyer_email'],
-  receiver_address:      ['receiver_address', 'address', 'delivery_address', 'shipping_address'],
-  receiver_city:         ['receiver_city', 'city', 'town'],
-  receiver_state:        ['receiver_state', 'state'],
-  pincode:               ['pincode', 'zip', 'zip_code', 'postal_code', 'delivery_pincode'],
-  description:           ['description', 'item', 'product', 'item_description', 'product_name', 'goods'],
-  category:              ['category', 'product_category', 'item_category', 'type'],
-  weight_kg:             ['weight_kg', 'weight', 'wt', 'weight_in_kg', 'wt_kg'],
-  height_cm:             ['height_cm', 'height', 'h', 'height_in_cm'],
-  width_cm:              ['width_cm', 'width', 'w', 'width_in_cm'],
-  length_cm:             ['length_cm', 'length', 'l', 'length_in_cm'],
-  quantity:              ['quantity', 'qty', 'pieces', 'units'],
-  amount:                ['amount', 'value', 'price', 'order_amount', 'invoice_value', 'declared_value'],
-  payment_mode:          ['payment_mode', 'mode', 'payment', 'pay_mode'],
-  cod_amount:            ['cod_amount', 'cash_on_delivery', 'cod', 'collection_amount'],
-  insurance_required:    ['insurance_required', 'insurance', 'insure'],
-  return_allowed:        ['return_allowed', 'return', 'returns', 'return_policy'],
-  preferred_carrier:     ['preferred_carrier', 'carrier', 'courier', 'carrier_preference'],
-  special_instructions:  ['special_instructions', 'instructions', 'notes', 'delivery_notes', 'remarks'],
-  seller_order_id:       ['seller_order_id', 'order_id', 'invoice_no', 'reference', 'ref_no', 'po_number']
+  receiver_name: ['receiver_name', 'name', 'customer_name', 'buyer_name', 'recipient_name'],
+  receiver_phone: ['receiver_phone', 'phone', 'mobile', 'contact', 'phone_number', 'mobile_number'],
+  receiver_email: ['receiver_email', 'email', 'email_id', 'buyer_email'],
+  receiver_address: ['receiver_address', 'address', 'delivery_address', 'shipping_address'],
+  receiver_city: ['receiver_city', 'city', 'town'],
+  receiver_state: ['receiver_state', 'state'],
+  pincode: ['pincode', 'zip', 'zip_code', 'postal_code', 'delivery_pincode'],
+  description: ['description', 'item', 'product', 'item_description', 'product_name', 'goods'],
+  category: ['category', 'product_category', 'item_category', 'type'],
+  weight_kg: ['weight_kg', 'weight', 'wt', 'weight_in_kg', 'wt_kg'],
+  height_cm: ['height_cm', 'height', 'h', 'height_in_cm'],
+  width_cm: ['width_cm', 'width', 'w', 'width_in_cm'],
+  length_cm: ['length_cm', 'length', 'l', 'length_in_cm'],
+  quantity: ['quantity', 'qty', 'pieces', 'units'],
+  amount: ['amount', 'value', 'price', 'order_amount', 'invoice_value', 'declared_value'],
+  payment_mode: ['payment_mode', 'mode', 'payment', 'pay_mode'],
+  cod_amount: ['cod_amount', 'cash_on_delivery', 'cod', 'collection_amount'],
+  insurance_required: ['insurance_required', 'insurance', 'insure'],
+  return_allowed: ['return_allowed', 'return', 'returns', 'return_policy'],
+  preferred_carrier: ['preferred_carrier', 'carrier', 'courier', 'carrier_preference'],
+  special_instructions: ['special_instructions', 'instructions', 'notes', 'delivery_notes', 'remarks'],
+  seller_order_id: ['seller_order_id', 'order_id', 'invoice_no', 'reference', 'ref_no', 'po_number']
 };
 
 const handleBulkUpload = async (req, res) => {
@@ -2003,73 +2003,73 @@ const handleBulkUpload = async (req, res) => {
       const rowNum = idx + 2; // header = row 1, data starts at row 2
 
       // ── Core required fields ──
-      const name    = getCol(row, ...COLUMN_ALIASES.receiver_name).trim();
-      const phone   = extractPhone(getCol(row, ...COLUMN_ALIASES.receiver_phone));
+      const name = getCol(row, ...COLUMN_ALIASES.receiver_name).trim();
+      const phone = extractPhone(getCol(row, ...COLUMN_ALIASES.receiver_phone));
       const address = getCol(row, ...COLUMN_ALIASES.receiver_address).trim();
       const pincode = extractPincode(getCol(row, ...COLUMN_ALIASES.pincode));
-      const weight  = parseFloat(getCol(row, ...COLUMN_ALIASES.weight_kg).replace(/[^\d.]/g, '')) || 0;
-      const desc    = getCol(row, ...COLUMN_ALIASES.description).trim();
-      const amount  = parseFloat(getCol(row, ...COLUMN_ALIASES.amount).replace(/[^\d.]/g, '')) || 0;
+      const weight = parseFloat(getCol(row, ...COLUMN_ALIASES.weight_kg).replace(/[^\d.]/g, '')) || 0;
+      const desc = getCol(row, ...COLUMN_ALIASES.description).trim();
+      const amount = parseFloat(getCol(row, ...COLUMN_ALIASES.amount).replace(/[^\d.]/g, '')) || 0;
 
       // ── Optional enrichment fields ──
-      const email    = getCol(row, ...COLUMN_ALIASES.receiver_email).trim();
-      const city     = getCol(row, ...COLUMN_ALIASES.receiver_city).trim();
-      const state    = getCol(row, ...COLUMN_ALIASES.receiver_state).trim();
+      const email = getCol(row, ...COLUMN_ALIASES.receiver_email).trim();
+      const city = getCol(row, ...COLUMN_ALIASES.receiver_city).trim();
+      const state = getCol(row, ...COLUMN_ALIASES.receiver_state).trim();
       const category = resolveCategory(getCol(row, ...COLUMN_ALIASES.category));
       const heightCm = parseFloat(getCol(row, ...COLUMN_ALIASES.height_cm).replace(/[^\d.]/g, '')) || 15;
-      const widthCm  = parseFloat(getCol(row, ...COLUMN_ALIASES.width_cm).replace(/[^\d.]/g, '')) || 15;
+      const widthCm = parseFloat(getCol(row, ...COLUMN_ALIASES.width_cm).replace(/[^\d.]/g, '')) || 15;
       const lengthCm = parseFloat(getCol(row, ...COLUMN_ALIASES.length_cm).replace(/[^\d.]/g, '')) || 15;
       const quantity = parseInt(getCol(row, ...COLUMN_ALIASES.quantity).replace(/[^\d]/g, ''), 10) || 1;
 
-      const payMode  = resolvePaymentMode(getCol(row, ...COLUMN_ALIASES.payment_mode));
-      const codAmt   = parseFloat(getCol(row, ...COLUMN_ALIASES.cod_amount).replace(/[^\d.]/g, '')) || (payMode === 'cod' ? amount : 0);
-      const insure   = !isNo(getCol(row, ...COLUMN_ALIASES.insurance_required) || 'no');
+      const payMode = resolvePaymentMode(getCol(row, ...COLUMN_ALIASES.payment_mode));
+      const codAmt = parseFloat(getCol(row, ...COLUMN_ALIASES.cod_amount).replace(/[^\d.]/g, '')) || (payMode === 'cod' ? amount : 0);
+      const insure = !isNo(getCol(row, ...COLUMN_ALIASES.insurance_required) || 'no');
       const returnOk = !isNo(getCol(row, ...COLUMN_ALIASES.return_allowed) || 'yes');
-      const carrier  = resolveCarrierPref(getCol(row, ...COLUMN_ALIASES.preferred_carrier));
-      const notes    = getCol(row, ...COLUMN_ALIASES.special_instructions).trim().substring(0, 300);
-      const orderId  = getCol(row, ...COLUMN_ALIASES.seller_order_id).trim().substring(0, 100);
+      const carrier = resolveCarrierPref(getCol(row, ...COLUMN_ALIASES.preferred_carrier));
+      const notes = getCol(row, ...COLUMN_ALIASES.special_instructions).trim().substring(0, 300);
+      const orderId = getCol(row, ...COLUMN_ALIASES.seller_order_id).trim().substring(0, 100);
 
       // ── Validation ──
-      if (!name || name.length < 2)        errors.push('receiver_name is missing or too short (min 2 chars)');
-      if (!phone)                           errors.push('receiver_phone must be a valid 10-digit Indian number');
-      if (!address || address.length < 8)   errors.push('receiver_address is too short (min 8 chars, include street + area)');
-      if (!pincode)                         errors.push('pincode must be a valid 6-digit number');
-      if (!weight || weight <= 0)           errors.push('weight_kg must be a positive number (e.g. 1.5)');
-      if (!desc || desc.length < 3)         errors.push('description is missing or too short');
-      if (!amount || amount < 1)            errors.push('amount must be at least ₹1');
+      if (!name || name.length < 2) errors.push('receiver_name is missing or too short (min 2 chars)');
+      if (!phone) errors.push('receiver_phone must be a valid 10-digit Indian number');
+      if (!address || address.length < 8) errors.push('receiver_address is too short (min 8 chars, include street + area)');
+      if (!pincode) errors.push('pincode must be a valid 6-digit number');
+      if (!weight || weight <= 0) errors.push('weight_kg must be a positive number (e.g. 1.5)');
+      if (!desc || desc.length < 3) errors.push('description is missing or too short');
+      if (!amount || amount < 1) errors.push('amount must be at least ₹1');
       if (payMode === 'cod' && codAmt <= 0) errors.push('cod_amount must be > 0 when payment_mode is COD');
-      if (quantity < 1 || quantity > 999)   errors.push('quantity must be between 1 and 999');
+      if (quantity < 1 || quantity > 999) errors.push('quantity must be between 1 and 999');
 
       return {
         rowNumber: rowNum,
-        receiverName:    name,
-        receiverPhone:   phone || getCol(row, ...COLUMN_ALIASES.receiver_phone).trim(),
-        receiverEmail:   email,
+        receiverName: name,
+        receiverPhone: phone || getCol(row, ...COLUMN_ALIASES.receiver_phone).trim(),
+        receiverEmail: email,
         receiverAddress: address,
-        receiverCity:    city,
-        receiverState:   state,
-        pincode:         pincode || getCol(row, ...COLUMN_ALIASES.pincode).trim(),
-        description:     desc,
+        receiverCity: city,
+        receiverState: state,
+        pincode: pincode || getCol(row, ...COLUMN_ALIASES.pincode).trim(),
+        description: desc,
         category,
-        weightKg:        weight,
+        weightKg: weight,
         heightCm,
         widthCm,
         lengthCm,
         quantity,
         amount,
-        paymentMode:     payMode,
-        codAmount:       codAmt,
+        paymentMode: payMode,
+        codAmount: codAmt,
         insuranceRequired: insure,
-        returnAllowed:   returnOk,
+        returnAllowed: returnOk,
         preferredCarrier: carrier,
         specialInstructions: notes,
-        sellerOrderId:   orderId,
-        isValid:         errors.length === 0,
+        sellerOrderId: orderId,
+        isValid: errors.length === 0,
         errors
       };
     });
 
-    const validRows   = parsedRows.filter(r => r.isValid).length;
+    const validRows = parsedRows.filter(r => r.isValid).length;
     const invalidRows = parsedRows.filter(r => !r.isValid).length;
 
     // Create a BulkJob record
@@ -2153,7 +2153,7 @@ async function processBulkRows(job, user) {
   let failCount = 0;
   const createdIds = [];
 
-    for (let i = 0; i < job.parsedRows.length; i++) {
+  for (let i = 0; i < job.parsedRows.length; i++) {
     const row = job.parsedRows[i];
     if (!row.isValid) { failCount++; continue; }
 
@@ -2186,53 +2186,53 @@ async function processBulkRows(job, user) {
 
       const bulkShipment = new Shipment({
         shipmentId,
-        senderId:          user._id,
-        receiverName:      row.receiverName,
-        receiverPhone:     row.receiverPhone,
-        description:       row.description,
-        amount:            row.amount,
-        city:              `${senderPincode} → ${row.pincode}`,
-        carrierSlug:       sel.slug,
+        senderId: user._id,
+        receiverName: row.receiverName,
+        receiverPhone: row.receiverPhone,
+        description: row.description,
+        amount: row.amount,
+        city: `${senderPincode} → ${row.pincode}`,
+        carrierSlug: sel.slug,
         awbCode,
-        returnAllowed:     row.returnAllowed,
-        paymentLink:       '',
-        paymentMode:       row.paymentMode,
-        isPrepaid:         isPrepaid,
-        codAmount:         isCod ? (row.codAmount || row.amount) : 0,
-        bookedViaAgent:    true,
-        agentSessionId:    `bulk-${job.jobId}`,
-        receiverAddress:   row.receiverAddress,
-        receiverPincode:   row.pincode,
-        parcelWeight:      row.weightKg,
-        parcelHeight:      row.heightCm,
+        returnAllowed: row.returnAllowed,
+        paymentLink: '',
+        paymentMode: row.paymentMode,
+        isPrepaid: isPrepaid,
+        codAmount: isCod ? (row.codAmount || row.amount) : 0,
+        bookedViaAgent: true,
+        agentSessionId: `bulk-${job.jobId}`,
+        receiverAddress: row.receiverAddress,
+        receiverPincode: row.pincode,
+        parcelWeight: row.weightKg,
+        parcelHeight: row.heightCm,
         serviceFeeDeducted: calculateServiceFee(row.amount).fee,
-        serviceFeeRate:    calculateServiceFee(row.amount).rate,
-        bulkJobId:         job.jobId,
-        sellerOrderRef:    row.sellerOrderId || '',
-        status:            'Pending Pickup',
-        escrowStage:       3,
+        serviceFeeRate: calculateServiceFee(row.amount).rate,
+        bulkJobId: job.jobId,
+        sellerOrderRef: row.sellerOrderId || '',
+        status: 'Pending Pickup',
+        escrowStage: 3,
         receiverPaymentDone: isPrepaid,
-        receiverPaidAt:    isPrepaid ? new Date() : undefined
+        receiverPaidAt: isPrepaid ? new Date() : undefined
       });
       await bulkShipment.save();
       await autoScheduleCourierPickup(bulkShipment, user);
 
       // Notification via WhatsApp per platform messaging policy
       await sendBookingConfirmationWhatsApp({
-        phone:        row.receiverPhone,
+        phone: row.receiverPhone,
         receiverName: row.receiverName,
         shipmentId,
-        carrierName:  sel.name || sel.slug,
+        carrierName: sel.name || sel.slug,
         awbCode,
-        eta:          sel.eta || '3-5 business days'
+        eta: sel.eta || '3-5 business days'
       });
 
       // Update row with booking results
-      row.shipmentId      = shipmentId;
-      row.awbCode         = awbCode;
-      row.paymentLink     = cfLink.linkUrl;
+      row.shipmentId = shipmentId;
+      row.awbCode = awbCode;
+      row.paymentLink = cfLink.linkUrl;
       row.carrierAssigned = sel.name;
-      row.carrierPrice    = sel.price;
+      row.carrierPrice = sel.price;
       createdIds.push(shipmentId);
       successCount++;
 
@@ -2272,19 +2272,19 @@ const getBulkStatus = async (req, res) => {
       : 0;
 
     res.json({
-      jobId:              job.jobId,
-      status:             job.status,
+      jobId: job.jobId,
+      status: job.status,
       progress,
-      totalRows:          job.totalRows,
-      validRows:          job.validRows,
-      invalidRows:        job.invalidRows,
-      processedRows:      job.processedRows,
-      successCount:       job.successCount,
-      failCount:          job.failCount,
+      totalRows: job.totalRows,
+      validRows: job.validRows,
+      invalidRows: job.invalidRows,
+      processedRows: job.processedRows,
+      successCount: job.successCount,
+      failCount: job.failCount,
       createdShipmentIds: job.createdShipmentIds,
-      parsedRows:         job.parsedRows,
-      originalFileName:   job.originalFileName,
-      completedAt:        job.completedAt
+      parsedRows: job.parsedRows,
+      originalFileName: job.originalFileName,
+      completedAt: job.completedAt
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2303,34 +2303,34 @@ const downloadBulkReport = async (req, res) => {
     }
 
     const rows = job.parsedRows.map(r => ({
-      'Row #':                r.rowNumber,
-      'Seller Order ID':      r.sellerOrderId || '',
-      'Booking Status':       r.shipmentId ? 'Booked ✅' : (r.bookingError ? 'Failed ❌' : 'Skipped'),
+      'Row #': r.rowNumber,
+      'Seller Order ID': r.sellerOrderId || '',
+      'Booking Status': r.shipmentId ? 'Booked ✅' : (r.bookingError ? 'Failed ❌' : 'Skipped'),
       'SecureKaro Shipment ID': r.shipmentId || '',
-      'AWB Code':             r.awbCode || '',
-      'Receiver Name':        r.receiverName,
-      'Receiver Phone':       r.receiverPhone,
-      'Receiver Email':       r.receiverEmail || '',
-      'Delivery Address':     r.receiverAddress,
-      'City':                 r.receiverCity || '',
-      'State':                r.receiverState || '',
-      'Pincode':              r.pincode,
-      'Item Description':     r.description,
-      'Category':             r.category || '',
-      'Weight (kg)':          r.weightKg,
+      'AWB Code': r.awbCode || '',
+      'Receiver Name': r.receiverName,
+      'Receiver Phone': r.receiverPhone,
+      'Receiver Email': r.receiverEmail || '',
+      'Delivery Address': r.receiverAddress,
+      'City': r.receiverCity || '',
+      'State': r.receiverState || '',
+      'Pincode': r.pincode,
+      'Item Description': r.description,
+      'Category': r.category || '',
+      'Weight (kg)': r.weightKg,
       'Dimensions (HxWxL cm)': `${r.heightCm}x${r.widthCm}x${r.lengthCm}`,
-      'Quantity':             r.quantity || 1,
-      'Declared Value (₹)':  r.amount,
-      'Payment Mode':         r.paymentMode,
-      'COD Amount (₹)':       r.codAmount || '',
-      'Insurance':            r.insuranceRequired ? 'Yes' : 'No',
-      'Return Allowed':       r.returnAllowed ? 'Yes' : 'No',
-      'Preferred Carrier':    r.preferredCarrier || 'auto',
-      'Carrier Assigned':     r.carrierAssigned || '',
-      'Carrier Charge (₹)':  r.carrierPrice || '',
-      'Payment Link':         r.paymentLink || '',
+      'Quantity': r.quantity || 1,
+      'Declared Value (₹)': r.amount,
+      'Payment Mode': r.paymentMode,
+      'COD Amount (₹)': r.codAmount || '',
+      'Insurance': r.insuranceRequired ? 'Yes' : 'No',
+      'Return Allowed': r.returnAllowed ? 'Yes' : 'No',
+      'Preferred Carrier': r.preferredCarrier || 'auto',
+      'Carrier Assigned': r.carrierAssigned || '',
+      'Carrier Charge (₹)': r.carrierPrice || '',
+      'Payment Link': r.paymentLink || '',
       'Special Instructions': r.specialInstructions || '',
-      'Error / Reason':       r.bookingError || r.errors?.join('; ') || ''
+      'Error / Reason': r.bookingError || r.errors?.join('; ') || ''
     }));
 
     const wb = XLSX.utils.book_new();
@@ -2352,8 +2352,8 @@ const downloadBulkReport = async (req, res) => {
 
 const getCarrierRatesHandler = async (req, res) => {
   try {
-    const { 
-      fromPincode, toPincode, weightKg, length, width, height, dimensions, 
+    const {
+      fromPincode, toPincode, weightKg, length, width, height, dimensions,
       paymentMode, cod, declaredValue, amount, isSecureShipment, secureShipment,
       isReverse, shipmentType
     } = req.body;
@@ -2369,10 +2369,10 @@ const getCarrierRatesHandler = async (req, res) => {
     const parsedWeight = parseFloat(weightKg) || 0.5;
     const quotesWithBadges = attachSmartBadges(quotes, isCod, parsedWeight, decVal, toPincode);
     const smartRecommendation = getSmartRecommendation(quotesWithBadges, isCod, parsedWeight, decVal, toPincode);
-    res.json({ 
-      quotes: quotesWithBadges, 
+    res.json({
+      quotes: quotesWithBadges,
       smartRecommendation,
-      fromZone: getPincodeInfo(fromPincode), 
+      fromZone: getPincodeInfo(fromPincode),
       toZone: getPincodeInfo(toPincode),
       isReverse: isReverseShipment
     });
