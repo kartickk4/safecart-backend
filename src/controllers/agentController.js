@@ -97,16 +97,93 @@ const formatCarrierQuotes = (quotes) => {
   }).join('\n');
 };
 
+const createFreshCollectedData = (user = {}) => ({
+  ...(user?.address ? { senderAddress: user.address } : {}),
+  weightKg: 0,
+  amount: 0,
+  paymentMode: '',
+  returnAllowed: false,
+  rtoProtectionEnabled: false
+});
+
+const findCarrierQuoteMatch = (quotes = [], rawMessage = '') => {
+  if (!Array.isArray(quotes) || quotes.length === 0 || !rawMessage) return null;
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const target = norm(rawMessage);
+  if (!target || target.length < 3) return null;
+
+  return quotes.find(q => {
+    const qName = norm(q.name);
+    const qSlug = norm(q.slug);
+    return qName === target ||
+      qSlug === target ||
+      (qName && (qName.includes(target) || target.includes(qName))) ||
+      (qSlug && (qSlug.includes(target) || target.includes(qSlug)));
+  }) || null;
+};
+
 const isReadyToConfirm = (d) => !!(
   d &&
   d.receiverName &&
   d.receiverPhone &&
   d.receiverAddress &&
   d.receiverPincode &&
-  d.weightKg &&
-  d.amount &&
-  d.paymentMode
+  Number(d.weightKg) > 0 &&
+  Number(d.amount) > 0 &&
+  (d.paymentMode === 'cod' || d.paymentMode === 'prepaid')
 );
+
+const advanceToNextMissingStep = async (session, data, user, prefix = '') => {
+  if (!data.receiverName) {
+    session.step = STEPS.RECEIVER_NAME;
+    return `${prefix}*What is the receiver's full name?*`;
+  }
+  if (!data.receiverPhone) {
+    session.step = STEPS.RECEIVER_PHONE;
+    return `${prefix}*What is their 10-digit WhatsApp/mobile number?*`;
+  }
+  if (!data.receiverAddress) {
+    session.step = STEPS.RECEIVER_ADDRESS;
+    return `${prefix}*What is their full delivery address?*\n_(Include house/flat, street, area, city)_`;
+  }
+  if (!data.receiverPincode) {
+    session.step = STEPS.RECEIVER_PINCODE;
+    return `${prefix}*What is the 6-digit destination pincode?*`;
+  }
+  if (!data.weightKg || Number(data.weightKg) <= 0 || !data.description || data.description === 'General Merchandise') {
+    session.step = STEPS.PARCEL_DETAILS;
+    if (!data.weightKg || Number(data.weightKg) <= 0) {
+      return `${prefix}*Please tell me the parcel details:*\n• Parcel Weight? _(e.g. "0.5 kg" or "1.5 kg")_\n• Item Description? _(e.g. "Cotton Kurta")_\n• Dimensions optional _(e.g. "20x15x10 cm")_`;
+    }
+    return `${prefix}*What is the item/product inside this parcel?* _(Weight ${data.weightKg} kg already noted — e.g. "Cotton Kurta")_`;
+  }
+  if (!data.amount || Number(data.amount) <= 0) {
+    session.step = STEPS.PARCEL_AMOUNT;
+    return `${prefix}*What is the parcel value / order amount? (in ₹)*`;
+  }
+  if (data.paymentMode !== 'cod' && data.paymentMode !== 'prepaid') {
+    session.step = STEPS.PAYMENT_MODE;
+    return (
+      `${prefix}*What is the payment mode?*\n\n` +
+      `1. 💳 *Prepaid* — Courier fee paid from your SecureKaro Wallet, instant pickup\n` +
+      `2. 🚚 *Cash on Delivery (COD)* — Courier collects ₹${data.amount} from buyer at delivery\n\n` +
+      `_Tap *Prepaid* or *COD* below, or reply "1" or "2"._`
+    );
+  }
+
+  const senderPincode = data.senderPincode || user.pincode || '110001';
+  const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
+  const isCod = data.paymentMode === 'cod';
+  const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg, dims, false, isCod, data.amount, false);
+  session.carrierQuotes = quotes;
+  if (!session.selectedCarrier?.slug || !quotes.some(q => q.slug === session.selectedCarrier.slug)) {
+    session.selectedCarrier = quotes[0];
+  } else {
+    session.selectedCarrier = quotes.find(q => q.slug === session.selectedCarrier.slug) || quotes[0];
+  }
+  session.step = STEPS.CONFIRMATION;
+  return `${prefix}${buildSummaryConfirmation(session, data, user)}`;
+};
 
 const buildSummaryConfirmation = (session, data, user) => {
   const senderPincode = data.senderPincode || user.pincode || '110001';
@@ -120,10 +197,10 @@ const buildSummaryConfirmation = (session, data, user) => {
   }
   const sel = session.selectedCarrier || quotes[0];
   const isCod = (data.paymentMode === 'cod');
-  const modeText = isCod ? '🚚 Cash on Delivery (COD)' : '💳 Prepaid (Delivery Protected)';
+  const modeText = isCod ? '🚚 Cash on Delivery (COD)' : '💳 Prepaid (Seller Wallet Freight)';
   const rtoText = isCod
     ? '⚠️ Not Available for COD (Prepaid Only)'
-    : (data.rtoProtectionEnabled ? '🛡️ Enabled (₹40 Seller Relief)' : 'Disabled');
+    : (data.rtoProtectionEnabled === true ? '🛡️ Enabled (₹40 Seller Relief)' : 'Off (Default)');
 
   const volWeight = parseFloat((((dims.length * dims.width * dims.height) / 5000)).toFixed(2));
 
@@ -132,7 +209,7 @@ const buildSummaryConfirmation = (session, data, user) => {
     `👤 *Receiver:* ${data.receiverName} (${data.receiverPhone})\n` +
     `📍 *Address:* ${data.receiverAddress}\n` +
     `📮 *Pincode:* ${data.receiverPincode}\n` +
-    `📦 *Item:* ${data.description || 'General Merchandise'}\n` +
+    `📦 *Item:* ${data.description || 'Parcel'}\n` +
     `⚖️ *Weight:* ${data.weightKg} kg (Volumetric: ${volWeight} kg, Dims: ${dims.length}×${dims.width}×${dims.height} cm)\n` +
     `💰 *Amount:* ${fmt(data.amount)}\n` +
     `💳 *Payment Mode:* ${modeText}\n` +
@@ -154,12 +231,12 @@ const buildSummaryConfirmation = (session, data, user) => {
         return extra;
       } catch (_) { return ''; }
     })() +
-    `↩️ *Returns:* ${data.returnAllowed !== false ? 'Enabled (24h)' : 'Disabled (Final Sale)'}\n` +
+    `↩️ *Returns:* ${data.returnAllowed === true ? 'Enabled (24h)' : 'Off (Final Sale)'}\n` +
     `🚚 *Carrier:* ${sel.name} — ${fmt(sel.price)} · ${sel.eta}\n\n` +
     (isCod
-      ? `*Note for COD:*\n• Courier collects ${fmt(data.amount)} cash/UPI from buyer at delivery\n• Courier fee (${fmt(sel.price)}) + COD handling (₹40) settled via wallet\n• No buyer payment link will be sent ✅\n\n`
-      : `*Note for Prepaid (Delivery Protected):*\n• Buyer pays via secure payment link sent via WhatsApp & SMS\n• Courier pickup is auto-booked once payment is confirmed\n• Funds released to sender after delivery is confirmed ✅\n\n`) +
-    `Type *"confirm"* to book, or *"edit"* to change something.`
+      ? `*Note for COD:*\n• Courier collects ${fmt(data.amount)} cash/UPI from buyer at delivery\n• Courier fee (${fmt(sel.price)}) + COD handling (₹40) settled via your wallet\n• No buyer payment link will be sent ✅\n\n`
+      : `*Note for Prepaid (Seller-Paid):*\n• Courier delivery fee (${fmt(sel.price)}) settled directly via your SecureKaro Wallet\n• Pickup is auto-scheduled immediately upon booking\n• No buyer payment link will be sent via WhatsApp or SMS ✅\n\n`) +
+    `Tap an action pill below or type *"confirm"* to book, *"switch to cod"* / *"enable rto"* / *"enable return"* / *"edit"*.`
   );
 };
 
@@ -220,7 +297,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
 
     // Reset only for fresh sessions
     session.step = STEPS.GREETING;
-    session.collectedData = user.address ? { senderAddress: user.address } : {};
+    session.collectedData = createFreshCollectedData(user);
     session.isEditing = false;
     session.editingField = '';
 
@@ -244,7 +321,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
   if (/^(cancel|stop|abort|exit|quit|cancel booking|stop booking|reset booking)$/i.test(msg)) {
     if (session.step > STEPS.GREETING && session.step < STEPS.DONE) {
       session.step = STEPS.GREETING;
-      session.collectedData = user.address ? { senderAddress: user.address } : {};
+      session.collectedData = createFreshCollectedData(user);
       session.isEditing = false;
       session.editingField = '';
       return {
@@ -601,8 +678,20 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
     return { handled: true, reply: intelligentReply, showSupport: false };
   }
 
-  // 15. Generative AI Query Resolver (Google Gemini 3.5 Flash)
-  // Understands English, Hindi, Hinglish and arbitrary logistics inquiries
+  // 15. Generative AI Query Resolver (Google Gemini Flash)
+  // During an active booking flow, ONLY invoke Gemini when the user is clearly asking an informational question;
+  // never intercept carrier clicks, booking confirmations, toggles, edits, weights, addresses, or amounts.
+  if (session.step > STEPS.GREETING && session.step < STEPS.DONE) {
+    const isCarrierClick = !!findCarrierQuoteMatch(session.carrierQuotes || [], msg);
+    const looksLikeQuestion =
+      msg.includes('?') ||
+      /^(what|why|how|when|where|who|which|can\s+i|does|is\s+there|tell\s+me|explain|kitna|kitne|kaise|kya|kab|batao)\b/i.test(msg);
+    if (isCarrierClick || !looksLikeQuestion) {
+      return null;
+    }
+  }
+
+  // Understands English, Hindi, and Hinglish and arbitrary logistics inquiries
   try {
     const recentShipments = await Shipment.find({ senderId: user._id })
       .sort({ createdAt: -1 })
@@ -660,12 +749,9 @@ const handleChat = async (req, res) => {
         sessionId: uuidv4(),
         userId,
         step: STEPS.GREETING,
+        collectedData: createFreshCollectedData(user),
         messages: []
       });
-      // Pre-fill sender address from user profile if available
-      if (user.address) {
-        session.collectedData.senderAddress = user.address;
-      }
     }
 
     const isEcommerce = (user.platformType === 'ecommerce');
@@ -695,61 +781,29 @@ const handleChat = async (req, res) => {
             if (aiOrder.receiverPhone) data.receiverPhone = aiOrder.receiverPhone;
             if (aiOrder.receiverAddress) data.receiverAddress = aiOrder.receiverAddress;
             if (aiOrder.receiverPincode) data.receiverPincode = aiOrder.receiverPincode;
-            if (aiOrder.weightKg) data.weightKg = aiOrder.weightKg;
-            if (aiOrder.amount) data.amount = aiOrder.amount;
-            if (aiOrder.paymentMode) data.paymentMode = aiOrder.paymentMode;
+            if (Number(aiOrder.weightKg) > 0) data.weightKg = Number(aiOrder.weightKg);
+            if (Number(aiOrder.amount) > 0) data.amount = Number(aiOrder.amount);
+            if (aiOrder.paymentMode === 'cod' || aiOrder.paymentMode === 'prepaid') {
+              data.paymentMode = aiOrder.paymentMode;
+            }
             if (aiOrder.description) data.description = aiOrder.description;
 
-            // Apply standard e-commerce defaults for handwritten slips/chits if not written
-            if (!data.weightKg) data.weightKg = 0.5;
-            if (!data.amount) data.amount = 500;
-            if (!data.description) data.description = 'General Merchandise';
+            const detailsBlock = [
+              `📸 *Order Details Scanned from Photo:* ⚡`,
+              `• *Recipient:* ${data.receiverName || '⚠️ Not clearly visible'}`,
+              `• *Mobile:* ${data.receiverPhone || '⚠️ Not clearly visible'}`,
+              `• *Address:* ${data.receiverAddress || '⚠️ Not clearly visible'}`,
+              `• *PIN Code:* ${data.receiverPincode || '⚠️ Not clearly visible'}`,
+              `• *Item:* ${data.description || '⚠️ Not written (will ask)'}`,
+              `• *Weight:* ${Number(data.weightKg) > 0 ? `${data.weightKg} kg` : '⚠️ Not written (will ask)'}`,
+              `• *Order Value:* ${Number(data.amount) > 0 ? fmt(data.amount) : '⚠️ Not written (will ask)'}`,
+              `• *Payment Mode:* ${data.paymentMode ? data.paymentMode.toUpperCase() : '⚠️ Not specified (will ask)'}`
+            ].join('\n');
 
-            if (isReadyToConfirm(data)) {
-              const senderPincode = data.senderPincode || user.pincode || '110001';
-              const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-              const isCod = data.paymentMode === 'cod';
-              const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, isCod, data.amount || 500, false);
-              session.carrierQuotes = quotes;
-              session.selectedCarrier = quotes[0];
-              agentReply = `📸 *1-Click AI Order Extracted from Image!* ⚡\n\n` + buildSummaryConfirmation(session, data, user);
-              session.step = STEPS.CONFIRMATION;
-            } else if (data.receiverName || data.receiverPhone || data.receiverPincode || data.receiverAddress) {
-              const detailsBlock = [
-                `📸 *Customer Details Scanned from Chit:* ⚡`,
-                `• **Recipient:** ${data.receiverName || '⚠️ Not clearly visible'}`,
-                `• **Mobile:** ${data.receiverPhone || '⚠️ Not clearly visible'}`,
-                `• **Address:** ${data.receiverAddress || '⚠️ Not clearly visible'}`,
-                `• **PIN Code:** ${data.receiverPincode || '⚠️ Not clearly visible'}`,
-                `• **Weight:** ${data.weightKg} kg (Standard 0.5 kg)`,
-                `• **Declared Value:** ₹${data.amount}`
-              ].join('\n');
-
-              let missingPrompt = '';
-              if (!data.receiverAddress) {
-                missingPrompt = 'full delivery address';
-                session.step = STEPS.RECEIVER_ADDRESS;
-              } else if (!data.receiverPincode) {
-                missingPrompt = '6-digit destination pincode';
-                session.step = STEPS.RECEIVER_PINCODE;
-              } else if (!data.receiverPhone) {
-                missingPrompt = '10-digit receiver mobile number';
-                session.step = STEPS.RECEIVER_PHONE;
-              } else if (!data.paymentMode) {
-                missingPrompt = 'Payment Mode: Tap *Prepaid* or *Cash on Delivery (COD)* below to compare live courier rates';
-                session.step = STEPS.PAYMENT_MODE;
-              } else if (!data.amount) {
-                missingPrompt = 'parcel amount / declared value in ₹';
-                session.step = STEPS.PARCEL_DETAILS;
-              } else {
-                missingPrompt = 'payment mode: tap *Prepaid* or *COD* below';
-                session.step = STEPS.PAYMENT_MODE;
-              }
-
-              agentReply = `${detailsBlock}\n\n👉 *Next Step:* Please select ${missingPrompt}:`;
-            } else {
-              agentReply = '📸 *Image Scanned:* I could not detect clear order or customer details. Please ensure the receiver name, mobile number, full address, and 6-digit PIN are visible, or simply type them here.';
-            }
+            const prefix = isReadyToConfirm(data)
+              ? `📸 *1-Click AI Order Extracted from Photo!* ⚡\n\n`
+              : `${detailsBlock}\n\n`;
+            agentReply = await advanceToNextMissingStep(session, data, user, prefix);
           } else if (aiOrder && aiOrder.error) {
             agentReply = `⚠️ *Image OCR notice:* ${aiOrder.error}. Please try again or paste the text directly.`;
           } else {
@@ -824,58 +878,30 @@ const handleChat = async (req, res) => {
             if (aiOrder.receiverPhone) data.receiverPhone = aiOrder.receiverPhone;
             if (aiOrder.receiverAddress) data.receiverAddress = aiOrder.receiverAddress;
             if (aiOrder.receiverPincode) data.receiverPincode = aiOrder.receiverPincode;
-            if (aiOrder.weightKg) data.weightKg = aiOrder.weightKg;
-            if (aiOrder.amount) data.amount = aiOrder.amount;
-            if (aiOrder.paymentMode) data.paymentMode = aiOrder.paymentMode;
+            if (Number(aiOrder.weightKg) > 0) data.weightKg = Number(aiOrder.weightKg);
+            if (Number(aiOrder.amount) > 0) data.amount = Number(aiOrder.amount);
+            if (aiOrder.paymentMode === 'cod' || aiOrder.paymentMode === 'prepaid') {
+              data.paymentMode = aiOrder.paymentMode;
+            }
             if (aiOrder.description) data.description = aiOrder.description;
 
-            // Apply standard e-commerce defaults
-            if (!data.weightKg) data.weightKg = 0.5;
-            if (!data.amount) data.amount = 500;
-            if (!data.description) data.description = 'General Merchandise';
+            const detailsBlock = [
+              `✨ *Order Details Extracted!* 🚀`,
+              `• *Recipient:* ${data.receiverName || '⚠️ Missing (will ask)'}`,
+              `• *Mobile:* ${data.receiverPhone || '⚠️ Missing (will ask)'}`,
+              `• *Address:* ${data.receiverAddress || '⚠️ Missing (will ask)'}`,
+              `• *PIN Code:* ${data.receiverPincode || '⚠️ Missing (will ask)'}`,
+              `• *Item:* ${data.description || '⚠️ Missing (will ask)'}`,
+              `• *Weight:* ${Number(data.weightKg) > 0 ? `${data.weightKg} kg` : '⚠️ Missing (will ask)'}`,
+              `• *Order Value:* ${Number(data.amount) > 0 ? fmt(data.amount) : '⚠️ Missing (will ask)'}`,
+              `• *Payment Mode:* ${data.paymentMode ? data.paymentMode.toUpperCase() : '⚠️ Missing (will ask)'}`
+            ].join('\n');
 
-            if (isReadyToConfirm(data)) {
-              const senderPincode = data.senderPincode || user.pincode || '110001';
-              const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-              const isCod = data.paymentMode === 'cod';
-              const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, isCod, data.amount || 500, false);
-              session.carrierQuotes = quotes;
-              session.selectedCarrier = quotes[0];
-              agentReply = `🎯 *1-Click AI Order Extracted from Message!* 🚀\n\n` + buildSummaryConfirmation(session, data, user);
-              session.step = STEPS.CONFIRMATION;
-              break;
-            } else if (data.receiverName && (data.receiverPhone || data.receiverPincode || data.receiverAddress)) {
-              const detailsBlock = [
-                `✨ *Order Details Extracted!* 🚀`,
-                `• **Recipient:** ${data.receiverName || 'Not detected'}`,
-                `• **Mobile:** ${data.receiverPhone || 'Not detected'}`,
-                `• **Address:** ${data.receiverAddress || 'Not detected'}`,
-                `• **PIN Code:** ${data.receiverPincode || 'Not detected'}`,
-                `• **Weight:** ${data.weightKg} kg`,
-                `• **Declared Value:** ₹${data.amount}`
-              ].join('\n');
-
-              let missingPrompt = '';
-              if (!data.receiverAddress) {
-                missingPrompt = 'full delivery address';
-                session.step = STEPS.RECEIVER_ADDRESS;
-              } else if (!data.receiverPincode) {
-                missingPrompt = '6-digit destination pincode';
-                session.step = STEPS.RECEIVER_PINCODE;
-              } else if (!data.receiverPhone) {
-                missingPrompt = '10-digit receiver mobile number';
-                session.step = STEPS.RECEIVER_PHONE;
-              } else if (!data.paymentMode) {
-                missingPrompt = 'Payment Mode: Tap *Prepaid* or *COD* below to compare courier rates';
-                session.step = STEPS.PAYMENT_MODE;
-              } else {
-                missingPrompt = 'payment mode: type *1* for Prepaid or *2* for COD';
-                session.step = STEPS.PAYMENT_MODE;
-              }
-
-              agentReply = `${detailsBlock}\n\n👉 *Next Step:* Please select ${missingPrompt}:`;
-              break;
-            }
+            const prefix = isReadyToConfirm(data)
+              ? `🎯 *1-Click AI Order Extracted from Message!* 🚀\n\n`
+              : `${detailsBlock}\n\n`;
+            agentReply = await advanceToNextMissingStep(session, data, user, prefix);
+            break;
           }
         } catch (extractErr) {
           console.warn('[AGENT] AI extraction warning:', extractErr.message);
@@ -901,38 +927,11 @@ const handleChat = async (req, res) => {
             data.receiverName = nameMatch[1].trim();
           }
 
-          if (isReadyToConfirm(data)) {
-            const senderPincode = data.senderPincode || user.pincode || '110001';
-            const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-            const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, data.paymentMode === 'cod', data.amount || 500, false);
-            session.carrierQuotes = quotes;
-            session.selectedCarrier = quotes[0];
-            agentReply = `🎯 Parsed all details from your message! ✅\n\n` + buildSummaryConfirmation(session, data, user);
-            session.step = STEPS.CONFIRMATION;
-            break;
-          }
-
-          // If some fields are missing, ask for the first missing field
-          if (!data.receiverName) {
-            agentReply = `📦 Captured phone (*${embeddedPhone}*) and pincode (*${embeddedPincode}*)! ✅\n\n*What is the receiver's full name?*`;
-            session.step = STEPS.RECEIVER_NAME;
-            break;
-          }
-          if (!data.receiverAddress) {
-            agentReply = `📦 Receiver *${data.receiverName}* (${embeddedPhone}) saved! ✅\n\n*What is their complete street delivery address?*`;
-            session.step = STEPS.RECEIVER_ADDRESS;
-            break;
-          }
-          if (!data.amount) {
-            agentReply = `📦 Address and details saved! ✅\n\n*What is the parcel value / order amount? (in ₹)*`;
-            session.step = STEPS.PARCEL_AMOUNT;
-            break;
-          }
-          if (!data.paymentMode) {
-            agentReply = `💰 Amount saved! ✅\n\n*What is the payment mode?*\n1. 💳 *Prepaid (Delivery Protected)*\n2. 🚚 *COD (Cash on Delivery)*`;
-            session.step = STEPS.PAYMENT_MODE;
-            break;
-          }
+          const prefix = isReadyToConfirm(data)
+            ? `🎯 Parsed all details from your message! ✅\n\n`
+            : `📦 Captured phone (*${embeddedPhone}*) and pincode (*${embeddedPincode}*)! ✅\n\n`;
+          agentReply = await advanceToNextMissingStep(session, data, user, prefix);
+          break;
         }
 
         if (isBookingRequest) {
@@ -967,12 +966,10 @@ const handleChat = async (req, res) => {
         if (session.isEditing || isReadyToConfirm(data)) {
           session.isEditing = false;
           session.editingField = '';
-          agentReply = `👤 Receiver updated to: *${name}* ✅\n\n` + buildSummaryConfirmation(session, data, user);
-          session.step = STEPS.CONFIRMATION;
+          agentReply = await advanceToNextMissingStep(session, data, user, `👤 Receiver updated to: *${name}* ✅\n\n`);
           break;
         }
-        agentReply = `Got it! Receiver: *${name}* ✅\n\n*What is their 10-digit WhatsApp/mobile number?*`;
-        session.step = STEPS.RECEIVER_PHONE;
+        agentReply = await advanceToNextMissingStep(session, data, user, `Got it! Receiver: *${name}* ✅\n\n`);
         break;
       }
 
@@ -987,12 +984,10 @@ const handleChat = async (req, res) => {
         if (session.isEditing || isReadyToConfirm(data)) {
           session.isEditing = false;
           session.editingField = '';
-          agentReply = `📱 Phone number updated to: *${phone}* ✅\n\n` + buildSummaryConfirmation(session, data, user);
-          session.step = STEPS.CONFIRMATION;
+          agentReply = await advanceToNextMissingStep(session, data, user, `📱 Phone number updated to: *${phone}* ✅\n\n`);
           break;
         }
-        agentReply = `📱 Phone: *${phone}* ✅\n\n*What is the receiver's full delivery address?*\n_(Include street, area, city)_`;
-        session.step = STEPS.RECEIVER_ADDRESS;
+        agentReply = await advanceToNextMissingStep(session, data, user, `📱 Phone: *${phone}* ✅\n\n`);
         break;
       }
 
@@ -1009,22 +1004,15 @@ const handleChat = async (req, res) => {
         const embeddedPin = extractPincode(address);
         if (embeddedPin) {
           data.receiverPincode = embeddedPin;
-          const senderPincode = data.senderPincode || user.pincode || '110001';
-          const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-          const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, data.paymentMode === 'cod', data.amount || 500, false);
-          session.carrierQuotes = quotes;
-          session.selectedCarrier = quotes[0];
         }
 
         if (session.isEditing || isReadyToConfirm(data)) {
           session.isEditing = false;
           session.editingField = '';
-          agentReply = `📍 Address updated to: *${address}* ✅\n\n` + buildSummaryConfirmation(session, data, user);
-          session.step = STEPS.CONFIRMATION;
+          agentReply = await advanceToNextMissingStep(session, data, user, `📍 Address updated to: *${address}* ✅\n\n`);
           break;
         }
-        agentReply = `📍 Address saved ✅\n\n*What is the delivery pincode?*`;
-        session.step = STEPS.RECEIVER_PINCODE;
+        agentReply = await advanceToNextMissingStep(session, data, user, `📍 Address saved ✅\n\n`);
         break;
       }
 
@@ -1037,23 +1025,14 @@ const handleChat = async (req, res) => {
         }
         data.receiverPincode = pincode;
 
-        const senderPincode = data.senderPincode || user.pincode || '110001';
-        const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-        const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, data.paymentMode === 'cod', data.amount || 500, false);
-        session.carrierQuotes = quotes;
-        session.selectedCarrier = quotes[0];
-
+        const pinfo = getPincodeInfo(pincode);
         if (session.isEditing || isReadyToConfirm(data)) {
           session.isEditing = false;
           session.editingField = '';
-          const pinfo = getPincodeInfo(pincode);
-          agentReply = `📮 Pincode updated to: *${pincode}* (${pinfo.label}) ✅\n\n` + buildSummaryConfirmation(session, data, user);
-          session.step = STEPS.CONFIRMATION;
+          agentReply = await advanceToNextMissingStep(session, data, user, `📮 Pincode updated to: *${pincode}* (${pinfo.label}) ✅\n\n`);
           break;
         }
-        const pinfo = getPincodeInfo(pincode);
-        agentReply = `📮 Pincode: *${pincode}* (${pinfo.label}) ✅\n\n*Now tell me about the parcel:*\n\n• Weight? (e.g. "1.5 kg" or "500g")\n• Dimensions? (Length × Width × Height in cm, e.g. "20x15x10 cm")\n• Item description? (e.g. "Blue Cotton Kurta")\n\n_You can type all together, like: "1kg, 20x15x10, cotton kurta"_`;
-        session.step = STEPS.PARCEL_DETAILS;
+        agentReply = await advanceToNextMissingStep(session, data, user, `📮 Pincode: *${pincode}* (${pinfo.label}) ✅\n\n`);
         break;
       }
 
@@ -1069,47 +1048,42 @@ const handleChat = async (req, res) => {
           .replace(/\s+/g, ' ')
           .trim();
 
-        const missing = [];
-        if (!weight && !data.weightKg) missing.push('weight (e.g. "1.5 kg")');
-        if ((!descClean || descClean.length < 3) && (!data.description || data.description.length < 3)) {
-          missing.push('item description (e.g. "Blue Kurta")');
-        }
-
-        if (missing.length > 0) {
-          agentReply = `⚠️ I'm missing: *${missing.join(', ')}*\n\nPlease provide:\n• Weight (e.g. "1.5 kg")\n• Dimensions (optional, e.g. "20x15x10 cm")\n• Item description (e.g. "Blue Cotton Kurta")`;
-          break;
-        }
-
         if (weight && weight > 0) data.weightKg = weight;
         if (dims) {
           data.lengthCm = dims.l;
           data.widthCm = dims.w;
           data.heightCm = dims.h;
         }
-        if (descClean && descClean.length >= 3) {
+        if (descClean && descClean.length >= 2) {
           data.description = descClean.substring(0, 200);
         }
 
-        if (data.receiverPincode) {
-          const senderPincode = data.senderPincode || user.pincode || '110001';
-          const currentDims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-          const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, currentDims, false, data.paymentMode === 'cod', data.amount || 500, false);
-          session.carrierQuotes = quotes;
-          session.selectedCarrier = quotes[0];
+        const missing = [];
+        if (!data.weightKg || Number(data.weightKg) <= 0) missing.push('weight (e.g. "1.5 kg")');
+        if (!data.description || data.description === 'General Merchandise' || data.description.length < 2) {
+          missing.push('item description (e.g. "Blue Kurta")');
+        }
+
+        if (missing.length > 0) {
+          agentReply = `⚠️ I'm still missing: *${missing.join(', ')}*\n\nPlease reply with ${missing.length === 1 ? 'that' : 'these'} to continue (e.g. "Blue Cotton Kurta"${!data.weightKg ? ' or "1.5 kg, Blue Kurta"' : ''}).`;
+          break;
         }
 
         if (session.isEditing || isReadyToConfirm(data)) {
           session.isEditing = false;
           session.editingField = '';
-          agentReply = `📦 Parcel details updated ✅\n\n` + buildSummaryConfirmation(session, data, user);
-          session.step = STEPS.CONFIRMATION;
+          agentReply = await advanceToNextMissingStep(session, data, user, `📦 Parcel details updated ✅\n\n`);
           break;
         }
 
         const volKg = ((data.lengthCm * data.widthCm * data.heightCm) / 5000).toFixed(2);
         const dimStr = `${data.lengthCm}×${data.widthCm}×${data.heightCm} cm (Volumetric: ${volKg} kg)`;
-        agentReply = `📦 Parcel Details Saved ✅\n• Actual Weight: *${data.weightKg} kg*\n• Dimensions: *${dimStr}*\n• Item: *${data.description}*\n\n*What is the parcel value / order amount? (in ₹)*`;
-        session.step = STEPS.PARCEL_AMOUNT;
+        agentReply = await advanceToNextMissingStep(
+          session,
+          data,
+          user,
+          `📦 Parcel Details Saved ✅\n• Actual Weight: *${data.weightKg} kg*\n• Dimensions: *${dimStr}*\n• Item: *${data.description}*\n\n`
+        );
         break;
       }
 
@@ -1125,18 +1099,16 @@ const handleChat = async (req, res) => {
         if (session.isEditing || isReadyToConfirm(data)) {
           session.isEditing = false;
           session.editingField = '';
-          agentReply = `💰 Order value updated to: *${fmt(amount)}* ✅\n\n` + buildSummaryConfirmation(session, data, user);
-          session.step = STEPS.CONFIRMATION;
+          agentReply = await advanceToNextMissingStep(session, data, user, `💰 Order value updated to: *${fmt(amount)}* ✅\n\n`);
           break;
         }
 
-        agentReply =
-          `💰 Order Value: *${fmt(amount)}* saved ✅\n\n` +
-          `*What is the payment mode for this shipment?*\n\n` +
-          `1. 💳 *Prepaid (Delivery Protected)* — Buyer pays via secure link. Courier pickup is auto-booked once payment is confirmed and paid to sender after delivery is confirmed\n` +
-          `2. 🚚 *Cash on Delivery (COD)* — Courier collects payment from buyer at delivery\n\n` +
-          `_Reply "1" for Prepaid or "2" for COD._`;
-        session.step = STEPS.PAYMENT_MODE;
+        agentReply = await advanceToNextMissingStep(
+          session,
+          data,
+          user,
+          `💰 Order Value: *${fmt(amount)}* saved ✅\n\n`
+        );
         break;
       }
 
@@ -1152,66 +1124,40 @@ const handleChat = async (req, res) => {
         }
         data.paymentMode = mode;
         const isCod = mode === 'cod';
-
         if (isCod) {
           data.rtoProtectionEnabled = false; // RTO Protection is strictly unavailable for COD
-          const modeNote = `💵 Payment Mode: *Cash on Delivery (COD)* ✅\n_(RTO Protection is not available for COD orders — exclusive to Prepaid Protected)_\n\n`;
-
-          if (session.isEditing || isReadyToConfirm(data)) {
-            session.isEditing = false;
-            session.editingField = '';
-            agentReply = modeNote + buildSummaryConfirmation(session, data, user);
-            session.step = STEPS.CONFIRMATION;
-            break;
-          }
-
-          const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-
-          if (isEcommerce) {
-            data.returnAllowed = true;
-            session.step = STEPS.CARRIER_SELECTION;
-            const senderPincode = data.senderPincode || user.pincode || '110001';
-            const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg, dims, false, true, data.amount || 500, false);
-            session.carrierQuotes = quotes;
-            session.selectedCarrier = quotes[0]; // Auto-select cheapest
-
-            agentReply =
-              modeNote +
-              `_(E-commerce seller — Returns automatically enabled ✅)_\n\n` +
-              `🚚 *Carrier Price Comparison:*\n\n` +
-              `${formatCarrierQuotes(quotes)}\n\n` +
-              `The *cheapest carrier (${quotes[0].name})* has been auto-selected.\n` +
-              `Want to change? Reply with the number (1-${quotes.length}) or type the carrier name.\n` +
-              `Or type *"ok"* / *"confirm"* to proceed with ${quotes[0].name}.`;
-          } else {
-            agentReply = modeNote + `*Should returns be allowed for this parcel?*\n\n✅ Yes — Buyer can return within 24h after delivery (Recommended)\n❌ No — Final sale, no returns`;
-            session.step = STEPS.RETURN_POLICY;
-          }
-        } else {
-          // Prepaid:
-          if (session.isEditing || isReadyToConfirm(data)) {
-            session.isEditing = false;
-            session.editingField = '';
-            const senderPincode = data.senderPincode || user.pincode || '110001';
-            const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-            const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, false, data.amount || 500, false);
-            session.carrierQuotes = quotes;
-            session.selectedCarrier = quotes[0];
-            agentReply = `💳 Payment Mode: *Prepaid (Delivery Protected)* ✅\n\n` + buildSummaryConfirmation(session, data, user);
-            session.step = STEPS.CONFIRMATION;
-            break;
-          }
-
-          // Prepaid initial questionnaire: ask for RTO Protection!
-          session.step = STEPS.RTO_PROTECTION;
-          agentReply =
-            `💳 Payment Mode: *Prepaid (Delivery Protected)* ✅\n\n` +
-            `🛡️ *Enable Smart RTO & Undelivered Protection?*\n\n` +
-            `If the buyer refuses or fails to accept delivery:\n` +
-            `• SecureKaro compensates you *₹40* relief per undelivered parcel\n` +
-            `• Buyer receives a 100% full refund with zero deductions\n\n` +
-            `Reply *"yes"* to enable RTO Protection or *"no"* to skip.`;
         }
+
+        const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
+        const senderPincode = data.senderPincode || user.pincode || '110001';
+        const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, isCod, data.amount || 500, false);
+        session.carrierQuotes = quotes;
+        session.selectedCarrier = quotes[0];
+
+        if (session.isEditing || isReadyToConfirm(data)) {
+          session.isEditing = false;
+          session.editingField = '';
+          const modeLabel = isCod ? '💵 Cash on Delivery (COD)' : '💳 Prepaid (Seller Wallet Freight)';
+          agentReply = `Payment Mode: *${modeLabel}* ✅\n\n` + buildSummaryConfirmation(session, data, user);
+          session.step = STEPS.CONFIRMATION;
+          break;
+        }
+
+        const modeHeader = isCod
+          ? `💵 Payment Mode: *Cash on Delivery (COD)* ✅\n_(RTO Protection is off/unavailable for COD orders)_\n\n`
+          : `💳 Payment Mode: *Prepaid (Seller Wallet Freight)* ✅\n_(RTO Protection & Returns start Off by default — you can enable them below)_\n\n`;
+
+        if (isEcommerce) {
+          data.returnAllowed = true;
+        }
+        session.step = STEPS.CARRIER_SELECTION;
+        agentReply =
+          modeHeader +
+          (isEcommerce ? `_(E-commerce seller — Returns automatically enabled ✅)_\n\n` : '') +
+          `🚚 *Carrier Price Comparison:*\n\n` +
+          `${formatCarrierQuotes(quotes)}\n\n` +
+          `The *cheapest carrier (${quotes[0].name})* has been auto-selected.\n` +
+          `Tap a carrier card above or reply with a number (1-${quotes.length}), or type *"confirm"* to review summary.`;
         break;
       }
 
@@ -1278,7 +1224,7 @@ const handleChat = async (req, res) => {
         if (session.isEditing || (isReadyToConfirm(data) && session.carrierQuotes?.length > 0)) {
           session.isEditing = false;
           session.editingField = '';
-          const retStatus = data.returnAllowed !== false ? 'Enabled (24h Window)' : 'Disabled (Final Sale)';
+          const retStatus = data.returnAllowed === true ? 'Enabled (24h Window)' : 'Off (Final Sale)';
           agentReply += `↩️ Returns updated to: *${retStatus}* ✅\n\n` + buildSummaryConfirmation(session, data, user);
           session.step = STEPS.CONFIRMATION;
           break;
@@ -1287,7 +1233,7 @@ const handleChat = async (req, res) => {
         // Fetch carrier quotes
         const senderPincode = data.senderPincode || user.pincode || '110001';
         const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-        const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg, dims, false, data.paymentMode === 'cod', data.amount || 500, false);
+        const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, data.paymentMode === 'cod', data.amount || 500, false);
         session.carrierQuotes = quotes;
         session.selectedCarrier = quotes[0]; // Auto-select cheapest
 
@@ -1370,16 +1316,16 @@ const handleChat = async (req, res) => {
         // Check if user wants to change carrier
         const numChoice = parseInt(msg);
         const byNumber = !isNaN(numChoice) && numChoice >= 1 && numChoice <= quotes.length;
-        const byName = quotes.find(q => q.name.toLowerCase().includes(lowerMsg) || q.slug.toLowerCase().includes(lowerMsg));
+        const byName = findCarrierQuoteMatch(quotes, msg);
         // Accept "confirm courier", "confirm & book", "confirm", "ok", "yes", empty, or any carrier name match
         const confirmed = isYes(msg) || lowerMsg === 'ok' || lowerMsg === 'confirm' || lowerMsg === 'confirm courier' || lowerMsg === 'confirm & book' || !msg;
         // "Change Courier" button → go to carrier selection again (stay in same step, refresh quotes list)
         if (lowerMsg === 'change courier' || lowerMsg === 'change carrier' || lowerMsg === 'carrier') {
           const senderPincode2 = data.senderPincode || user.pincode || '110001';
           const dims2 = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
-          const freshQuotes = await getCarrierRatesAsync(senderPincode2, data.receiverPincode, data.weightKg, dims2, false, data.paymentMode === 'cod', data.amount || 500, false);
+          const freshQuotes = await getCarrierRatesAsync(senderPincode2, data.receiverPincode, data.weightKg || 0.5, dims2, false, data.paymentMode === 'cod', data.amount || 500, false);
           session.carrierQuotes = freshQuotes;
-          agentReply = `🚚 *Choose a carrier:*\n\n${formatCarrierQuotes(freshQuotes)}\n\nReply with number (1-${freshQuotes.length}) or carrier name:`;
+          agentReply = `🚚 *Choose a carrier:*\n\n${formatCarrierQuotes(freshQuotes)}\n\nTap a card above, reply with number (1-${freshQuotes.length}), or carrier name:`;
           break;
         }
 
@@ -1483,15 +1429,62 @@ const handleChat = async (req, res) => {
           const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
           const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, data.paymentMode === 'cod', data.amount || 500, false);
           session.carrierQuotes = quotes;
-          agentReply = `🚚 *Choose a carrier:*\n\n${formatCarrierQuotes(quotes)}\n\nReply with number (1-${quotes.length}) or carrier name:`;
+          agentReply = `🚚 *Choose a carrier:*\n\n${formatCarrierQuotes(quotes)}\n\nTap a carrier card below, reply with number (1-${quotes.length}), or type the carrier name:`;
+          break;
+        }
+
+        // Allow direct carrier card tap even while at confirmation step
+        const clickedCarrier = findCarrierQuoteMatch(session.carrierQuotes || [], message);
+        if (clickedCarrier) {
+          session.selectedCarrier = clickedCarrier;
+          agentReply = `🚚 Carrier updated to: *${clickedCarrier.name}* (${fmt(clickedCarrier.price)}) ✅\n\n` + buildSummaryConfirmation(session, data, user);
+          break;
+        }
+
+        // 1-Tap Mode Switch: COD <-> Prepaid
+        if (msg === 'switch to cod' || msg === 'change to cod' || msg === 'mode cod' || msg === 'cod') {
+          data.paymentMode = 'cod';
+          data.rtoProtectionEnabled = false;
+          const senderPincode = data.senderPincode || user.pincode || '110001';
+          const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
+          const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, true, data.amount || 500, false);
+          session.carrierQuotes = quotes;
+          session.selectedCarrier = quotes.find(q => q.slug === session.selectedCarrier?.slug) || quotes[0];
+          agentReply = `🚚 Payment Mode switched to *Cash on Delivery (COD)* ✅\n\n` + buildSummaryConfirmation(session, data, user);
+          break;
+        }
+        if (msg === 'switch to prepaid' || msg === 'change to prepaid' || msg === 'mode prepaid' || msg === 'prepaid') {
+          data.paymentMode = 'prepaid';
+          const senderPincode = data.senderPincode || user.pincode || '110001';
+          const dims = { length: data.lengthCm || 15, width: data.widthCm || 10, height: data.heightCm || 5 };
+          const quotes = await getCarrierRatesAsync(senderPincode, data.receiverPincode, data.weightKg || 0.5, dims, false, false, data.amount || 500, false);
+          session.carrierQuotes = quotes;
+          session.selectedCarrier = quotes.find(q => q.slug === session.selectedCarrier?.slug) || quotes[0];
+          agentReply = `💳 Payment Mode switched to *Prepaid (Seller Wallet Freight)* ✅\n\n` + buildSummaryConfirmation(session, data, user);
+          break;
+        }
+
+        // Explicit & toggle Return commands
+        if (msg === 'enable return' || msg === 'enable returns' || msg === 'return on' || msg === 'returns on') {
+          data.returnAllowed = true;
+          agentReply = `↩️ Returns updated to: *Enabled (24h)* ✅\n\n` + buildSummaryConfirmation(session, data, user);
+          break;
+        }
+        if (msg === 'disable return' || msg === 'disable returns' || msg === 'return off' || msg === 'returns off') {
+          if (isEcommerce) {
+            agentReply = `ℹ️ As an e-commerce platform seller (Meesho, Amazon, Flipkart), returns remain *Enabled* ✅ with 24h inspection.\n\nType *"confirm"* to proceed with booking.`;
+          } else {
+            data.returnAllowed = false;
+            agentReply = `↩️ Returns updated to: *Off (Final Sale)* ✅\n\n` + buildSummaryConfirmation(session, data, user);
+          }
           break;
         }
         if (msg === 'return' || msg === 'toggle return' || msg === 'edit return') {
           if (isEcommerce) {
             agentReply = `ℹ️ As an e-commerce platform seller (Meesho, Amazon, Flipkart), returns are mandatory and remain *Enabled* ✅ with 24h inspection.\n\nType *"confirm"* to proceed with booking.`;
           } else {
-            data.returnAllowed = !data.returnAllowed;
-            const retStatus = data.returnAllowed !== false ? 'Enabled (24h)' : 'Disabled (Final Sale)';
+            data.returnAllowed = !(data.returnAllowed === true);
+            const retStatus = data.returnAllowed === true ? 'Enabled (24h)' : 'Off (Final Sale)';
             agentReply = `↩️ Returns updated to: *${retStatus}* ✅\n\n` + buildSummaryConfirmation(session, data, user);
           }
           break;
@@ -1506,19 +1499,35 @@ const handleChat = async (req, res) => {
             } else if (isNo(rawVal) || rawVal === 'disable' || rawVal === 'disabled' || rawVal === 'false') {
               data.returnAllowed = false;
             } else {
-              data.returnAllowed = !data.returnAllowed;
+              data.returnAllowed = !(data.returnAllowed === true);
             }
-            const retStatus = data.returnAllowed !== false ? 'Enabled (24h)' : 'Disabled (Final Sale)';
+            const retStatus = data.returnAllowed === true ? 'Enabled (24h)' : 'Off (Final Sale)';
             agentReply = `↩️ Returns updated to: *${retStatus}* ✅\n\n` + buildSummaryConfirmation(session, data, user);
           }
           break;
         }
+
+        // Explicit & toggle RTO Protection commands
+        if (msg === 'enable rto' || msg === 'rto on') {
+          if (data.paymentMode === 'cod') {
+            agentReply = `⚠️ RTO Protection is unavailable for COD orders. Tap *Switch to Prepaid* below to enable RTO Protection.`;
+          } else {
+            data.rtoProtectionEnabled = true;
+            agentReply = `🛡️ RTO Protection updated to: *Active (₹40 Seller Relief)* ✅\n\n` + buildSummaryConfirmation(session, data, user);
+          }
+          break;
+        }
+        if (msg === 'disable rto' || msg === 'rto off') {
+          data.rtoProtectionEnabled = false;
+          agentReply = `🛡️ RTO Protection updated to: *Off* ✅\n\n` + buildSummaryConfirmation(session, data, user);
+          break;
+        }
         if (msg === 'rto' || msg === 'edit rto' || msg === 'toggle rto') {
           if (data.paymentMode === 'cod') {
-            agentReply = `⚠️ RTO Protection is not available for COD orders (exclusive to Prepaid Protected shipments).\n\nTo enable RTO Protection, first switch payment mode to Prepaid by typing *"edit mode"*.`;
+            agentReply = `⚠️ RTO Protection is not available for COD orders (exclusive to Prepaid shipments).\n\nTo enable RTO Protection, tap *Switch to Prepaid* below.`;
           } else {
-            data.rtoProtectionEnabled = !data.rtoProtectionEnabled;
-            agentReply = `🛡️ RTO Protection updated to: *${data.rtoProtectionEnabled ? 'Active' : 'Disabled'}* ✅\n\n` + buildSummaryConfirmation(session, data, user);
+            data.rtoProtectionEnabled = !(data.rtoProtectionEnabled === true);
+            agentReply = `🛡️ RTO Protection updated to: *${data.rtoProtectionEnabled ? 'Active' : 'Off'}* ✅\n\n` + buildSummaryConfirmation(session, data, user);
           }
           break;
         }
@@ -1693,35 +1702,13 @@ const handleChat = async (req, res) => {
             parcelHeight: data.heightCm || 5,
             serviceFeeDeducted: calculateServiceFee(data.amount).fee,
             serviceFeeRate: calculateServiceFee(data.amount).rate,
-            status: isCod ? 'Pending Pickup' : 'Awaiting Payment',
-            escrowStage: isCod ? 3 : 1
+            status: 'Pending Pickup',
+            escrowStage: 3
           });
           await shipment.save();
 
-          // For COD orders: Auto-schedule Delhivery / Shiprocket pickup slot immediately
-          // For Prepaid orders: Courier pickup will be booked automatically once buyer completes payment
-          let pickupResult = null;
-          if (isCod) {
-            pickupResult = await autoScheduleCourierPickup(shipment, user);
-          } else {
-            pickupResult = {
-              carrier: sel.name,
-              pickupSlot: 'Auto-scheduled upon buyer payment',
-              rate: sel.price
-            };
-          }
-
-          // For prepaid: send payment link to buyer via WhatsApp (SMS restricted per policy)
-          if (isPrepaidOrder && cfLink.linkUrl) {
-            await sendPaymentLinkWhatsApp({
-              phone: data.receiverPhone,
-              receiverName: data.receiverName,
-              shipmentId,
-              amount: data.amount,
-              description: data.description,
-              linkUrl: cfLink.linkUrl
-            });
-          }
+          // Auto-schedule courier pickup immediately for BOTH COD and Prepaid (seller wallet freight)
+          const pickupResult = await autoScheduleCourierPickup(shipment, user);
 
           // Notify sender
           await createNotification(
@@ -1730,7 +1717,9 @@ const handleChat = async (req, res) => {
             `🤖 Agent Registered Order — ${shipmentId} (${isCod ? 'COD' : 'Prepaid'})`,
             `AI Agent registered order for ${data.receiverName} (${data.receiverPhone}). ` +
             `Carrier: ${pickupResult.carrier || sel.name}. ` +
-            (isCod ? `Pickup slot: ${pickupResult.pickupSlot}. COD Fees ₹${totalCodFees} adjusted from wallet.` : `Payment link sent to buyer. Courier will be booked upon payment.`),
+            (isCod
+              ? `Pickup slot: ${pickupResult.pickupSlot}. COD Fees ₹${totalCodFees} adjusted from wallet.`
+              : `Pickup slot: ${pickupResult.pickupSlot}. Courier delivery fee ₹${deliveryCharge} adjusted from wallet.`),
             'shipping'
           );
 
@@ -1739,11 +1728,6 @@ const handleChat = async (req, res) => {
 
           const carrierBadge = pickupResult.carrier || sel.name;
           const rateBadge = pickupResult.rate || sel.price;
-
-          const cleanPhone = String(data.receiverPhone || '').replace(/\D/g, '').slice(-10);
-          const waOrderText = "Hi " + (data.receiverName || "Customer") + "! 👋 Your order *" + shipmentId + "* (" + (data.description || "Package") + ") is booked via " + carrierBadge + ".\n\n📦 Track live: https://securekaro.in/track?id=" + shipmentId + "\n" + (isCod ? "💵 Amount Due (COD): ₹" + data.amount + "\n" : "💳 Payment: Prepaid\n") + "🔒 Safe delivery with SecureKaro.";
-          const waShareLink = "https://api.whatsapp.com/send?phone=91" + cleanPhone + "&text=" + encodeURIComponent(waOrderText);
-          const labelUrl = "https://securekaro.in/api/v1/shipments/" + shipmentId + "/label";
 
           if (isCod) {
             agentReply =
@@ -1757,24 +1741,25 @@ const handleChat = async (req, res) => {
               `👤 *Assigned Executive:* ${pickupResult.executive?.name} (${pickupResult.executive?.phone})\n` +
               `📍 *Delivery Address:* ${data.receiverAddress}\n` +
               `⚖️ *Package:* ${data.weightKg} kg (${data.lengthCm || 15}×${data.widthCm || 10}×${data.heightCm || 5} cm)\n\n` +
-              `🚫 *Payment Link Skipped:* As requested for COD shipments, no online payment link was sent to the buyer.\n` +
+              `🚫 *Payment Link Skipped:* No buyer payment link was sent.\n` +
               `⚡ *Zero Supplier Effort:* Courier executive will arrive automatically during the scheduled pickup slot.\n\n` +
               `📄 *Download Shipping Label:* [Click to Download PDF Label](https://securekaro.in/api/v1/shipments/${shipmentId}/label)\n🔗 *WhatsApp Tracking Link for Buyer:*\nhttps://securekaro.in/track?id=${shipmentId}\n\nType *"new"* to book another shipment or close this chat.`;
           } else {
             agentReply =
-              `✅ *Shipment Booked & Courier Pickup Auto-Scheduled!*\n\n` +
+              `✅ *Prepaid Shipment Booked & Pickup Scheduled!*\n\n` +
               `🆔 *Shipment ID:* ${shipmentId}\n` +
-              `🚚 *Cheapest Carrier:* ${carrierBadge} (Delivery Charge: ₹${rateBadge})\n` +
-              `🌐 *Smart Courier Routing:* Lowest rate auto-assigned across all courier partners.\n` +
+              `🚚 *Carrier:* ${carrierBadge} (Delivery Charge: ₹${rateBadge})\n` +
+              `💳 *Payment Mode:* Prepaid (Seller-Paid Freight)\n` +
+              `💼 *Wallet Adjusted:* ₹${deliveryCharge} (Courier Delivery Fee)\n` +
               `📦 *Auto-Scheduled Pickup Slot:* ${pickupResult.pickupSlot}\n` +
               `🏷️ *Pickup Reference:* ${pickupResult.pickupToken}\n` +
               `👤 *Assigned Executive:* ${pickupResult.executive?.name} (${pickupResult.executive?.phone})\n` +
-              `💰 *Order Amount:* ${fmt(data.amount)}\n` +
-              `📱 *Payment link sent to ${data.receiverName}* via WhatsApp & SMS\n` +
+              `💰 *Declared Value:* ${fmt(data.amount)}\n` +
               `📍 *Delivery Address:* ${data.receiverAddress}\n` +
               `⚖️ *Package:* ${data.weightKg} kg (${data.lengthCm || 15}×${data.widthCm || 10}×${data.heightCm || 5} cm)\n\n` +
-              `⚡ *Zero Supplier Effort:* The carrier executive will arrive automatically during the scheduled pickup slot once payment is verified.\n\n` +
-              `Type *"new"* to book another shipment or close this chat.`;
+              `🚫 *No Buyer Payment Link Sent:* Prepaid orders never send WhatsApp or SMS payment links.\n` +
+              `⚡ *Zero Supplier Effort:* The courier executive will arrive automatically during the scheduled pickup slot.\n\n` +
+              `📄 *Download Shipping Label:* [Click to Download PDF Label](https://securekaro.in/api/v1/shipments/${shipmentId}/label)\n🔗 *WhatsApp Tracking Link for Buyer:*\nhttps://securekaro.in/track?id=${shipmentId}\n\nType *"new"* to book another shipment or close this chat.`;
           }
         } catch (bookErr) {
           console.error('[AGENT] Booking error:', bookErr);
@@ -1789,7 +1774,7 @@ const handleChat = async (req, res) => {
         if (doneMsg.includes('new') || doneMsg.includes('book another') || doneMsg.includes('another shipment')) {
           // Reset session for a new shipment
           session.step = STEPS.GREETING;
-          session.collectedData = {};
+          session.collectedData = createFreshCollectedData(user);
           session.carrierQuotes = [];
           session.selectedCarrier = {};
           session.createdShipmentId = '';

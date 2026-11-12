@@ -44,13 +44,13 @@ const AgentSessionSchema = new mongoose.Schema({
     senderPincode:        { type: String, default: '' },
     description:          { type: String, default: '' },
     amount:               { type: Number, default: 0 },
-    weightKg:             { type: Number, default: 0.5 },
+    weightKg:             { type: Number, default: 0 },
     heightCm:             { type: Number, default: 15 },
     widthCm:              { type: Number, default: 15 },
     lengthCm:             { type: Number, default: 15 },
-    returnAllowed:        { type: Boolean, default: true },
+    returnAllowed:        { type: Boolean, default: false },
     rtoProtectionEnabled: { type: Boolean, default: false },
-    paymentMode:          { type: String, default: 'prepaid' } // 'prepaid' | 'cod'
+    paymentMode:          { type: String, default: '' } // 'prepaid' | 'cod'
   },
 
   // Carrier quotes fetched for this session

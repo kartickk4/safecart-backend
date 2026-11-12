@@ -75,8 +75,18 @@ async function generateWithFallback(body) {
   const candidateModels = [...MODELS, ...LEGACY_MODELS];
   for (const model of candidateModels) {
     try {
-      const response = await callGemini(model, body);
-      const text = response.candidates?.[0]?.content?.parts?.[0]?.text;
+      const requestBody = JSON.parse(JSON.stringify(body));
+      // gemini-2.0 models reject thinkingConfig; strip it for 2.0 fallbacks
+      if (model.includes('2.0') && requestBody.generationConfig?.thinkingConfig) {
+        delete requestBody.generationConfig.thinkingConfig;
+      }
+      const response = await callGemini(model, requestBody);
+      const parts = response.candidates?.[0]?.content?.parts || [];
+      const text = parts
+        .filter(p => !p.thought && typeof p.text === 'string')
+        .map(p => p.text)
+        .join('')
+        .trim();
       if (text) {
         return text;
       }
@@ -107,10 +117,10 @@ async function extractOrderFromText(rawText) {
     '  "receiverAddress": string or null (street address, landmarks, area, building),\n' +
     '  "receiverPincode": string or null (6-digit Indian PIN code),\n' +
     '  "city": string or null,\n' +
-    '  "weightKg": number or null (e.g. 0.5, 1.2),\n' +
-    '  "amount": number or null (item value or COD collect amount in INR),\n' +
-    '  "paymentMode": "cod" or "prepaid" (default to "cod" if cash on delivery mentioned or ambiguous with an amount, "prepaid" if prepaid/online/paid mentioned),\n' +
-    '  "description": string or null (item name, e.g. "2 Saree", "Sneakers")\n' +
+    '  "weightKg": number or null (ONLY if explicitly stated in text; return null if missing — DO NOT guess or default),\n' +
+    '  "amount": number or null (item/COD amount in INR ONLY if explicitly stated; return null if missing — DO NOT guess),\n' +
+    '  "paymentMode": "cod" or "prepaid" or null (ONLY set if COD/cash/prepaid/paid is explicitly stated; return null if not clearly stated — DO NOT guess),\n' +
+    '  "description": string or null (item name ONLY if stated, else null)\n' +
     "}\n" +
     "Only set isOrder: false if the input is purely a greeting or irrelevant conversation with zero address/contact info.";
 
@@ -157,23 +167,27 @@ async function extractOrderFromText(rawText) {
 async function answerMerchantQuery({ query, user, context }) {
   if (!getApiKey()) return null;
 
-  const systemInstruction = 
+  const systemInstruction =
     "You are the official SecureKaro AI Agent — an autonomous, polite, and highly skilled e-commerce logistics copilot in India.\n" +
-    "SecureKaro provides escrow delivery protection, automated multi-carrier shipping (Delhivery, BlueDart, DTDC, Shadowfax), 24h buyer inspection window, and instant wallet payouts.\n\n" +
+    "Verified SecureKaro Facts (NEVER invent fake numbers or claim 'SecureKaro Escrow'):\n" +
+    "- Serviceable Reach: 29,000+ Indian pincodes pan-India across Tier 1, 2, 3 towns and remote areas.\n" +
+    "- Courier Partners: Delhivery, Shadowfax, Xpressbees, Ekart, BlueDart, DTDC, Ecom Express, India Post, and Amazon Shipping (Direct API + NimbusPost/Shiprocket multi-carrier routing).\n" +
+    "- Prepaid Booking: Seller pays only the courier delivery charge upfront from the SecureKaro Wallet and courier pickup is scheduled immediately (NO buyer payment link is sent via WhatsApp or SMS).\n" +
+    "- COD Booking: Courier collects the order amount from the buyer at delivery; courier freight + ₹40 COD handling fee is settled from the seller wallet.\n" +
+    "- Optional Protections (BOTH OFF by default until seller enables): 24h Return Protection and Smart RTO Protection (₹40 relief per undelivered Prepaid parcel). Also includes Weight Shield and WhatsApp NDR recovery.\n\n" +
     "Guidelines:\n" +
-    "- Respond politely and concisely using bolding (*bold*) and clean bullet points.\n" +
-    "- Keep responses brief, crisp, and direct (max 2-3 short paragraphs).\n" +
+    "- NEVER use the word 'Escrow' or 'SecureKaro Escrow'. Refer to 'SecureKaro Delivery Protection' instead.\n" +
+    "- NEVER claim a buyer payment link is sent for bookings.\n" +
+    "- Respond completely without cutting off mid-sentence, using crisp formatting (*bold*) and concise bullet points (2-4 short paragraphs max).\n" +
     "- If the user asks in Hinglish or Hindi, answer naturally in friendly Hinglish/Hindi.\n" +
-    "- If the user asks about live tracking, wallet balance, carrier rates, replacement policy, or disputes, provide precise, actionable guidance based on the provided live context.\n" +
-    "- Never invent fake tracking numbers or false account balances.\n" +
-    "- Always encourage safety, protected deliveries, and verified unboxing videos for returns.";
+    "- Never invent fake tracking numbers or false account balances.";
 
-  const userContextInfo = 
+  const userContextInfo =
     `Merchant Name: ${user.fullName || 'Merchant'}\n` +
     `Merchant Pincode: ${user.pincode || '110001'}\n` +
     `Available Wallet Balance: ₹${user.walletBalance || 0}\n` +
     `Recent Shipments Context: ${JSON.stringify(context?.recentShipments || [])}\n` +
-    `Active Escrow Funds In Pipeline: ₹${context?.pipelineFunds || 0}\n` +
+    `In-Transit Shipment Value: ₹${context?.pipelineFunds || 0}\n` +
     `Referral Code: ${user.referralCode || 'SK-GROW'}`;
 
   const body = {
@@ -185,7 +199,8 @@ async function answerMerchantQuery({ query, user, context }) {
     },
     generationConfig: {
       temperature: 0.3,
-      maxOutputTokens: 400 // Keep concise for sub-second streaming
+      maxOutputTokens: 1200,
+      thinkingConfig: { thinkingBudget: 0 }
     }
   };
 
@@ -242,10 +257,10 @@ async function extractOrderFromImage(imageBase64, imageMimeType = 'image/jpeg') 
     '  "receiverAddress": string or null (full street address, house/flat/building, landmark, area),\n' +
     '  "receiverPincode": string or null (6-digit Indian PIN code),\n' +
     '  "city": string or null,\n' +
-    '  "weightKg": number or null (default 0.5 if not explicitly written),\n' +
-    '  "amount": number or null (item value or COD amount in INR),\n' +
-    '  "paymentMode": "cod" or "prepaid" (default to "cod" if amount mentioned, else "prepaid"),\n' +
-    '  "description": string or null (item/product description if mentioned, else null)\n' +
+    '  "weightKg": number or null (ONLY if explicitly written on the slip/label; return null if missing — NEVER guess or default to 0.5),\n' +
+    '  "amount": number or null (item value or COD amount in INR ONLY if explicitly written; return null if missing — NEVER guess),\n' +
+    '  "paymentMode": "cod" or "prepaid" or null (ONLY set if COD or Prepaid is explicitly written/marked; return null if missing — NEVER default),\n' +
+    '  "description": string or null (item/product description ONLY if written, else null)\n' +
     "}\n" +
     "Only set isOrder: false if the image has zero text or contains completely unrelated content (e.g. random landscape photo).";
 
