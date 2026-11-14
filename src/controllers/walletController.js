@@ -225,9 +225,12 @@ const getWalletBalance = async (req, res) => {
     }
 
     const currentBalance = parseFloat((Number(user.walletBalance) || 0).toFixed(2));
+    const cashback = parseFloat((Number(user.cashbackBalance) || 0).toFixed(2));
     const activeShipmentsCount = await getActiveShipmentsCount(user._id);
     const securityReserve = calculateSecurityReserve(activeShipmentsCount);
-    const withdrawableBalance = Math.max(0, parseFloat((currentBalance - securityReserve).toFixed(2)));
+    const withdrawableDirectCredits = Math.max(0, parseFloat((currentBalance - securityReserve).toFixed(2)));
+    const withdrawableBalance = parseFloat((withdrawableDirectCredits + cashback).toFixed(2));
+    const totalWalletBalance = parseFloat((currentBalance + cashback).toFixed(2));
 
     res.json({
       success: true,
@@ -237,15 +240,16 @@ const getWalletBalance = async (req, res) => {
         isNegative: currentBalance < 0,
         activeShipmentsCount,
         securityReserve,
-        withdrawableBalance,
+        withdrawableBalance: withdrawableDirectCredits,
+        withdrawableTotal: withdrawableBalance,
         reservePerShipment: 100,
         maxReserveCap: 1000,
         totalRecharged,
         totalDeducted
       },
       buyerWallet: {
-        cashbackBalance: user.cashbackBalance || 0,
-        withdrawableBalance: user.cashbackBalance || 0
+        cashbackBalance: cashback,
+        withdrawableBalance: cashback
       },
       // ── Backward-Compatible Top-Level Keys ────────────────────────────────
       walletBalance: currentBalance,
@@ -253,9 +257,10 @@ const getWalletBalance = async (req, res) => {
       activeShipmentsCount,
       securityReserve,
       withdrawableBalance,
+      totalWalletBalance,
       reservePerShipment: 100,
       maxReserveCap: 1000,
-      cashbackBalance: user.cashbackBalance || 0,
+      cashbackBalance: cashback,
       totalRecharged,
       totalDeducted,
       recentTransactions
