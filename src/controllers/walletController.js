@@ -198,11 +198,12 @@ const verifyPayment = async (req, res) => {
  */
 const getWalletBalance = async (req, res) => {
   try {
-    const user = req.user || await User.findById(req.user._id).select('walletBalance cashbackBalance fullName email');
+    const user = req.user || await User.findById(req.user._id).select('walletBalance cashbackBalance fullName email role');
     if (!user) {
       return res.status(404).json({ error: 'User not found.' });
     }
 
+    const isReceiver = (user.role === 'Receiver') || (req.query.role === 'Receiver');
     const userMatch = { $or: [{ sellerId: user._id }, { userId: user._id }] };
 
     // Parallelize recent transactions lookup and combined credit/debit aggregation
@@ -226,11 +227,11 @@ const getWalletBalance = async (req, res) => {
 
     const currentBalance = parseFloat((Number(user.walletBalance) || 0).toFixed(2));
     const cashback = parseFloat((Number(user.cashbackBalance) || 0).toFixed(2));
-    const activeShipmentsCount = await getActiveShipmentsCount(user._id);
-    const securityReserve = calculateSecurityReserve(activeShipmentsCount);
-    const withdrawableDirectCredits = Math.max(0, parseFloat((currentBalance - securityReserve).toFixed(2)));
-    const withdrawableBalance = parseFloat((withdrawableDirectCredits + cashback).toFixed(2));
-    const totalWalletBalance = parseFloat((currentBalance + cashback).toFixed(2));
+    const activeShipmentsCount = isReceiver ? 0 : await getActiveShipmentsCount(user._id);
+    const securityReserve = isReceiver ? 0 : calculateSecurityReserve(activeShipmentsCount);
+    const withdrawableDirectCredits = isReceiver ? 0 : Math.max(0, parseFloat((currentBalance - securityReserve).toFixed(2)));
+    const withdrawableBalance = isReceiver ? cashback : parseFloat((withdrawableDirectCredits + cashback).toFixed(2));
+    const totalWalletBalance = isReceiver ? cashback : parseFloat((currentBalance + cashback).toFixed(2));
 
     res.json({
       success: true,
@@ -252,8 +253,8 @@ const getWalletBalance = async (req, res) => {
         withdrawableBalance: cashback
       },
       // ── Backward-Compatible Top-Level Keys ────────────────────────────────
-      walletBalance: currentBalance,
-      isNegative: currentBalance < 0,
+      walletBalance: isReceiver ? cashback : currentBalance,
+      isNegative: isReceiver ? false : currentBalance < 0,
       activeShipmentsCount,
       securityReserve,
       withdrawableBalance,
