@@ -857,35 +857,34 @@ const quoteCodFees = async (req, res) => {
     let deliveryCharge = 40; // Default fallback
     let carrierName = 'Delhivery Express';
     let carrierQuotes = [];
+    let matchedCarrier = null;
 
     if (fromPincode && toPincode) {
       carrierQuotes = await getCarrierRatesAsync(fromPincode, toPincode, weightKg, dimensionsForRate, false, true);
       if (carrierQuotes && carrierQuotes.length > 0) {
         if (carrierSlug && carrierSlug !== 'auto' && carrierSlug !== 'add_later') {
-          const matched = carrierQuotes.find(q => q.slug === carrierSlug.toLowerCase());
-          if (matched) {
-            deliveryCharge = matched.price;
-            carrierName = matched.name;
-          } else {
-            deliveryCharge = carrierQuotes[0].price;
-            carrierName = carrierQuotes[0].name;
-          }
+          matchedCarrier = carrierQuotes.find(q => q.slug === carrierSlug.toLowerCase()) || carrierQuotes[0];
         } else {
-          deliveryCharge = carrierQuotes[0].price;
-          carrierName = carrierQuotes[0].name;
+          matchedCarrier = carrierQuotes[0];
         }
+        carrierName = matchedCarrier.name;
       }
     }
 
+    const isShadowfax = /shadowfax/i.test(matchedCarrier?.name || matchedCarrier?.slug || carrierSlug || '');
     const codCharge = (bodyCodCharge !== undefined && !isNaN(Number(bodyCodCharge)) && Number(bodyCodCharge) >= 0)
       ? Number(bodyCodCharge)
-      : 40;
+      : (matchedCarrier && matchedCarrier.codCharge !== undefined ? Number(matchedCarrier.codCharge) : (isShadowfax ? 0 : 45));
+
+    const totalCharge = matchedCarrier ? Math.round(matchedCarrier.price) : Math.round(deliveryCharge + codCharge);
+    deliveryCharge = matchedCarrier?.freightCharge !== undefined
+      ? Number(matchedCarrier.freightCharge)
+      : Math.max(0, totalCharge - codCharge);
 
     const activeShipmentsCount = await getActiveShipmentsCount(user._id);
     const newActiveCount = activeShipmentsCount + 1;
     const requiredReserve = calculateSecurityReserve(newActiveCount);
 
-    const totalCharge = Math.round(deliveryCharge + codCharge);
     const walletBalance = Number(user.walletBalance) || 0;
     const totalRequired = totalCharge + requiredReserve;
     const canAdjustWallet = walletBalance >= totalRequired;

@@ -173,7 +173,7 @@ async function answerMerchantQuery({ query, user, context }) {
     "- Serviceable Reach: 29,000+ Indian pincodes pan-India across Tier 1, 2, 3 towns and remote areas.\n" +
     "- Courier Partners: Delhivery, Shadowfax, Xpressbees, Ekart, BlueDart, DTDC, Ecom Express, India Post, and Amazon Shipping (Direct API + NimbusPost/Shiprocket multi-carrier routing).\n" +
     "- Prepaid Booking: Seller pays only the courier delivery charge upfront from the SecureKaro Wallet and courier pickup is scheduled immediately (NO buyer payment link is sent via WhatsApp or SMS).\n" +
-    "- COD Booking: Courier collects the order amount from the buyer at delivery; courier freight + ₹40 COD handling fee is settled from the seller wallet.\n" +
+    "- COD Booking: Courier collects the order amount from the buyer at delivery. COD handling fee depends strictly on the courier partner chosen: Shadowfax Direct charges ₹0 COD fee (Free), while other aggregators/couriers (Delhivery, Ekart, BlueDart, Xpressbees, DTDC) charge their partner fee (~₹40–₹50). Upfront freight + partner COD fee is settled from the seller wallet.\n" +
     "- Optional Protections (BOTH OFF by default until seller enables): 24h Return Protection and Smart RTO Protection (₹40 relief per undelivered Prepaid parcel). Also includes Weight Shield and WhatsApp NDR recovery.\n\n" +
     "Guidelines:\n" +
     "- NEVER use the word 'Escrow' or 'SecureKaro Escrow'. Refer to 'SecureKaro Delivery Protection' instead.\n" +

@@ -233,9 +233,15 @@ const buildSummaryConfirmation = (session, data, user) => {
     })() +
     `↩️ *Returns:* ${data.returnAllowed === true ? 'Enabled (24h)' : 'Off (Final Sale)'}\n` +
     `🚚 *Carrier:* ${sel.name} — ${fmt(sel.price)} · ${sel.eta}\n\n` +
-    (isCod
-      ? `*Note for COD:*\n• Courier collects ${fmt(data.amount)} cash/UPI from buyer at delivery\n• Courier fee (${fmt(sel.price)}) + COD handling (₹40) settled via your wallet\n• No buyer payment link will be sent ✅\n\n`
-      : `*Note for Prepaid (Seller-Paid):*\n• Courier delivery fee (${fmt(sel.price)}) settled directly via your SecureKaro Wallet\n• Pickup is auto-scheduled immediately upon booking\n• No buyer payment link will be sent via WhatsApp or SMS ✅\n\n`) +
+    (() => {
+      if (!isCod) {
+        return `*Note for Prepaid (Seller-Paid):*\n• Courier delivery fee (${fmt(sel.price)}) settled directly via your SecureKaro Wallet\n• Pickup is auto-scheduled immediately upon booking\n• No buyer payment link will be sent via WhatsApp or SMS ✅\n\n`;
+      }
+      const isShadowfax = /shadowfax/i.test(sel.name || sel.slug || '') || Boolean(sel.isDirectShadowfax);
+      const codCharge = sel.codCharge !== undefined ? Number(sel.codCharge) : (isShadowfax ? 0 : 45);
+      const codNote = isShadowfax || codCharge === 0 ? '₹0 Free with Shadowfax' : fmt(codCharge);
+      return `*Note for COD:*\n• Courier collects ${fmt(data.amount)} cash/UPI from buyer at delivery\n• Courier fee (${fmt(sel.price)}) + COD handling (${codNote}) settled via your wallet\n• No buyer payment link will be sent ✅\n\n`;
+    })() +
     `Tap an action pill below or type *"confirm"* to book, *"switch to cod"* / *"enable rto"* / *"enable return"* / *"edit"*.`
   );
 };
@@ -1612,9 +1618,12 @@ const handleChat = async (req, res) => {
           let codFeePaymentMethod = 'none';
           let codFeePaidAt = null;
           let codFeeTransactionRef = '';
-          let deliveryCharge = sel.price || 40;
-          let codCharge = isCod ? 40 : 0;
-          let totalCodFees = isCod ? (deliveryCharge + codCharge) : 0;
+          const isShadowfax = /shadowfax/i.test(sel.name || sel.slug || '') || Boolean(sel.isDirectShadowfax);
+          let codCharge = isCod ? (sel.codCharge !== undefined ? Number(sel.codCharge) : (isShadowfax ? 0 : 45)) : 0;
+          let deliveryCharge = sel.freightCharge !== undefined
+            ? Number(sel.freightCharge)
+            : (isCod && codCharge > 0 && sel.price > codCharge ? Math.max(0, sel.price - codCharge) : (sel.price || 40));
+          let totalCodFees = isCod ? (sel.price || (deliveryCharge + codCharge)) : 0;
 
           const isOffline = data.paymentMode === 'paid_offline';
           const availableWallet = Number(user.walletBalance) || 0;
