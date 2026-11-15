@@ -113,10 +113,14 @@ app.use(helmet({
 }));
 
 // 2. Strict CORS Security Policy
-// SECURITY: LAN IP ranges are only allowed in development — never in production.
-const allowedOrigins = process.env.FRONTEND_URL 
+// SECURITY: In production, unencrypted HTTP and localhost origins are strictly stripped
+const rawOrigins = process.env.FRONTEND_URL 
   ? process.env.FRONTEND_URL.split(',').map(url => url.trim()).filter(Boolean)
   : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173'];
+
+const allowedOrigins = isProd
+  ? rawOrigins.filter(url => url.startsWith('https://') && !url.includes('localhost') && !url.includes('127.0.0.1'))
+  : rawOrigins;
 
 const corsOptions = {
   origin: (origin, callback) => {
