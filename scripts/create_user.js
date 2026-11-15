@@ -45,7 +45,7 @@ async function createUser(email, password, fullName, phone, role = 'Receiver') {
   const user = await User.create({
     email: normalizedEmail,
     passwordHash,
-    phone: phone || '9876543210',
+    phone: phone || '',
     fullName: fullName || normalizedEmail.split('@')[0],
     role: role,
     referralCode,
@@ -70,3 +70,4 @@ if (args.length >= 2) {
 } else {
   module.exports = { createUser };
 }
+

@@ -165,6 +165,17 @@ const getShipments = async (req, res) => {
       query = { $or: queryConditions };
     }
 
+    // Exclude dummy, mock, and sample records
+    query.isDemo = { $ne: true };
+    query.isSample = { $ne: true };
+    query.shipmentId = { $nin: [
+      'SPL-1404-M', 'SPL-3809-Y', 'SPL-6119-I', 'SPL-9912-N', 'SPL-4257-Z',
+      'SPL-5856-B', 'SPL-2808-B', 'SPL-3461-L', 'SPL-6587-P', 'SPL-5402-V',
+      'SPL-4318-N', 'SPL-2055-C', 'SPL-5396-U', 'SPL-6386-T', 'SPL-4433-J',
+      'SPL-6186-E', 'SPL-3158-U', 'SPL-4327-Z', 'SPL-3243-U', 'SPL-4285-D',
+      'SPL-6284-R', 'SPL-7845-D', 'SPL-3146-B'
+    ] };
+
     // Server-Side High-Efficiency Pagination
     const totalCount = await Shipment.countDocuments(query);
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
