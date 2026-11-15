@@ -22,8 +22,8 @@ const createRechargeOrder = async (req, res) => {
     const { amount, paymentMethod = 'upi' } = req.body;
     const numAmount = parseFloat(amount);
 
-    if (isNaN(numAmount) || numAmount < 10) {
-      return res.status(400).json({ error: 'Minimum recharge amount is ₹10.' });
+    if (isNaN(numAmount) || numAmount < 1) {
+      return res.status(400).json({ error: 'Minimum recharge amount is ₹1.' });
     }
     if (numAmount > 100000) {
       return res.status(400).json({ error: 'Maximum single recharge limit is ₹1,00,000.' });
