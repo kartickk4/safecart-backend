@@ -201,8 +201,14 @@ const rateLimitKeyGenerator = (req) => {
 const shouldSkipRateLimit = (req) => {
   if (isLoadTestRequest()) return true;
   const p = req.path || req.originalUrl || '';
-  // Exempt health checks, uptime pings, and webhook notifications from rate limits
-  if (p === '/health' || p === '/api/v1/health' || p.includes('health') || p.includes('network-info') || p.includes('/youpi/webhook')) {
+  // Exempt health checks, uptime pings, and payment/messaging webhook notifications from rate limits
+  if (
+    p === '/health' ||
+    p === '/api/v1/health' ||
+    p === '/api/v1/network-info' ||
+    p === '/api/v1/shipments/webhook/payment' ||
+    p.startsWith('/api/v1/whatsapp/webhook')
+  ) {
     return true;
   }
   return false;

@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
 
@@ -773,7 +774,7 @@ const resetPassword = async (req, res) => {
  * @access  Public
  */
 const googleAuth = async (req, res) => {
-  const { email, fullName, avatarUrl, googleId, referralCode: usedReferralCode } = req.body;
+  const { email, fullName, avatarUrl, googleId, referralCode: usedReferralCode, idToken } = req.body;
   const requestedRole = req.body.role === 'Supplier' ? 'Supplier' : (req.body.role === 'Receiver' ? 'Receiver' : null);
 
   try {
@@ -782,7 +783,39 @@ const googleAuth = async (req, res) => {
     }
 
     const normalizedEmail = email.toLowerCase().trim();
-    
+
+    // ── Security Hardening: Cryptographic Token Verification ────────────────
+    const isProd = process.env.NODE_ENV === 'production';
+    if (isProd || idToken) {
+      if (!idToken || typeof idToken !== 'string') {
+        return res.status(401).json({ error: 'Google ID token is required for secure authentication.' });
+      }
+
+      try {
+        const verifyRes = await axios.get(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken.trim())}`, {
+          timeout: 7000
+        });
+        const tokenData = verifyRes.data;
+
+        // Verify that the email in the verified Google token matches the requested email
+        const tokenEmail = (tokenData.email || '').toLowerCase().trim();
+        const isEmailVerified = tokenData.email_verified === true || tokenData.email_verified === 'true';
+
+        if (!tokenEmail || tokenEmail !== normalizedEmail) {
+          console.warn(`[Security Alert] Google token email mismatch: payload=${normalizedEmail}, token=${tokenEmail}`);
+          return res.status(401).json({ error: 'Google authentication verification failed: email mismatch.' });
+        }
+
+        if (!isEmailVerified) {
+          return res.status(401).json({ error: 'Google account email is not verified.' });
+        }
+      } catch (tokenErr) {
+        console.warn('[Security Alert] Failed to verify Google ID token with Google servers:', tokenErr.response?.data || tokenErr.message);
+        return res.status(401).json({ error: 'Invalid or expired Google authentication token. Please sign in again.' });
+      }
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     // Check if user already exists: prefer requestedRole if provided, otherwise find any account with this email
     let user = null;
     if (requestedRole) {
