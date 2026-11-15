@@ -198,8 +198,15 @@ const verifyPayment = async (req, res) => {
  */
 const getWalletBalance = async (req, res) => {
   try {
+    const activeRole = (req.headers['x-active-role'] || req.user.role || '').toLowerCase();
+    let targetId = req.user._id;
+    if (activeRole && req.user.role && req.user.role.toLowerCase() !== activeRole) {
+      const alt = await User.findOne({ email: req.user.email.toLowerCase().trim(), role: activeRole === 'supplier' ? 'Supplier' : 'Receiver' }).select('_id');
+      if (alt) targetId = alt._id;
+    }
+
     // Always fetch fresh from database to prevent stale middleware cache on first attempt
-    const user = await User.findById(req.user._id).select('walletBalance cashbackBalance fullName email');
+    const user = await User.findById(targetId).select('walletBalance cashbackBalance fullName email role');
     if (!user) {
       return res.status(404).json({ error: 'User not found.' });
     }
@@ -232,6 +239,8 @@ const getWalletBalance = async (req, res) => {
     const withdrawableDirectCredits = Math.max(0, parseFloat((currentBalance - securityReserve).toFixed(2)));
     const withdrawableBalance = parseFloat((withdrawableDirectCredits + cashback).toFixed(2));
     const totalWalletBalance = parseFloat((currentBalance + cashback).toFixed(2));
+    const isSuppRole = (activeRole === 'supplier' || user.role === 'Supplier');
+    const responseWithdrawable = isSuppRole ? withdrawableDirectCredits : totalWalletBalance;
 
     res.json({
       success: true,
@@ -258,7 +267,7 @@ const getWalletBalance = async (req, res) => {
       isNegative: currentBalance < 0,
       activeShipmentsCount,
       securityReserve,
-      withdrawableBalance,
+      withdrawableBalance: responseWithdrawable,
       totalWalletBalance,
       reservePerShipment: 100,
       maxReserveCap: 1000,

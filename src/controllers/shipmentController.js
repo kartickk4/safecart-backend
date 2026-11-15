@@ -119,7 +119,9 @@ const getShipments = async (req, res) => {
   try {
     const userPhone = req.user.phone;
     const userIds = await getLinkedUserIds(req.user);
-    const role = (req.query.role || '').toLowerCase(); // 'supplier' | 'receiver' | ''
+    const activeHeaderRole = req.headers['x-active-role'] || '';
+    const rawRole = (req.query.role || activeHeaderRole || req.user.role || '').toLowerCase();
+    const role = (rawRole === 'all') ? 'all' : ((rawRole === 'supplier' || rawRole === 'merchant') ? 'supplier' : 'receiver');
 
     let query = {};
 
