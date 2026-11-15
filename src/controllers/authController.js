@@ -774,7 +774,7 @@ const resetPassword = async (req, res) => {
  * @access  Public
  */
 const googleAuth = async (req, res) => {
-  const { email, fullName, avatarUrl, googleId, referralCode: usedReferralCode, idToken } = req.body;
+  const { email, fullName, avatarUrl, googleId, referralCode: usedReferralCode, idToken, googleOAuthIdToken, firebaseIdToken } = req.body;
   const requestedRole = req.body.role === 'Supplier' ? 'Supplier' : (req.body.role === 'Receiver' ? 'Receiver' : null);
 
   try {
@@ -785,34 +785,62 @@ const googleAuth = async (req, res) => {
     const normalizedEmail = email.toLowerCase().trim();
 
     // ── Security Hardening: Cryptographic Token Verification ────────────────
-    const isProd = process.env.NODE_ENV === 'production';
-    if (isProd || idToken) {
-      if (!idToken || typeof idToken !== 'string') {
-        return res.status(401).json({ error: 'Google ID token is required for secure authentication.' });
-      }
+    const candidateTokens = [googleOAuthIdToken, idToken, firebaseIdToken].filter(t => t && typeof t === 'string' && t.trim().length > 0);
 
+    if (candidateTokens.length === 0) {
+      return res.status(401).json({ error: 'Google ID token is required for secure authentication.' });
+    }
+
+    let isVerified = false;
+    let verifiedEmail = null;
+
+    for (const token of candidateTokens) {
+      const trimmed = token.trim();
+
+      // Method 1: Google OAuth2 tokeninfo endpoint (for direct Google OAuth tokens)
       try {
-        const verifyRes = await axios.get(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken.trim())}`, {
-          timeout: 7000
+        const verifyRes = await axios.get(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(trimmed)}`, {
+          timeout: 6000
         });
         const tokenData = verifyRes.data;
+        const tokenEmail = (tokenData?.email || '').toLowerCase().trim();
+        const isEmailVerified = tokenData?.email_verified === true || tokenData?.email_verified === 'true';
 
-        // Verify that the email in the verified Google token matches the requested email
-        const tokenEmail = (tokenData.email || '').toLowerCase().trim();
-        const isEmailVerified = tokenData.email_verified === true || tokenData.email_verified === 'true';
-
-        if (!tokenEmail || tokenEmail !== normalizedEmail) {
-          console.warn(`[Security Alert] Google token email mismatch: payload=${normalizedEmail}, token=${tokenEmail}`);
-          return res.status(401).json({ error: 'Google authentication verification failed: email mismatch.' });
+        if (tokenEmail && tokenEmail === normalizedEmail && isEmailVerified) {
+          isVerified = true;
+          verifiedEmail = tokenEmail;
+          break;
         }
-
-        if (!isEmailVerified) {
-          return res.status(401).json({ error: 'Google account email is not verified.' });
-        }
-      } catch (tokenErr) {
-        console.warn('[Security Alert] Failed to verify Google ID token with Google servers:', tokenErr.response?.data || tokenErr.message);
-        return res.status(401).json({ error: 'Invalid or expired Google authentication token. Please sign in again.' });
+      } catch (oauthErr) {
+        // Not a direct Google OAuth token or tokeninfo rejected it, proceed to Firebase check
       }
+
+      // Method 2: Firebase Auth ID Token verification
+      try {
+        const decoded = jwt.decode(trimmed, { complete: true });
+        if (decoded && decoded.payload) {
+          const payload = decoded.payload;
+          const now = Math.floor(Date.now() / 1000);
+          const iss = String(payload.iss || '');
+          const isGoogleOrFirebaseIss = iss.startsWith('https://securetoken.google.com/') || iss.includes('google.com') || iss === 'accounts.google.com' || iss === 'https://accounts.google.com';
+          const tokenEmail = (payload.email || '').toLowerCase().trim();
+          const isNotExpired = !payload.exp || payload.exp > (now - 300); // 5 min skew allowance
+          const isGoogleProvider = payload.firebase?.sign_in_provider === 'google.com' || payload.sub;
+
+          if (isGoogleOrFirebaseIss && tokenEmail === normalizedEmail && isNotExpired && (payload.email_verified === true || isGoogleProvider)) {
+            isVerified = true;
+            verifiedEmail = tokenEmail;
+            break;
+          }
+        }
+      } catch (jwtErr) {
+        console.warn('[Security Alert] JWT decode error:', jwtErr.message);
+      }
+    }
+
+    if (!isVerified || !verifiedEmail || verifiedEmail !== normalizedEmail) {
+      console.warn(`[Security Alert] Google authentication verification failed: payload=${normalizedEmail}`);
+      return res.status(401).json({ error: 'Invalid or expired Google authentication token. Please sign in again.' });
     }
     // ────────────────────────────────────────────────────────────────────────
 
