@@ -103,16 +103,16 @@ const sendPaymentLinkSms = async ({ phone, shipmentId, amount, description, carr
 
   console.log(`[SMS POLICY ENFORCED] SMS suppressed for Order #${shipmentId}. SMS is strictly reserved for: Signup OTP, Forgot Password OTP, Edit Phone OTP, Delivery Sign-off OTP. Routing to WhatsApp.`);
 
-  // Dispatch via WhatsApp
+  // Dispatch booking notification via WhatsApp
   try {
-    if (whatsappService && whatsappService.sendPaymentLinkWhatsApp) {
-      await whatsappService.sendPaymentLinkWhatsApp({
+    if (whatsappService && whatsappService.sendBookingConfirmationWhatsApp) {
+      await whatsappService.sendBookingConfirmationWhatsApp({
         phone: cleanPhone,
         receiverName,
         shipmentId,
-        amount,
-        description,
-        linkUrl: linkUrl || `${baseUrl}/pay/${shipmentId}`
+        carrierSlug: courier,
+        awbCode: 'PENDING_DISPATCH',
+        amount
       });
     }
   } catch (waErr) {

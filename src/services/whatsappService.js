@@ -1,9 +1,10 @@
 /**
  * whatsappService.js
- * Meta WhatsApp Cloud API integration for SecureKaro.
+ * Meta WhatsApp Cloud API integration for SecureKaro Logistics & Courier Aggregator.
  * Uses official registered WhatsApp message templates (type: 'template') for
- * automated AWB alerts, booking confirmations, delivery OTPs, and NDR notifications.
- * Gracefully simulates in development if credentials are absent.
+ * automated AWB tracking, courier booking, delivery verification, and NDR alerts.
+ * Note: SecureKaro operates strictly as a Courier Aggregator and Delivery Verification
+ * platform — NOT an escrow service. Escrow payment links are not used.
  */
 
 const axios = require('axios');
@@ -12,16 +13,15 @@ const WA_TOKEN    = process.env.WHATSAPP_TOKEN || '';
 const WA_PHONE_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || '';
 const WA_ENABLED  = !!(WA_TOKEN && WA_PHONE_ID);
 
-// Configurable Meta Registered Template Names (Defaults match approved SecureKaro templates)
+// Configurable Meta Registered Template Names for Logistics & Shipping
 const TEMPLATES = {
   AWB_DISPATCH: process.env.WA_TEMPLATE_AWB_DISPATCH || 'securekaro_dispatch_tracking',
   BOOKING:      process.env.WA_TEMPLATE_BOOKING      || 'securekaro_booking_confirm',
   DELIVERY_OTP: process.env.WA_TEMPLATE_DELIVERY_OTP || 'securekaro_delivery_otp',
   NDR:          process.env.WA_TEMPLATE_NDR          || 'securekaro_ndr_alert',
-  PAYMENT:      process.env.WA_TEMPLATE_PAYMENT      || 'securekaro_payment_request',
-  PAYOUT:       process.env.WA_TEMPLATE_PAYOUT       || 'securekaro_payout_released',
   REVERSE_AWB:  process.env.WA_TEMPLATE_REVERSE_AWB  || 'securekaro_reverse_courier',
-  PHOTO_REVIEW: process.env.WA_TEMPLATE_PHOTO_REVIEW || 'securekaro_photo_review'
+  PHOTO_REVIEW: process.env.WA_TEMPLATE_PHOTO_REVIEW || 'securekaro_photo_review',
+  PAYOUT:       process.env.WA_TEMPLATE_PAYOUT       || 'securekaro_payout_released'
 };
 
 /**
@@ -57,7 +57,7 @@ const sendWhatsAppMessage = async ({ phone, templateName, parameters = [], fallb
     };
   }
 
-  // 1. Build Meta Template Components (if templateName is provided)
+  // 1. Build Meta Template Components
   let templatePayload = null;
   if (templateName) {
     const components = [];
@@ -120,8 +120,7 @@ const sendWhatsAppMessage = async ({ phone, templateName, parameters = [], fallb
       const metaError = templateErr.response?.data?.error;
       console.warn(`[WHATSAPP TEMPLATE NOTE] Template '${templateName}' was not accepted by Meta:`, metaError?.message || templateErr.message);
 
-      // If template fails (e.g. template pending approval or parameter mismatch), try fallback text
-      // if recipient has an active 24h conversational session
+      // If template fails, try fallback text if recipient has an active 24h session
       if (fallbackText) {
         try {
           console.log(`[WHATSAPP FALLBACK] Attempting session text message to +${e164Phone}`);
@@ -156,7 +155,7 @@ const sendWhatsAppMessage = async ({ phone, templateName, parameters = [], fallb
     }
   }
 
-  // 3. Raw Text Dispatch (used when no template configured)
+  // 3. Raw Text Dispatch
   try {
     const textRes = await axios.post(
       `https://graph.facebook.com/v21.0/${WA_PHONE_ID}/messages`,
@@ -201,10 +200,9 @@ const sendDispatchTrackingWhatsApp = async ({ phone, receiverName, shipmentId, c
     `Hello ${name}! 👋\n\n` +
     `Your order *${shipmentId}*${description ? ` (${description})` : ''} has been dispatched with courier partner *${carrier}*.\n\n` +
     `📦 *Carrier:* ${carrier}\n` +
-    `🔢 *AWB / Tracking Code:* ${awb}\n` +
-    `🛡️ *Protection Status:* Payment Secured Under Verified Delivery\n\n` +
+    `🔢 *AWB / Tracking Code:* ${awb}\n\n` +
     `📍 *Live Real-Time Tracking:*\n${url}\n\n` +
-    `_Your payment remains safely protected until you inspect and confirm delivery._`;
+    `_Track your parcel anytime on SecureKaro Logistics._`;
 
   return sendWhatsAppMessage({
     phone,
@@ -237,8 +235,7 @@ const sendBookingConfirmationWhatsApp = async ({ phone, receiverName, shipmentId
     `🚚 *Carrier:* ${carrier}\n` +
     `📬 *AWB Code:* ${awb}\n` +
     `⏱️ *Estimated Delivery:* ${deliveryEta}\n\n` +
-    `Track your parcel anytime on SecureKaro.\n` +
-    `_Your payment is protected under verified delivery sign-off._`;
+    `_Live tracking powered by SecureKaro Logistics._`;
 
   return sendWhatsAppMessage({
     phone,
@@ -265,8 +262,8 @@ const sendDeliveryOtpWhatsApp = async ({ phone, receiverName, shipmentId, otp, i
     `Your OTP for confirming delivery of *${parcelType} #${shipmentId}* is:\n\n` +
     `*${otp}*\n\n` +
     `⏱️ Valid for *10 minutes*.\n` +
-    `⚠️ Please enter this OTP on the delivery verification screen ONLY after physically inspecting your package.\n\n` +
-    `_Powered by SecureKaro Delivery Protection_`;
+    `⚠️ Please share this OTP with the delivery executive only upon receiving your package.\n\n` +
+    `_SecureKaro Delivery Verification Engine_`;
 
   return sendWhatsAppMessage({
     phone,
@@ -298,7 +295,7 @@ const sendNdrResolutionWhatsApp = async ({ phone, receiverName, shipmentId, carr
     `📌 *Courier Reason:* "${reason}"\n\n` +
     `To prevent this parcel from being returned to the seller (RTO), please choose your preferred delivery preference in 1-click:\n\n` +
     `👉 *Tap to Reschedule or Update Address:*\n${url}\n\n` +
-    `_Your parcel & payment are protected under SecureKaro Verified Delivery Protection._`;
+    `_Powered by SecureKaro Autonomous NDR Engine._`;
 
   return sendWhatsAppMessage({
     phone,
@@ -309,38 +306,7 @@ const sendNdrResolutionWhatsApp = async ({ phone, receiverName, shipmentId, carr
 };
 
 /**
- * 5. Sends a payment link via WhatsApp Template.
- * Template positional parameters:
- * {{1}} Receiver Name
- * {{2}} Shipment ID
- * {{3}} Amount (₹)
- * {{4}} Payment URL
- */
-const sendPaymentLinkWhatsApp = async ({ phone, receiverName, shipmentId, amount, description, linkUrl }) => {
-  const name = receiverName || 'Customer';
-  const formattedAmount = `₹${Number(amount || 0).toLocaleString('en-IN')}`;
-  const url = linkUrl || `https://securekaro.in/pay/${shipmentId}`;
-
-  const fallbackText =
-    `🛡️ *SecureKaro Order Payment Request*\n\n` +
-    `Hello ${name}! 👋\n\n` +
-    `*Shipment ID:* ${shipmentId}\n` +
-    `*Item:* ${description || 'Parcel'}\n` +
-    `*Amount to Pay:* ${formattedAmount}\n\n` +
-    `Your order is protected under *SecureKaro Delivery Verification*. Funds are safely disbursed only after delivery confirmation.\n\n` +
-    `💳 *Pay Securely Here:*\n${url}\n\n` +
-    `_Powered by SecureKaro Delivery Protection_`;
-
-  return sendWhatsAppMessage({
-    phone,
-    templateName: TEMPLATES.PAYMENT,
-    parameters: [name, shipmentId, formattedAmount, url],
-    fallbackText
-  });
-};
-
-/**
- * 6. Sends reverse courier assignment notification via WhatsApp Template.
+ * 5. Sends reverse courier assignment notification via WhatsApp Template.
  * Template positional parameters:
  * {{1}} Shipment ID
  * {{2}} Carrier Name
@@ -353,13 +319,13 @@ const sendReverseCourierAssignedWhatsApp = async ({ phone, shipmentId, carrierNa
   const slot = pickupWindow || 'Tomorrow (10:00 AM - 2:00 PM)';
 
   const fallbackText =
-    `🔄 *SecureKaro: Return Approved!*\n\n` +
-    `Your reverse courier has been automatically booked for Shipment *#${shipmentId}* with *${carrier}*.\n\n` +
+    `🔄 *SecureKaro: Return Pickup Scheduled!*\n\n` +
+    `Your reverse courier has been booked for Shipment *#${shipmentId}* with *${carrier}*.\n\n` +
     `📦 *Carrier:* ${carrier}\n` +
     `🔢 *Tracking ID:* ${awb}\n` +
     `⏱️ *Scheduled Pickup Window:* ${slot}\n\n` +
-    `Please keep the item safely packed and sealed for collection.\n` +
-    `_Your refund is safeguarded under SecureKaro buyer protection._`;
+    `Please keep the item packed and ready for the courier pickup executive.\n` +
+    `_SecureKaro Reverse Logistics Service_`;
 
   return sendWhatsAppMessage({
     phone,
@@ -370,7 +336,7 @@ const sendReverseCourierAssignedWhatsApp = async ({ phone, shipmentId, carrierNa
 };
 
 /**
- * 7. Sends photo review mandatory notice via WhatsApp Template.
+ * 6. Sends photo review notification via WhatsApp Template.
  */
 const sendPhotoReviewChoiceWhatsApp = async ({ phone, shipmentId, receiverName, carrierSlug, awbCode }) => {
   const name = receiverName || 'Customer';
@@ -381,8 +347,8 @@ const sendPhotoReviewChoiceWhatsApp = async ({ phone, shipmentId, receiverName, 
     `Hi ${name}! 👋\n\n` +
     `📦 *SecureKaro: Shipment #${shipmentId}* has been booked.\n` +
     `🚚 *Carrier:* ${courier} | AWB: ${awb}\n\n` +
-    `📸 *Safety Note:* Parcel & product photo verification is mandatory for this shipment before courier dispatch for your security.\n` +
-    `_Your payment remains secured under verified delivery protection._`;
+    `📸 *Package Inspection:* Parcel photo verification is recorded for this shipment before dispatch.\n` +
+    `_Powered by SecureKaro Logistics._`;
 
   return sendWhatsAppMessage({
     phone,
@@ -393,7 +359,7 @@ const sendPhotoReviewChoiceWhatsApp = async ({ phone, shipmentId, receiverName, 
 };
 
 /**
- * 8. Sends payout released notification via WhatsApp Template.
+ * 7. Sends seller payout released notification via WhatsApp Template.
  */
 const sendPayoutReleasedWhatsApp = async ({ phone, senderName, shipmentId, amount, netPayout, method }) => {
   const name = senderName || 'Merchant';
@@ -402,13 +368,13 @@ const sendPayoutReleasedWhatsApp = async ({ phone, senderName, shipmentId, amoun
   const destination = method || 'Merchant Wallet Balance';
 
   const fallbackText =
-    `💰 *SecureKaro — Payout Released!*\n\n` +
+    `💰 *SecureKaro — Payout Settled!*\n\n` +
     `Hello ${name}! 🎉\n\n` +
     `Order *#${shipmentId}* delivery has been confirmed and verified.\n\n` +
     `💵 *Order Value:* ${orderAmount}\n` +
-    `✅ *Net Payout Released:* ${released}\n` +
+    `✅ *Settled Amount:* ${released}\n` +
     `🏦 *Credited To:* ${destination}\n\n` +
-    `_Thank you for shipping with SecureKaro!_`;
+    `_Thank you for shipping with SecureKaro Logistics!_`;
 
   return sendWhatsAppMessage({
     phone,
@@ -420,7 +386,6 @@ const sendPayoutReleasedWhatsApp = async ({ phone, senderName, shipmentId, amoun
 
 module.exports = {
   sendWhatsAppMessage,
-  sendPaymentLinkWhatsApp,
   sendBookingConfirmationWhatsApp,
   sendDispatchTrackingWhatsApp,
   sendReverseCourierAssignedWhatsApp,

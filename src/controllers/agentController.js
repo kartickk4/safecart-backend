@@ -14,7 +14,7 @@ const { getCarrierRates, getCarrierRatesAsync, getPincodeInfo, attachSmartBadges
 const { autoScheduleCourierPickup } = require('../services/pickupService');
 const { verifyAddressAndPredictRto } = require('../services/addressRtoService');
 const { checkDelhiveryServiceability } = require('../services/delhiveryService');
-const { sendPaymentLinkWhatsApp, sendBookingConfirmationWhatsApp } = require('../services/whatsappService');
+const { sendBookingConfirmationWhatsApp } = require('../services/whatsappService');
 const phonepeService = require('../services/phonepeService');
 const smsService = require('../services/smsService');
 const { createNotification } = require('../services/notification');
