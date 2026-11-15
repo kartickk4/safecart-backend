@@ -28,15 +28,13 @@ const getRewardWallet = async (req, res) => {
 
     // Strict role separation:
     // For suppliers: withdrawable from shipping wallet (after reserve) + cashback
-    // For buyers: withdrawable strictly from cashback (no seller shipping balance pollution)
+    // For buyers: withdrawable from order balance (walletBalance) + cashback
     const cashback = parseFloat((Number(user.cashbackBalance) || 0).toFixed(2));
     const withdrawableBalance = isSupplier
       ? parseFloat((withdrawableDirectCredits + cashback).toFixed(2))
-      : cashback;
+      : parseFloat((directWalletCredits + cashback).toFixed(2));
     const pendingConfirmationBalance = supplierWallet ? supplierWallet.pendingConfirmationBalance : 0;
-    const totalWalletBalance = isSupplier
-      ? parseFloat((directWalletCredits + cashback).toFixed(2))
-      : cashback;
+    const totalWalletBalance = parseFloat((directWalletCredits + cashback).toFixed(2));
 
     res.json({
       cashbackBalance: cashback,

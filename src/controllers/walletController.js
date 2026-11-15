@@ -249,8 +249,9 @@ const getWalletBalance = async (req, res) => {
         totalDeducted
       },
       buyerWallet: {
+        walletBalance: currentBalance,
         cashbackBalance: cashback,
-        withdrawableBalance: cashback
+        withdrawableBalance: parseFloat((currentBalance + cashback).toFixed(2))
       },
       // ── Backward-Compatible Top-Level Keys ────────────────────────────────
       walletBalance: currentBalance,
@@ -389,11 +390,12 @@ const withdrawCashback = async (req, res) => {
     }
 
     const currentCashback = Number(currentSnapshot.cashbackBalance) || 0;
+    const currentWallet = Number(currentSnapshot.walletBalance) || 0;
+    const totalAvailable = parseFloat((currentCashback + currentWallet).toFixed(2));
 
-    // Strict Segregation Rule: Buyer cashback withdrawals CANNOT touch or draw from seller wallet balance!
-    if (requested > currentCashback) {
+    if (requested > totalAvailable) {
       return res.status(400).json({
-        error: `Insufficient buyer cashback balance. Available cashback to withdraw: ₹${currentCashback.toFixed(2)}. Seller shipping wallet funds cannot be accessed or mixed via buyer cashback withdrawal.`
+        error: `Insufficient available balance. Available to withdraw: ₹${totalAvailable.toFixed(2)}`
       });
     }
 
@@ -401,15 +403,23 @@ const withdrawCashback = async (req, res) => {
     const requiresAdminApproval = velocity.requiresAdminApproval;
     const initialStatus = requiresAdminApproval ? 'pending' : 'success';
 
-    // Atomic deduction: strictly from cashbackBalance only (walletBalance is NEVER touched)
+    // Deduct from walletBalance first (direct credits), then cashbackBalance
+    let remainingDeduction = requested;
+    const walletDeduction = Math.min(currentWallet, remainingDeduction);
+    remainingDeduction -= walletDeduction;
+    const cashbackDeduction = Math.min(currentCashback, remainingDeduction);
+
+    // Atomic deduction: protects both balances from negative / concurrent overdrafts
     const user = await User.findOneAndUpdate(
       { 
         _id: req.user._id, 
-        cashbackBalance: { $gte: requested }
+        walletBalance: { $gte: walletDeduction },
+        cashbackBalance: { $gte: cashbackDeduction }
       },
       { 
         $inc: { 
-          cashbackBalance: -requested,
+          walletBalance: -walletDeduction,
+          cashbackBalance: -cashbackDeduction,
           totalWithdrawn: netTransfer
         } 
       },
@@ -418,13 +428,13 @@ const withdrawCashback = async (req, res) => {
 
     if (!user) {
       const freshSnapshot = await User.findById(req.user._id);
-      const available = freshSnapshot ? (freshSnapshot.cashbackBalance || 0) : 0;
+      const available = freshSnapshot ? (((Number(freshSnapshot.walletBalance) || 0) + (Number(freshSnapshot.cashbackBalance) || 0)).toFixed(2)) : '0.00';
       return res.status(400).json({
-        error: `Insufficient cashback balance or concurrent transaction in progress. Available: ₹${available.toFixed(2)}`
+        error: `Insufficient available balance or concurrent transaction in progress. Available: ₹${available}`
       });
     }
 
-    const balanceAfter = parseFloat((Number(user.cashbackBalance) || 0).toFixed(2));
+    const balanceAfter = parseFloat(((Number(user.walletBalance) || 0) + (Number(user.cashbackBalance) || 0)).toFixed(2));
     const balanceBefore = parseFloat((balanceAfter + requested).toFixed(2));
 
     // Record the withdrawal in immutable double-entry ledger with explicit walletType
@@ -480,8 +490,9 @@ const withdrawCashback = async (req, res) => {
       netTransferred: netTransfer,
       feeApplied: fee > 0,
       feeReason: fee > 0 ? `₹${BUYER_FEE} fee applied because withdrawal was below ₹${BUYER_FEE_THRESHOLD}` : null,
+      walletBalance: user.walletBalance || 0,
       cashbackBalance: user.cashbackBalance || 0,
-      withdrawableBalance: parseFloat((Number(user.cashbackBalance) || 0).toFixed(2)),
+      withdrawableBalance: parseFloat(((Number(user.walletBalance) || 0) + (Number(user.cashbackBalance) || 0)).toFixed(2)),
       walletType: 'buyer_cashback',
       requiresAdminApproval,
       status: initialStatus,
