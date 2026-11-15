@@ -1532,30 +1532,60 @@ const requestReturn = async (req, res) => {
       return res.status(403).json({ error: 'Only the receiver or admin can request a return for this shipment' });
     }
 
-    // Save Bank Details if submitted
+    // Save Bank Details if submitted (support nested bankDetails or top-level fields)
+    const bDetails = bankDetails || {
+      accountHolderName: req.body.accountHolderName,
+      accountNumber: req.body.accountNumber,
+      ifscCode: req.body.ifscCode,
+      bankName: req.body.bankName,
+      upiId: req.body.upiId
+    };
+
     const currentUser = await User.findById(req.user._id);
-    if (bankDetails && (bankDetails.accountNumber || bankDetails.upiId)) {
+    if (bDetails && (bDetails.accountNumber || bDetails.upiId)) {
       if (currentUser) {
         if (!currentUser.bankDetails) currentUser.bankDetails = {};
-        if (bankDetails.accountHolderName) currentUser.bankDetails.accountHolderName = bankDetails.accountHolderName.trim();
-        if (bankDetails.accountNumber) currentUser.bankDetails.accountNumber = bankDetails.accountNumber.trim();
-        if (bankDetails.ifscCode) currentUser.bankDetails.ifscCode = bankDetails.ifscCode.trim().toUpperCase();
-        if (bankDetails.bankName) currentUser.bankDetails.bankName = bankDetails.bankName.trim();
-        if (bankDetails.upiId) currentUser.bankDetails.upiId = bankDetails.upiId.trim();
+        if (bDetails.accountHolderName) currentUser.bankDetails.accountHolderName = bDetails.accountHolderName.trim();
+        if (bDetails.accountNumber) currentUser.bankDetails.accountNumber = bDetails.accountNumber.trim();
+        if (bDetails.ifscCode) currentUser.bankDetails.ifscCode = bDetails.ifscCode.trim().toUpperCase();
+        if (bDetails.bankName) currentUser.bankDetails.bankName = bDetails.bankName.trim();
+        if (bDetails.upiId) currentUser.bankDetails.upiId = bDetails.upiId.trim();
         await currentUser.save();
       }
+
+      shipment.returnBankDetails = {
+        accountHolderName: (bDetails.accountHolderName || currentUser?.bankDetails?.accountHolderName || '').trim(),
+        accountNumber: (bDetails.accountNumber || currentUser?.bankDetails?.accountNumber || '').trim(),
+        ifscCode: (bDetails.ifscCode || currentUser?.bankDetails?.ifscCode || '').trim().toUpperCase(),
+        bankName: (bDetails.bankName || currentUser?.bankDetails?.bankName || '').trim(),
+        upiId: (bDetails.upiId || currentUser?.bankDetails?.upiId || '').trim()
+      };
+      await shipment.save();
+    } else if (currentUser?.bankDetails && (currentUser.bankDetails.accountNumber || currentUser.bankDetails.upiId)) {
+      shipment.returnBankDetails = {
+        accountHolderName: (currentUser.bankDetails.accountHolderName || '').trim(),
+        accountNumber: (currentUser.bankDetails.accountNumber || '').trim(),
+        ifscCode: (currentUser.bankDetails.ifscCode || '').trim().toUpperCase(),
+        bankName: (currentUser.bankDetails.bankName || '').trim(),
+        upiId: (currentUser.bankDetails.upiId || '').trim()
+      };
+      await shipment.save();
     }
 
-    // Mandatory Bank Details Check for full refund
+    // Mandatory Bank / UPI Details Check for full refund or partial return discount refund
     const effectiveType = returnType || 'full_refund';
-    const hasValidBank = currentUser && currentUser.bankDetails && (
+    const isRefundType = effectiveType === 'full_refund' || effectiveType === 'partial_discount';
+    const hasValidBank = (currentUser && currentUser.bankDetails && (
       (currentUser.bankDetails.accountNumber && currentUser.bankDetails.accountNumber.trim().length >= 6) ||
       (currentUser.bankDetails.upiId && currentUser.bankDetails.upiId.trim().includes('@'))
-    );
+    )) || (bDetails && (
+      (bDetails.accountNumber && bDetails.accountNumber.trim().length >= 6) ||
+      (bDetails.upiId && bDetails.upiId.trim().includes('@'))
+    ));
 
-    if (effectiveType === 'full_refund' && !hasValidBank) {
+    if (isRefundType && !hasValidBank) {
       return res.status(400).json({
-        error: 'Mandatory bank details missing. Please enter and save your Bank Account or UPI ID to receive your order refund.'
+        error: 'Mandatory refund payout details missing. Please provide your UPI ID or Bank Account to receive your refund.'
       });
     }
 
