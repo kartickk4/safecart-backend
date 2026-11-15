@@ -23,7 +23,8 @@ const {
   getBulkStatus,
   downloadBulkReport,
   getCarrierRatesHandler,
-  getSession
+  getSession,
+  deleteSession
 } = loadMod('controllers', 'agentController');
 
 const { protect } = loadMod('middleware', 'auth');
@@ -79,5 +80,8 @@ router.post('/carrier-rates', getCarrierRatesHandler);
 
 // Restore session state for floating widget
 router.get('/session/:sessionId', protect, getSession);
+
+// Delete / reset session
+router.delete('/session/:sessionId', protect, deleteSession);
 
 module.exports = router;

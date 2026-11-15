@@ -2379,6 +2379,18 @@ const getSession = async (req, res) => {
   }
 };
 
+const deleteSession = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    if (sessionId) {
+      await AgentSession.deleteOne({ sessionId, userId: req.user._id });
+    }
+    res.json({ success: true, message: 'Session deleted successfully.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 module.exports = {
   handleChat,
   handleBulkUpload,
@@ -2386,5 +2398,6 @@ module.exports = {
   getBulkStatus,
   downloadBulkReport,
   getCarrierRatesHandler,
-  getSession
+  getSession,
+  deleteSession
 };
