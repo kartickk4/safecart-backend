@@ -841,27 +841,38 @@ const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dime
     // Sort all carrier quotes cheapest first
     combinedQuotes.sort((a, b) => (a.exactRate || a.price) - (b.exactRate || b.price));
 
-    // Clear previous lowest flags and set the recommended cheapest carrier overall
-    combinedQuotes.forEach(q => {
-      q.isLowest = false;
-      q.isRecommended = false;
-    });
+    const zoneKey = `${getZone(cleanFrom)}-${getZone(cleanTo)}`;
 
-    if (combinedQuotes.length > 0) {
-      combinedQuotes[0].isLowest = true;
-      combinedQuotes[0].isRecommended = true;
+    // ── Guaranteed Fallback: If all external APIs returned nothing, use local RATE_MATRIX ──
+    // This ensures we ALWAYS return quotes and never cache an empty array.
+    let finalQuotes = combinedQuotes;
+    if (finalQuotes.length === 0) {
+      console.warn(`[CarrierRates] All APIs returned empty for ${cleanFrom}→${cleanTo}. Falling back to local RATE_MATRIX.`);
+      const localFallback = getCarrierRates(cleanFrom, cleanTo, normalizedWeight, dimensions, false, isCod, decValSlab, isSecureShipment);
+      finalQuotes = localFallback;
     }
 
-    const zoneKey = `${getZone(cleanFrom)}-${getZone(cleanTo)}`;
-    combinedQuotes.forEach(q => enrichQuoteWithCostToDeliver(q, zoneKey, isCod));
+    finalQuotes.forEach(q => enrichQuoteWithCostToDeliver(q, zoneKey, isCod));
 
-    const bestCost = [...combinedQuotes].sort((a, b) => a.expectedTotalCost - b.expectedTotalCost)[0];
+    // Clear previous lowest flags and set the recommended cheapest carrier overall
+    finalQuotes.forEach(q => { q.isLowest = false; q.isRecommended = false; });
+    if (finalQuotes.length > 0) {
+      finalQuotes[0].isLowest = true;
+      finalQuotes[0].isRecommended = true;
+    }
+
+    const bestCost = [...finalQuotes].sort((a, b) => a.expectedTotalCost - b.expectedTotalCost)[0];
     if (bestCost) bestCost.isCostToDeliverWinner = true;
 
-    const topReliable = [...combinedQuotes].sort((a, b) => b.deliverySuccessRate - a.deliverySuccessRate)[0];
+    const topReliable = [...finalQuotes].sort((a, b) => b.deliverySuccessRate - a.deliverySuccessRate)[0];
     if (topReliable) topReliable.isTopReliability = true;
 
-    return combinedQuotes;
+    // Never cache empty results — if still empty somehow, return without caching
+    if (finalQuotes.length === 0) {
+      return finalQuotes; // Will not be stored in cache (cacheManager skips null/undefined, but not [])
+    }
+
+    return finalQuotes;
   }, 900, { tags: ['logistics:rates'] }); // 15-minute TTL complying with courier quote validity
 };
 

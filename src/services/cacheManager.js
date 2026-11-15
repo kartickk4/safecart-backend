@@ -313,8 +313,9 @@ class CacheManager {
       try {
         const freshData = await fetcher();
         
-        // Only cache valid defined responses (never cache undefined or null errors)
-        if (freshData !== undefined && freshData !== null) {
+        // Only cache valid non-empty responses (never cache undefined, null, or empty arrays)
+        const isEmptyArray = Array.isArray(freshData) && freshData.length === 0;
+        if (freshData !== undefined && freshData !== null && !isEmptyArray) {
           try {
             await this.set(key, freshData, ttlSeconds, tags);
           } catch (writeErr) {
