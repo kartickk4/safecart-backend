@@ -1722,7 +1722,7 @@ const confirmReturnReceived = async (req, res) => {
 };
 
 /**
- * @desc    Generate / Get Cashfree Receiver Payment Link
+ * @desc    Generate / Get PhonePe Receiver Payment Link
  * @route   POST /api/v1/shipments/:id/payment-link
  * @access  Private
  */

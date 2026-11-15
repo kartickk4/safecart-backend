@@ -16,22 +16,27 @@ const getRewardWallet = async (req, res) => {
     }
 
     const history = await Reward.find({ userId: req.user._id }).sort({ createdAt: -1 });
-    const isSupplier = user.role === 'Supplier';
+    const isSupplier = (req.headers['x-active-role'] || user.role) === 'Supplier';
     const supplierWallet = isSupplier ? await rewardService.computeSupplierWallet(req.user._id) : null;
 
-    // user.walletBalance holds credits from direct recharges & order adjustments.
+    // user.walletBalance holds credits from direct recharges & order adjustments (for sellers).
     // Sellers must maintain a minimum reserve buffer for active shipments.
     const directWalletCredits = parseFloat((Number(user.walletBalance) || 0).toFixed(2));
     const activeShipmentsCount = isSupplier ? await getActiveShipmentsCount(req.user._id) : 0;
     const securityReserve = isSupplier ? calculateSecurityReserve(activeShipmentsCount) : 0;
     const withdrawableDirectCredits = Math.max(0, parseFloat((directWalletCredits - securityReserve).toFixed(2)));
 
+    // Strict role separation:
     // For suppliers: withdrawable from shipping wallet (after reserve) + cashback
-    // For buyers: withdrawable from order balance (walletBalance) + cashback
+    // For buyers: withdrawable strictly from cashback (no seller shipping balance pollution)
     const cashback = parseFloat((Number(user.cashbackBalance) || 0).toFixed(2));
-    const withdrawableBalance = parseFloat((withdrawableDirectCredits + cashback).toFixed(2));
+    const withdrawableBalance = isSupplier
+      ? parseFloat((withdrawableDirectCredits + cashback).toFixed(2))
+      : cashback;
     const pendingConfirmationBalance = supplierWallet ? supplierWallet.pendingConfirmationBalance : 0;
-    const totalWalletBalance = parseFloat((directWalletCredits + cashback).toFixed(2));
+    const totalWalletBalance = isSupplier
+      ? parseFloat((directWalletCredits + cashback).toFixed(2))
+      : cashback;
 
     res.json({
       cashbackBalance: cashback,

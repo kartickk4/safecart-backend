@@ -2,7 +2,6 @@ const User = require('../models/User');
 const Reward = require('../models/Reward');
 const SystemConfig = require('../models/SystemConfig');
 const { createNotification } = require('./notification');
-const cashfreeService = require('./cashfreeService');
 
 /**
 /**
@@ -493,10 +492,10 @@ const computeSupplierWallet = async (userId) => {
     const isTrackingSubmitted = s.trackingSubmitted || (s.awbCode && s.awbCode.trim() !== '');
 
     if (isPaymentDone && isTrackingSubmitted) {
-      // ₹3 to ₹6 seller cashback calculation in rupees
+      // ₹7 to ₹10 seller cashback calculation in rupees (weighted average ~₹8)
       const cbAmt = s.supplierCashbackPaid > 0 
         ? s.supplierCashbackPaid 
-        : 4; // flat ₹4 (in ₹3 – ₹6 range)
+        : 8; // expected weighted average cashback in ₹7–₹10 range
 
       const baseDate = s.trackingSubmittedAt || s.receiverPaidAt || s.createdAt || new Date();
       const expiresAt = s.confirmationWindowExpiresAt || new Date(new Date(baseDate).getTime() + 24 * 60 * 60 * 1000);
@@ -672,30 +671,9 @@ const withdrawCashback = async (userId, amount, method, payoutDetails, isMobileA
 
   await withdrawalRecord.save();
 
-  // Trigger Cashfree Instant IMPS/UPI Payout
-  let payoutRes = null;
-  try {
-    const transferMode = method === 'UPI' ? 'UPI' : 'IMPS';
-    payoutRes = await cashfreeService.requestPayout({
-      beneficiary_id: user.cashfreeBeneficiaryId || `BEN_${user._id.toString()}`,
-      amount: withdrawAmount,
-      transfer_mode: transferMode, // IMPS (30–60 mins 24/7) or UPI (<5 mins)
-      remarks: `SecureKaro Withdrawal - ${user.fullName}`,
-      beneficiary_details: {
-        account_number: user.bankDetails?.accountNumber || payoutDetails?.accountNumber || '',
-        ifsc: user.bankDetails?.ifscCode || payoutDetails?.ifscCode || '',
-        upi_id: user.bankDetails?.upiId || payoutDetails?.upiId || '',
-        name: user.bankDetails?.accountHolderName || user.fullName
-      }
-    });
-    if (payoutRes?.transferId) {
-      withdrawalRecord.transferId = payoutRes.transferId;
-      withdrawalRecord.transferMode = payoutRes.transferMode;
-      await withdrawalRecord.save();
-    }
-  } catch (err) {
-    console.warn('[Reward Withdrawal Payout] Non-blocking Cashfree payout notice:', err.message);
-  }
+  // Payout transfer record created and logged for Bank / UPI processing
+  withdrawalRecord.transferMode = method === 'UPI' ? 'UPI' : 'IMPS';
+  await withdrawalRecord.save();
 
   const destText = method === 'UPI'
     ? `UPI ID ${payoutDetails.upiId}`

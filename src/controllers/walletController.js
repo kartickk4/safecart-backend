@@ -198,7 +198,8 @@ const verifyPayment = async (req, res) => {
  */
 const getWalletBalance = async (req, res) => {
   try {
-    const user = req.user || await User.findById(req.user._id).select('walletBalance cashbackBalance fullName email');
+    // Always fetch fresh from database to prevent stale middleware cache on first attempt
+    const user = await User.findById(req.user._id).select('walletBalance cashbackBalance fullName email');
     if (!user) {
       return res.status(404).json({ error: 'User not found.' });
     }
