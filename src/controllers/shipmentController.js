@@ -250,6 +250,54 @@ const getShipmentById = async (req, res) => {
   }
 };
 
+function resolveCarrierBrandName(slug, explicitName) {
+  if (explicitName && !explicitName.toLowerCase().startsWith('nimbus_') && !explicitName.toLowerCase().startsWith('shadowfax_')) {
+    return explicitName;
+  }
+  const s = String(slug || '').toLowerCase();
+  if (s.includes('bluedart') || s.includes('blue_dart')) return 'Blue Dart Express';
+  if (s.includes('shadowfax')) {
+    if (s.includes('direct')) return 'Shadowfax Direct';
+    return 'Shadowfax Technologies';
+  }
+  if (s.includes('delhivery')) {
+    if (s.includes('direct')) return 'Delhivery Direct';
+    return 'Delhivery Express';
+  }
+  if (s.includes('ekart')) return 'Ekart Logistics';
+  if (s.includes('xpressbees')) return 'Xpressbees Logistics';
+  if (s.includes('dtdc')) return 'DTDC Express';
+  if (s.includes('ecom_express') || s.includes('ecom')) return 'Ecom Express';
+  if (s.includes('amazon') || s.includes('ats')) return 'Amazon Shipping';
+  if (s.includes('rapido')) return 'Rapido Parcel';
+  if (s.includes('indiapost') || s.includes('speed_post')) return 'India Post Speed Post';
+  if (s.includes('smartr')) return 'Smartr Logistics';
+  if (s.includes('trackon')) return 'Trackon Courier';
+  if (s.includes('tpc') || s.includes('professional')) return 'The Professional Couriers';
+  
+  const cleaned = s
+    .replace(/^nimbus_/i, '')
+    .replace(/_[a-f0-9]{16,}$/i, '')
+    .replace(/[-_]+/g, ' ')
+    .trim();
+  return cleaned ? (cleaned.charAt(0).toUpperCase() + cleaned.slice(1)) : 'Courier Partner';
+}
+
+function generateCleanAwbCode(carrierSlug) {
+  const rand = Math.floor(1000000000 + Math.random() * 9000000000);
+  const s = String(carrierSlug || '').toLowerCase();
+  if (s.includes('bluedart')) return `BD${rand}`;
+  if (s.includes('delhivery')) return `143${rand}`;
+  if (s.includes('shadowfax')) return `SFX${rand}`;
+  if (s.includes('ekart')) return `EKT${rand}`;
+  if (s.includes('xpressbees')) return `XPB${rand}`;
+  if (s.includes('dtdc')) return `DTC${rand}`;
+  if (s.includes('ecom')) return `ECM${rand}`;
+  if (s.includes('rapido')) return `RPD${rand}`;
+  if (s.includes('post')) return `POST${rand}`;
+  return `TC-${rand}`;
+}
+
 /**
  * @desc    Create escrow shipment booking
  * @route   POST /api/v1/shipments
@@ -362,15 +410,15 @@ const createShipment = async (req, res) => {
     if (carrierSlug && carrierSlug !== 'add_later' && carrierSlug !== 'auto') {
       assignedCarrierSlug = carrierSlug.toLowerCase();
       const matched = allCarrierQuotes.find(q => q.slug === assignedCarrierSlug);
-      assignedCarrierName = matched ? matched.name : (assignedCarrierSlug.charAt(0).toUpperCase() + assignedCarrierSlug.slice(1));
+      assignedCarrierName = resolveCarrierBrandName(assignedCarrierSlug, matched ? matched.name : null);
       selectedCarrierRate = matched ? matched.price : (Number(req.body.deliveryCharge) || 40);
       console.log(`[CARRIER] Manual selection: ${assignedCarrierSlug} (${assignedCarrierName}) @ ₹${selectedCarrierRate}`);
     } else if (allCarrierQuotes.length > 0) {
       const cheapest = allCarrierQuotes[0]; // Already sorted lowest first
       assignedCarrierSlug = cheapest.slug;
-      assignedCarrierName = cheapest.name;
+      assignedCarrierName = resolveCarrierBrandName(cheapest.slug, cheapest.name);
       selectedCarrierRate = cheapest.price;
-      console.log(`[CARRIER] Auto-selected cheapest: ${cheapest.name} @ ₹${cheapest.price} (${senderPincodeForRate} → ${receiverPincodeForRate}, ${weightKgForRate}kg, dims: ${dimensionsForRate.length}x${dimensionsForRate.width}x${dimensionsForRate.height}cm)`);
+      console.log(`[CARRIER] Auto-selected cheapest: ${assignedCarrierName} @ ₹${cheapest.price} (${senderPincodeForRate} → ${receiverPincodeForRate}, ${weightKgForRate}kg, dims: ${dimensionsForRate.length}x${dimensionsForRate.width}x${dimensionsForRate.height}cm)`);
     } else {
       // Fallback: pincodes not provided, use env default or delhivery
       assignedCarrierSlug = (process.env.DEFAULT_CARRIER || 'delhivery').toLowerCase();
@@ -380,7 +428,7 @@ const createShipment = async (req, res) => {
 
     const assignedAwbCode = awbCode && awbCode.trim() 
       ? awbCode.trim().toUpperCase() 
-      : `TC-${assignedCarrierSlug}-${Math.floor(1000000000 + Math.random() * 9000000000)}`;
+      : generateCleanAwbCode(assignedCarrierSlug);
 
     const normalizedMode = (paymentMode || 'prepaid').toLowerCase() === 'cod' ? 'cod' : 'prepaid';
     const isCod = normalizedMode === 'cod';

@@ -24,6 +24,38 @@ const { createOrderInShiprocket } = loadMod('services', 'shiprocketService');
 const { createOrderInNimbusPost } = loadMod('services', 'nimbuspostService');
 const CarrierJourney = loadMod('models', 'CarrierJourney');
 
+function formatCarrierBrandName(slug, explicitName) {
+  if (explicitName && !explicitName.toLowerCase().startsWith('nimbus_') && !explicitName.toLowerCase().startsWith('shadowfax_')) {
+    return explicitName;
+  }
+  const s = String(slug || '').toLowerCase();
+  if (s.includes('bluedart') || s.includes('blue_dart')) return 'Blue Dart Express';
+  if (s.includes('shadowfax')) {
+    if (s.includes('direct')) return 'Shadowfax Direct';
+    return 'Shadowfax Technologies';
+  }
+  if (s.includes('delhivery')) {
+    if (s.includes('direct')) return 'Delhivery Direct';
+    return 'Delhivery Express';
+  }
+  if (s.includes('ekart')) return 'Ekart Logistics';
+  if (s.includes('xpressbees')) return 'Xpressbees Logistics';
+  if (s.includes('dtdc')) return 'DTDC Express';
+  if (s.includes('ecom_express') || s.includes('ecom')) return 'Ecom Express';
+  if (s.includes('amazon') || s.includes('ats')) return 'Amazon Shipping';
+  if (s.includes('rapido')) return 'Rapido Parcel';
+  if (s.includes('indiapost') || s.includes('speed_post')) return 'India Post Speed Post';
+  if (s.includes('smartr')) return 'Smartr Logistics';
+  if (s.includes('trackon')) return 'Trackon Courier';
+  
+  const cleaned = s
+    .replace(/^nimbus_/i, '')
+    .replace(/_[a-f0-9]{16,}$/i, '')
+    .replace(/[-_]+/g, ' ')
+    .trim();
+  return cleaned ? (cleaned.charAt(0).toUpperCase() + cleaned.slice(1)) : 'Courier Partner';
+}
+
 // Realistic simulated pickup executives across all popular courier partners
 const PICKUP_EXECUTIVES = {
   delhivery: [
@@ -115,11 +147,8 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
 
     const matchedCarrier = comparison?.find(c => c.slug === targetCarrierSlug);
     const assignedCarrierSlug = targetCarrierSlug;
-    let assignedCarrierName = matchedCarrier?.name || 
-      (targetCarrierSlug === 'bluedart' ? 'Blue Dart Express' : 
-       targetCarrierSlug === 'delhivery' ? 'Delhivery Express' : 
-       (targetCarrierSlug.charAt(0).toUpperCase() + targetCarrierSlug.slice(1)));
-    const assignedRate = matchedCarrier?.price || (targetCarrierSlug === 'bluedart' ? 65 : 40);
+    let assignedCarrierName = formatCarrierBrandName(targetCarrierSlug, matchedCarrier?.name);
+    const assignedRate = matchedCarrier?.price || (targetCarrierSlug.includes('bluedart') ? 65 : 40);
 
     // 2. Compute the optimal pickup time slot based on current time
     const now = new Date();
@@ -143,11 +172,24 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
     }
 
     // 3. Generate Courier Pickup Token / Reference via Shiprocket Engine
-    const prefix = PREFIX_MAP[assignedCarrierSlug] || 'SR-PKP';
+    let prefix = 'SR-PKP';
+    for (const [key, val] of Object.entries(PREFIX_MAP)) {
+      if (assignedCarrierSlug.includes(key)) {
+        prefix = val;
+        break;
+      }
+    }
     let pickupToken = `${prefix}-${Math.floor(100000 + Math.random() * 900000)}`;
 
     // 4. Assign Pickup Executive
-    const execPool = PICKUP_EXECUTIVES[assignedCarrierSlug] || PICKUP_EXECUTIVES.default;
+    let execKey = 'default';
+    for (const key of Object.keys(PICKUP_EXECUTIVES)) {
+      if (key !== 'default' && assignedCarrierSlug.includes(key)) {
+        execKey = key;
+        break;
+      }
+    }
+    const execPool = PICKUP_EXECUTIVES[execKey] || PICKUP_EXECUTIVES.default;
     const executive = execPool[Math.floor(Math.random() * execPool.length)];
 
     // 5. Construct full sender pickup location address
@@ -255,13 +297,15 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
           if (npRes?.orderId) {
             shipment.nimbusOrderId = npRes.orderId;
             shipment.nimbusShipmentId = npRes.shipmentId;
-            pickupToken = `NP-${npRes.orderId}`;
+            const cleanOrderId = String(npRes.orderId).replace(/^NP[-_]/i, '');
+            pickupToken = `NP-${cleanOrderId}`;
             shipment.pickupToken = pickupToken;
             if (npRes.labelUrl) {
               shipment.shippingLabelUrl = npRes.labelUrl;
             }
             if (npRes.courierName) {
-              assignedCarrierName = npRes.courierName;
+              assignedCarrierName = formatCarrierBrandName(targetCarrierSlug, npRes.courierName);
+              shipment.pickupCarrier = assignedCarrierName;
             }
           }
         }
