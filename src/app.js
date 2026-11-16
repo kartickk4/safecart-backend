@@ -175,7 +175,19 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Request-ID'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'X-Request-ID',
+    'X-Active-Role',
+    'x-active-role',
+    'X-Idempotency-Key',
+    'x-idempotency-key',
+    'Accept',
+    'Cache-Control',
+    'Pragma'
+  ],
   exposedHeaders: ['X-Request-ID', 'X-Total-Count', 'X-Total-Pages', 'X-Current-Page', 'X-Per-Page'],
   maxAge: 86400 // Cache preflight for 24h to reduce OPTIONS requests
 };
