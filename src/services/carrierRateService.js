@@ -829,13 +829,15 @@ const getCarrierRatesAsync = async (fromPincode, toPincode, weightKg = 0.5, dime
 
     const combinedQuotes = Array.from(deduplicatedMap.values());
 
-    // Ensure totalRate and totalCodRate are explicitly normalized on all quotes
+    // Ensure totalRate and totalCodRate are explicitly normalized on all quotes, and name is never undefined
     combinedQuotes.forEach(q => {
       const finalPrice = Number(q.exactRate || q.price || 0);
       q.totalRate = finalPrice;
       q.totalCodRate = isCod ? finalPrice : parseFloat((finalPrice + Number(q.codCharge || 0)).toFixed(2));
       q.exactRate = finalPrice;
       q.price = finalPrice;
+      q.name = q.name || q.rawName || q.courierPartner || q.slug || 'Express Courier';
+      q.courierPartner = q.courierPartner || q.name;
     });
 
     // Sort all carrier quotes cheapest first
