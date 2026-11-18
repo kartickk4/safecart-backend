@@ -193,7 +193,12 @@ const getShipments = async (req, res) => {
       shipmentQuery = shipmentQuery.skip(skip).limit(limit);
     }
 
-    const shipments = await shipmentQuery.lean();
+    const rawShipments = await shipmentQuery.lean();
+    const shipments = rawShipments.map(s => ({
+      ...s,
+      carrierName: resolveCarrierBrandName(s.carrierSlug, s.carrierName),
+      carrierPartner: resolveCarrierBrandName(s.carrierSlug, s.carrierPartner)
+    }));
 
     const totalPages = limit > 0 ? Math.ceil(totalCount / limit) : 1;
     res.setHeader('X-Total-Count', String(totalCount));
@@ -634,6 +639,8 @@ const createShipment = async (req, res) => {
       amount,
       description: finalDescription,
       carrierSlug: assignedCarrierSlug,
+      carrierName: assignedCarrierName,
+      carrierPartner: assignedCarrierName,
       linkUrl: paymentLinkInfo.linkUrl,
       returnAllowed: isReturnAllowed,
       receiverName,

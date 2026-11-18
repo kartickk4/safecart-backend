@@ -47,6 +47,14 @@ const ShipmentSchema = new mongoose.Schema({
     type: String,
     default: ""
   },
+  carrierName: {
+    type: String,
+    default: ""
+  },
+  carrierPartner: {
+    type: String,
+    default: ""
+  },
   awbCode: {
     type: String,
     default: ""
