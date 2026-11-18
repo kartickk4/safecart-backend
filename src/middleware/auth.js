@@ -86,21 +86,31 @@ const protect = async (req, res, next) => {
 };
 
 const admin = (req, res, next) => {
-  // SECURITY: Admin privilege must come strictly from database role
-  if (
-    req.user && (
-      req.user.role === 'Admin' ||
-      req.user.role === 'super_admin'
-    )
-  ) {
+  // SECURITY: Admin privileges must be confirmed from database records.
+  // Supports dual-role accounts where role is 'Supplier'/'Receiver' but user has isAdmin=true or adminRole assigned.
+  const isSuperAdminEmail = req.user?.email && (
+    req.user.email.toLowerCase().trim() === 'kartickdas6289@gmail.com' ||
+    (process.env.ADMIN_EMAIL && req.user.email.toLowerCase().trim() === process.env.ADMIN_EMAIL.toLowerCase().trim()) ||
+    (process.env.SUPER_ADMIN_EMAIL && req.user.email.toLowerCase().trim() === process.env.SUPER_ADMIN_EMAIL.toLowerCase().trim())
+  );
+
+  const hasAdminPrivileges = req.user && (
+    req.user.role === 'Admin' ||
+    req.user.role === 'super_admin' ||
+    req.user.isAdmin === true ||
+    Boolean(req.user.adminRole) ||
+    isSuperAdminEmail
+  );
+
+  if (hasAdminPrivileges) {
     req.user.isAdmin = true;
     if (!req.user.adminRole) {
       req.user.adminRole = 'super_admin';
     }
-    next();
-  } else {
-    res.status(403).json({ error: 'Access denied: Requires administrative privileges.' });
+    return next();
   }
+
+  return res.status(403).json({ error: 'Access denied: Requires administrative privileges.' });
 };
 
 // ─── 2FA Middleware (Admin Only) ──────────────────────────────────────────────

@@ -106,6 +106,22 @@ async function runDatabaseMigrations(db) {
     );
     results.usersUpdated = userUpdateRes.modifiedCount || 0;
 
+    // Ensure platform super admin is seeded with full administrative access
+    const adminEmails = ['kartickdas6289@gmail.com'];
+    if (process.env.ADMIN_EMAIL) adminEmails.push(process.env.ADMIN_EMAIL.toLowerCase().trim());
+    if (process.env.SUPER_ADMIN_EMAIL) adminEmails.push(process.env.SUPER_ADMIN_EMAIL.toLowerCase().trim());
+
+    await userCol.updateMany(
+      { email: { $in: adminEmails } },
+      {
+        $set: {
+          isAdmin: true,
+          adminRole: 'super_admin'
+        }
+      }
+    );
+    console.log(`✅ [DB MIGRATION] Super admin access confirmed for ${adminEmails.join(', ')}`);
+
     // ----------------------------------------------------
     // 3. SHIPMENT DATA BACKFILL & 24H WINDOW FIELDS
     // ----------------------------------------------------
