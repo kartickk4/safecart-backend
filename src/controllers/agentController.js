@@ -25,10 +25,10 @@ const geminiService = require('../services/geminiService');
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const generateShipmentId = () => {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  const suffix = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-  const num = Math.floor(1000 + Math.random() * 9000);
-  return `SPL-${num}-${suffix[0]}`;
+  const crypto = require('crypto');
+  const num = 1000 + (crypto.randomBytes(2).readUInt16BE(0) % 9000);
+  const entropy = crypto.randomBytes(2).toString('hex').toUpperCase();
+  return `SPL-${num}-${entropy}`;
 };
 
 const fmt = (n) => `₹${new Intl.NumberFormat('en-IN').format(n)}`;

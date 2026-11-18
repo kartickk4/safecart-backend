@@ -1,3 +1,38 @@
+const setAuthCookie = (res, token) => {
+  if (!res || !token) return;
+  try {
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'none',
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+  } catch (_) {}
+};
+
+// M-07: Validate Pro subscription is currently active before inheriting across roles
+const isProSubscriptionActive = (u) => {
+  if (!u || !u.isPro) return false;
+  if (!u.proUpgradedAt) return false;
+  const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+  return (Date.now() - new Date(u.proUpgradedAt).getTime()) < thirtyDaysMs;
+};
+// M-02: Mask sensitive financial identifiers in standard user responses
+const maskBankDetails = (bd) => {
+  if (!bd) return {};
+  const masked = typeof bd.toObject === 'function' ? bd.toObject() : { ...bd };
+  if (masked.accountNumber && typeof masked.accountNumber === 'string') {
+    const acc = masked.accountNumber.trim();
+    masked.accountNumber = acc.length > 4 ? 'X'.repeat(Math.max(0, acc.length - 4)) + acc.slice(-4) : acc;
+  }
+  if (masked.upiId && typeof masked.upiId === 'string' && masked.upiId.includes('@')) {
+    const parts = masked.upiId.split('@');
+    const name = parts[0];
+    const maskedName = name.length > 2 ? name[0] + '*'.repeat(Math.max(0, name.length - 2)) + name.slice(-1) : name;
+    masked.upiId = `${maskedName}@${parts[1]}`;
+  }
+  return masked;
+};
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -72,7 +107,7 @@ const formatUserResponse = (user, activeRole = null) => {
     isPro: Boolean(user.isPro),
     proPlan: user.proPlan || (user.isPro ? 'Pro' : 'Standard'),
     proUpgradedAt: user.proUpgradedAt || null,
-    bankDetails: user.bankDetails,
+    bankDetails: maskBankDetails(user.bankDetails),
     walletBalance: user.walletBalance || 0,
     cashbackBalance: user.cashbackBalance || 0,
     escrowBalance: user.escrowBalance || 0,
@@ -167,6 +202,7 @@ const signup = async (req, res) => {
 
     if (user) {
       const accessToken = generateAccessToken(user._id);
+      setAuthCookie(res, accessToken);
 
       res.status(201).json({
         accessToken,
@@ -209,7 +245,7 @@ const login = async (req, res) => {
     }
 
     // Check for user email matching specific role
-    let user = await User.findOne({ email: normalizedEmail, role });
+    let user = await User.findOne({ email: normalizedEmail, role }).select('+passwordHash');
 
     // If not found with specified role, check if account exists under another role for clear feedback
     if (!user) {
@@ -252,6 +288,7 @@ const login = async (req, res) => {
       }
 
       const accessToken = generateAccessToken(user._id);
+      setAuthCookie(res, accessToken);
 
       res.json({
         accessToken,
@@ -333,11 +370,13 @@ const sendOtp = async (req, res) => {
     await Otp.deleteMany({ identifier: normalizedPhone, type: 'phone', role });
 
     // Save new OTP in MongoDB
+    const hashedOtp = await bcrypt.hash(otpCode, 8);
     await Otp.create({
       identifier: normalizedPhone,
-      otp: otpCode,
+      otp: hashedOtp,
       type: 'phone',
-      role
+      role,
+      attempts: 0
     });
 
     try {
@@ -381,13 +420,25 @@ const verifyOtp = async (req, res) => {
     // Query MongoDB for valid OTP matching phone and role
     const validOtp = await Otp.findOne({
       identifier: normalizedPhone,
-      otp: code.trim(),
       type: 'phone',
       role
-    });
+    }).sort({ createdAt: -1 });
 
     if (!validOtp) {
       return res.status(400).json({ error: 'Invalid or expired verification code' });
+    }
+
+    // H-02: Invalidate OTP after 5 consecutive incorrect attempts
+    if ((validOtp.attempts || 0) >= 5) {
+      await Otp.deleteOne({ _id: validOtp._id });
+      return res.status(429).json({ error: 'Too many failed attempts. This verification code has been invalidated for security. Please request a new code.' });
+    }
+
+    const isOtpMatch = await bcrypt.compare(code.trim(), validOtp.otp) || (validOtp.otp === code.trim());
+    if (!isOtpMatch) {
+      validOtp.attempts = (validOtp.attempts || 0) + 1;
+      await validOtp.save();
+      return res.status(400).json({ error: 'Invalid verification code' });
     }
 
     // OTP is valid! Delete to prevent reuse
@@ -460,6 +511,7 @@ const verifyOtp = async (req, res) => {
     }
 
     const accessToken = generateAccessToken(user._id);
+      setAuthCookie(res, accessToken);
 
     res.json({
       accessToken,
@@ -504,11 +556,13 @@ const sendEmailOtp = async (req, res) => {
     await Otp.deleteMany({ identifier: normalizedEmail, type: 'email', role });
 
     // Save new OTP in MongoDB
+    const hashedEmailOtp = await bcrypt.hash(otpCode, 8);
     await Otp.create({
       identifier: normalizedEmail,
-      otp: otpCode,
+      otp: hashedEmailOtp,
       type: 'email',
-      role
+      role,
+      attempts: 0
     });
 
     // Dispatch transactional email via Resend
@@ -557,12 +611,24 @@ const verifyEmailOtp = async (req, res) => {
 
     const validOtp = await Otp.findOne({
       identifier: normalizedEmail,
-      otp: code.trim(),
       type: 'email',
       role
-    });
+    }).sort({ createdAt: -1 });
 
     if (!validOtp) {
+      return res.status(400).json({ error: 'Invalid or expired email verification code' });
+    }
+
+    // H-02: Invalidate OTP after 5 consecutive incorrect attempts
+    if ((validOtp.attempts || 0) >= 5) {
+      await Otp.deleteOne({ _id: validOtp._id });
+      return res.status(429).json({ error: 'Too many failed attempts. This email verification code has been invalidated. Please request a new code.' });
+    }
+
+    const isEmailOtpMatch = await bcrypt.compare(code.trim(), validOtp.otp) || (validOtp.otp === code.trim());
+    if (!isEmailOtpMatch) {
+      validOtp.attempts = (validOtp.attempts || 0) + 1;
+      await validOtp.save();
       return res.status(400).json({ error: 'Invalid or expired email verification code' });
     }
 
@@ -671,11 +737,13 @@ const forgotPassword = async (req, res) => {
       await Otp.deleteMany({ identifier: user.phone, type: 'password_reset', role });
     }
 
+    const hashedResetOtp = await bcrypt.hash(otpCode, 8);
     await Otp.create({
       identifier,
-      otp: otpCode,
+      otp: hashedResetOtp,
       type: 'password_reset',
-      role
+      role,
+      attempts: 0
     });
 
     // If user has a mobile phone, send SMS OTP (Allowed per policy: Forgot Password OTP)
@@ -748,12 +816,24 @@ const resetPassword = async (req, res) => {
 
     const validOtp = await Otp.findOne({
       identifier: { $in: identifiersToCheck },
-      otp: cleanCode,
       type: 'password_reset',
       role
-    });
+    }).sort({ createdAt: -1 });
 
     if (!validOtp) {
+      return res.status(400).json({ error: 'Invalid or expired password reset OTP code' });
+    }
+
+    // H-02: Invalidate OTP after 5 consecutive incorrect attempts
+    if ((validOtp.attempts || 0) >= 5) {
+      await Otp.deleteMany({ identifier: { $in: identifiersToCheck }, type: 'password_reset', role });
+      return res.status(429).json({ error: 'Too many failed attempts. This password reset code has been invalidated. Please request a new code.' });
+    }
+
+    const isResetMatch = await bcrypt.compare(cleanCode, validOtp.otp) || (validOtp.otp === cleanCode);
+    if (!isResetMatch) {
+      validOtp.attempts = (validOtp.attempts || 0) + 1;
+      await validOtp.save();
       return res.status(400).json({ error: 'Invalid or expired password reset OTP code' });
     }
 
@@ -936,6 +1016,7 @@ const googleAuth = async (req, res) => {
     }
 
     const accessToken = generateAccessToken(user._id);
+      setAuthCookie(res, accessToken);
 
     res.json({
       accessToken,
@@ -982,13 +1063,14 @@ const switchRole = async (req, res) => {
         alternateUser.phone = currentUser.phone;
       }
       // Ensure alternate account inherits Pro status if currentUser is Pro
-      if (currentUser.isPro && !alternateUser.isPro) {
+      if (isProSubscriptionActive(currentUser) && !alternateUser.isPro) {
         alternateUser.isPro = true;
         alternateUser.proPlan = currentUser.proPlan || 'Pro';
         alternateUser.proUpgradedAt = currentUser.proUpgradedAt || new Date();
       }
       await alternateUser.save();
       const accessToken = generateAccessToken(alternateUser._id);
+      setAuthCookie(res, accessToken);
       return res.json({
         accessToken,
         isNewAccount: false,
@@ -1004,9 +1086,14 @@ const switchRole = async (req, res) => {
     // What starts FRESH → wallet, cashback, escrow interest, withdrawals (all 0)
     let newAccount;
     try {
+      let targetPasswordHash = currentUser.passwordHash;
+      if (!targetPasswordHash) {
+        const fullUser = await User.findById(currentUser._id).select('+passwordHash');
+        targetPasswordHash = fullUser?.passwordHash || (await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10));
+      }
       newAccount = await User.create({
         email: currentUser.email,
-        passwordHash: currentUser.passwordHash,
+        passwordHash: targetPasswordHash,
         phone: currentUser.phone || undefined,
         fullName: currentUser.fullName,
         avatarUrl: currentUser.avatarUrl || '',
@@ -1026,7 +1113,7 @@ const switchRole = async (req, res) => {
         totalEscrowInterestEarned: 0,
         totalCashbackEarned: 0,
         totalWithdrawn: 0,
-        isPro: Boolean(currentUser.isPro),
+        isPro: isProSubscriptionActive(currentUser),
         proPlan: currentUser.proPlan || (currentUser.isPro ? 'Pro' : 'Standard'),
         proUpgradedAt: currentUser.proUpgradedAt || (currentUser.isPro ? new Date() : null)
       });
@@ -1055,6 +1142,7 @@ const switchRole = async (req, res) => {
     }
 
     const accessToken = generateAccessToken(newAccount._id);
+      setAuthCookie(res, accessToken);
     return res.json({
       accessToken,
       isNewAccount: true,

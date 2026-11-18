@@ -69,6 +69,16 @@ const {
 const { getSupportedCouriersList, getPincodeInfo } = loadMod('services', 'carrierRateService');
 const { protect } = loadMod('middleware', 'auth');
 
+const rateLimit = require('express-rate-limit');
+// M-05: Rate limiter for public QR OTP routes (3 attempts per minute per IP)
+const publicOtpLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 3,
+  message: { error: 'Too many OTP requests. Please wait 1 minute before requesting another code.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
 const router = express.Router();
 
 // ── Public Courier Directory & Serviceability (Cached 24h, zero PII) ────────
@@ -78,7 +88,7 @@ router.get('/couriers', async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.json({ success: true, count: couriers.length, couriers });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to retrieve courier services', details: err.message });
+    res.status(500).json({ error: 'Failed to retrieve courier services', details: process.env.NODE_ENV === 'production' ? undefined : err.message });
   }
 });
 
@@ -88,7 +98,7 @@ router.get('/serviceability/pincode/:pincode', async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.json({ success: true, serviceability: info });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to check serviceability', details: err.message });
+    res.status(500).json({ error: 'Failed to check serviceability', details: process.env.NODE_ENV === 'production' ? undefined : err.message });
   }
 });
 
@@ -146,10 +156,8 @@ router.route('/public/qr-info')
   .get(publicQrGetInfo);
 
 // STEP 1: Verify phone → send SMS OTP
-router.route('/public/send-otp/:token')
-  .post(publicQrSendOtp);
-router.route('/public/send-otp')
-  .post(publicQrSendOtp);
+router.route('/public/send-otp/:token').post(publicOtpLimiter, publicQrSendOtp);
+router.route('/public/send-otp').post(publicOtpLimiter, publicQrSendOtp);
 
 // STEP 2: Verify OTP + action (confirm | return)
 router.route('/public/qr-confirm/:token')

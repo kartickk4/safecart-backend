@@ -22,6 +22,10 @@ const OtpSchema = new mongoose.Schema({
     enum: ['User', 'Supplier', 'Receiver', 'Admin'],
     default: 'Receiver'
   },
+  attempts: {
+    type: Number,
+    default: 0
+  },
 
   createdAt: {
     type: Date,

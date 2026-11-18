@@ -34,14 +34,15 @@ const protect = async (req, res, next) => {
     return res.status(500).json({ error: 'Server misconfiguration: authentication service unavailable.' });
   }
 
-  let token;
+  let token = (req.cookies && (req.cookies.token || req.cookies.securekaro_token));
 
   if (
-    req.headers.authorization &&
-    req.headers.authorization.startsWith('Bearer')
+    (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) || token
   ) {
     try {
-      token = req.headers.authorization.split(' ')[1];
+      if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+        token = req.headers.authorization.split(' ')[1];
+      }
       const decoded = jwt.verify(token, JWT_SECRET);
 
       req.user = await User.findById(decoded.id).select('-passwordHash');

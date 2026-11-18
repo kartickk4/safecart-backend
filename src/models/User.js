@@ -7,9 +7,10 @@ const UserSchema = new mongoose.Schema({
     lowercase: true,
     trim: true
   },
-  passwordHash: { 
-    type: String, 
-    required: true 
+  passwordHash: {
+    type: String,
+    required: true,
+    select: false // M-01: Hidden by default from all queries
   },
   phone: { 
     type: String, 

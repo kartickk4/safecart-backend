@@ -53,6 +53,7 @@ const whatsappRoutes = loadModule('routes/whatsappRoutes.js', 'whatsappRoutes.js
 const uploadRoutes = loadModule('routes/uploadRoutes.js', 'uploadRoutes.js');
 const { enforcePrivacyHeaders } = loadModule('middleware/cacheMiddleware.js', 'middleware/cacheMiddleware.js');
 const compression = require('compression');
+const cookieParser = require('cookie-parser');
 
 const app = express();
 
@@ -273,6 +274,7 @@ app.use(express.json({
   }
 }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+app.use(cookieParser());
 
 // Apply global sanitization middleware to prevent NoSQL query injections
 app.use(sanitizeInput);

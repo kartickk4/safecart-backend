@@ -92,7 +92,7 @@ const updateProfile = async (req, res) => {
   const { fullName, avatarUrl, bankDetails, role, phone, email } = req.body;
 
   try {
-    const user = await User.findById(req.user._id);
+    const user = await User.findById(req.user._id).select('+passwordHash');
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });

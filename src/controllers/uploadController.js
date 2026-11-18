@@ -93,6 +93,25 @@ const handleFileServe = async (req, res) => {
       .replace(/\.\./g, '')
       .replace(/^\/+/, '');
 
+    // M-03: Sensitive file authorization check (shipping labels, legal documents)
+    const isSensitive = safeKey.startsWith('labels/') || safeKey.startsWith('documents/') || safeKey.startsWith('invoices/');
+    if (isSensitive) {
+      const jwt = require('jsonwebtoken');
+      let authorized = false;
+      const authHeader = req.headers.authorization;
+      const queryToken = req.query.token;
+      const token = (authHeader && authHeader.startsWith('Bearer ')) ? authHeader.split(' ')[1] : queryToken;
+      if (token) {
+        try {
+          const decoded = jwt.verify(token, process.env.JWT_SECRET);
+          if (decoded && decoded.id) authorized = true;
+        } catch (_) {}
+      }
+      if (!authorized) {
+        return res.status(403).json({ error: 'Access denied: Authentication required to access shipping labels and documents.' });
+      }
+    }
+
     const { getObjectFromR2 } = require('../services/r2Service');
     const s3Object = await getObjectFromR2(safeKey);
 
