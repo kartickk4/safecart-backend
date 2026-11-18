@@ -324,7 +324,7 @@ const ShipmentSchema = new mongoose.Schema({
   },
   codFeePaymentMethod: {
     type: String,
-    enum: ['none', 'wallet_adjustment', 'online_gateway', 'paid_offline'],
+    enum: ['none', 'wallet_adjustment', 'online_gateway', 'paid_offline', 'deduct_from_cod', 'settlement_deduction'],
     default: 'none'
   },
   codFeePaidAt: {

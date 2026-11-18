@@ -495,71 +495,70 @@ const createShipment = async (req, res) => {
         }
       }
 
-      const availableWallet = Number(sender.walletBalance) || 0;
-      // H-06: Never bypass wallet balance via unverified client request flags
-      const isPaidUpfront = false;
-      const totalRequiredForWalletAdjust = totalCodFees + requiredReserve;
+      const isDeductFromSettlement = req.body.deductFromSettlement === true ||
+        req.body.codFeePaymentMethod === 'deduct_from_cod' ||
+        req.body.codFeePaymentMethod === 'settlement_deduction';
 
-      if (!isPaidUpfront) {
-        if (availableWallet >= totalRequiredForWalletAdjust) {
-          // Charge is <= wallet balance and leaves the required security buffer intact:
-          const balBefore = availableWallet;
-          sender.walletBalance = parseFloat(Math.max(0, availableWallet - totalCodFees).toFixed(2));
-          await sender.save();
-
-          codFeePaid = true;
-          codFeePaymentMethod = 'wallet_adjustment';
-          codFeePaidAt = new Date();
-          codFeeTransactionRef = 'WAL_' + Date.now();
-
-          // Audit record in wallet ledger
-          await recordTransaction({
-            userId: sender._id,
-            type: 'debit',
-            amount: totalCodFees,
-            source: 'cod_fee_deduction',
-            description: `COD upfront booking fee for shipment ${shipmentId} (Delivery: ₹${deliveryCharge} + COD Handling: ₹${codCharge})`,
-            paymentGateway: 'system',
-            balanceBefore: balBefore,
-            balanceAfter: sender.walletBalance,
-            metadata: { shipmentId, deliveryCharge, codCharge, totalCodFees, requiredReserve }
-          });
-        } else {
-          // Charge + reserve > wallet balance: Supplier must pay or top up to cover fee + reserve
-          const shortfall = Math.max(0, totalRequiredForWalletAdjust - availableWallet);
-          return res.status(402).json({
-            error: 'INSUFFICIENT_WALLET_BALANCE',
-            code: 'COD_PAYMENT_REQUIRED',
-            message: `COD shipment requires ₹${totalCodFees} upfront fee plus a minimum security reserve of ₹${requiredReserve} (${newActiveCount} active shipment(s) @ ₹100/shipment, max ₹1,000). Your wallet balance is ₹${availableWallet}. Total required: ₹${totalRequiredForWalletAdjust}. Please top up ₹${shortfall} or pay online.`,
-            deliveryCharge,
-            codCharge,
-            totalCharge: totalCodFees,
-            requiredReserve,
-            activeShipmentsCount,
-            totalRequired: totalRequiredForWalletAdjust,
-            walletBalance: availableWallet,
-            shortfall,
-            canAdjustWallet: false
+      if (isDeductFromSettlement) {
+        // Merchant chose to deduct shipping charge & COD fee directly from the COD cash collected upon delivery:
+        // ZERO upfront payment required. The net remittance (Amount - Delivery Fee - COD Fee) will be credited to seller wallet upon delivery.
+        const orderAmount = Number(amount) || 0;
+        if (orderAmount > 0 && orderAmount < totalCodFees) {
+          return res.status(400).json({
+            error: 'ORDER_AMOUNT_TOO_LOW',
+            message: `Order amount (₹${orderAmount}) must be greater than shipping charges (₹${totalCodFees}) to deduct from COD settlement.`
           });
         }
-      } else {
-        // Supplier paid the upfront fee via online gateway checkout, but wallet must maintain security reserve
-        if (availableWallet < requiredReserve) {
-          const shortfall = Math.max(0, requiredReserve - availableWallet);
-          return res.status(402).json({
-            error: 'INSUFFICIENT_SECURITY_BUFFER',
-            code: 'SECURITY_BUFFER_REQUIRED',
-            message: `You must maintain a minimum wallet security buffer of ₹${requiredReserve} for ${newActiveCount} active shipment(s) (₹100/shipment, max ₹1,000). Your current wallet balance is ₹${availableWallet}. Please top up ₹${shortfall} to book this shipment.`,
-            requiredReserve,
-            activeShipmentsCount,
-            walletBalance: availableWallet,
-            shortfall
-          });
-        }
+        codFeePaid = false;
+        codFeePaymentMethod = 'deduct_from_cod';
+        codFeePaidAt = null;
+        codFeeTransactionRef = '';
+      } else if (availableWallet >= totalRequiredForWalletAdjust) {
+        // Charge is <= wallet balance and leaves the required security buffer intact:
+        const balBefore = availableWallet;
+        sender.walletBalance = parseFloat(Math.max(0, availableWallet - totalCodFees).toFixed(2));
+        await sender.save();
+
+        codFeePaid = true;
+        codFeePaymentMethod = 'wallet_adjustment';
+        codFeePaidAt = new Date();
+        codFeeTransactionRef = 'WAL_' + Date.now();
+
+        // Audit record in wallet ledger
+        await recordTransaction({
+          userId: sender._id,
+          type: 'debit',
+          amount: totalCodFees,
+          source: 'cod_fee_deduction',
+          description: `COD upfront booking fee for shipment ${shipmentId} (Delivery: ₹${deliveryCharge} + COD Handling: ₹${codCharge})`,
+          paymentGateway: 'system',
+          balanceBefore: balBefore,
+          balanceAfter: sender.walletBalance,
+          metadata: { shipmentId, deliveryCharge, codCharge, totalCodFees, requiredReserve }
+        });
+      } else if (req.body.paymentTxnId && String(req.body.paymentTxnId).startsWith('PP_')) {
+        // Supplier paid the upfront fee via PhonePe online gateway
         codFeePaid = true;
         codFeePaymentMethod = 'online_gateway';
         codFeePaidAt = new Date();
-        codFeeTransactionRef = req.body.paymentTxnId || ('TXN_' + Date.now());
+        codFeeTransactionRef = req.body.paymentTxnId;
+      } else {
+        // Charge + reserve > wallet balance: Supplier must pay or top up to cover fee + reserve
+        const shortfall = Math.max(0, totalRequiredForWalletAdjust - availableWallet);
+        return res.status(402).json({
+          error: 'INSUFFICIENT_WALLET_BALANCE',
+          code: 'COD_PAYMENT_REQUIRED',
+          message: `COD shipment requires ₹${totalCodFees} upfront fee plus a minimum security reserve of ₹${requiredReserve} (${newActiveCount} active shipment(s) @ ₹100/shipment, max ₹1,000). Your wallet balance is ₹${availableWallet}. Total required: ₹${totalRequiredForWalletAdjust}. Please top up ₹${shortfall} or select 'Deduct from COD Settlement' to pay on delivery.`,
+          deliveryCharge,
+          codCharge,
+          totalCharge: totalCodFees,
+          requiredReserve,
+          activeShipmentsCount,
+          totalRequired: totalRequiredForWalletAdjust,
+          walletBalance: availableWallet,
+          shortfall,
+          canAdjustWallet: false
+        });
       }
     } else {
       // ── Prepaid Shipment: Seller pays the courier delivery charge upfront from wallet ──
