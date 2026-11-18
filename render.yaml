@@ -103,3 +103,11 @@ services:
       - key: GEMINI_API_KEY
         sync: false
 
+      # Groq & Cloudflare Multi-Provider AI
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CLOUDFLARE_AI_API_TOKEN
+        sync: false
+      - key: CLOUDFLARE_AI_ACCOUNT_ID
+        sync: false
+

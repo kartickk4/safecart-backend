@@ -19,6 +19,7 @@ const phonepeService = require('../services/phonepeService');
 const smsService = require('../services/smsService');
 const { createNotification } = require('../services/notification');
 const { calculateServiceFee } = require('../utils/feeConfig');
+const aiRouterService = require('../services/aiRouterService');
 const geminiService = require('../services/geminiService');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -710,7 +711,7 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
     });
     const pipelineFunds = activePipeline.reduce((sum, s) => sum + (s.amount || 0), 0);
 
-    const geminiReply = await geminiService.answerMerchantQuery({
+    const geminiReply = await aiRouterService.answerMerchantQuery({
       query: msg,
       user,
       context: {
@@ -781,7 +782,7 @@ const handleChat = async (req, res) => {
           console.warn('[AGENT] GEMINI_API_KEY is not configured in production environment.');
           agentReply = '⚠️ *AI Vision Offline:* Gemini AI Vision is not yet configured in server environment variables (missing GEMINI_API_KEY in Render). Please set GEMINI_API_KEY in Render Environment Variables, or paste the text address directly.';
         } else {
-          const aiOrder = await geminiService.extractOrderFromImage(imageBase64, imageMimeType);
+          const aiOrder = await aiRouterService.extractOrderFromImage(imageBase64, imageMimeType);
           if (aiOrder && aiOrder.isOrder) {
             if (aiOrder.receiverName) data.receiverName = aiOrder.receiverName;
             if (aiOrder.receiverPhone) data.receiverPhone = aiOrder.receiverPhone;
@@ -878,7 +879,7 @@ const handleChat = async (req, res) => {
 
         // ── AI-Powered 1-Click WhatsApp / Social Media Order Extractor ───────
         try {
-          const aiOrder = await geminiService.extractOrderFromText(message);
+          const aiOrder = await aiRouterService.extractOrderFromText(message);
           if (aiOrder && aiOrder.isOrder) {
             if (aiOrder.receiverName) data.receiverName = aiOrder.receiverName;
             if (aiOrder.receiverPhone) data.receiverPhone = aiOrder.receiverPhone;
@@ -2400,6 +2401,17 @@ const deleteSession = async (req, res) => {
   }
 };
 
+// ── AI Provider Status ────────────────────────────────────────────────────────
+
+const getAiStatus = async (req, res) => {
+  try {
+    const status = aiRouterService.getProviderStatus();
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 module.exports = {
   handleChat,
   handleBulkUpload,
@@ -2408,5 +2420,6 @@ module.exports = {
   downloadBulkReport,
   getCarrierRatesHandler,
   getSession,
-  deleteSession
+  deleteSession,
+  getAiStatus
 };

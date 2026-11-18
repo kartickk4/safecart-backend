@@ -24,7 +24,8 @@ const {
   downloadBulkReport,
   getCarrierRatesHandler,
   getSession,
-  deleteSession
+  deleteSession,
+  getAiStatus
 } = loadMod('controllers', 'agentController');
 
 const { protect } = loadMod('middleware', 'auth');
@@ -83,5 +84,8 @@ router.get('/session/:sessionId', protect, getSession);
 
 // Delete / reset session
 router.delete('/session/:sessionId', protect, deleteSession);
+
+// AI Provider status (check active providers: Groq, Gemini, Cloudflare AI)
+router.get('/ai-status', getAiStatus);
 
 module.exports = router;
