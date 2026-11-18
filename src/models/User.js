@@ -203,6 +203,16 @@ const UserSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  // ─── DPDP Act, 2023 Statutory Consent Audit Trail ─────────────────────────
+  consentRecord: {
+    consentVersion: { type: String, default: 'DPDP-2023-v1.0' },
+    agreedAt: { type: Date, default: null },
+    is18Plus: { type: Boolean, default: false },
+    termsAndPrivacyConsent: { type: Boolean, default: false },
+    logisticsProcessingConsent: { type: Boolean, default: false },
+    ipAddress: { type: String, default: '' },
+    userAgent: { type: String, default: '' }
+  },
   // ──────────────────────────────────────────────────────────────────────────
   createdAt: { 
     type: Date, 

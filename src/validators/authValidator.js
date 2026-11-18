@@ -7,7 +7,10 @@ const signupSchema = z.object({
   phone: z.string().trim().min(10, 'Phone number must be at least 10 digits'),
   fullName: z.string().trim().min(2, 'Full name must be at least 2 characters long'),
   role: z.enum(['Supplier', 'Receiver']).optional().default('Receiver'),
-  referralCode: z.string().trim().optional()
+  referralCode: z.string().trim().optional(),
+  is18Plus: z.boolean().optional(),
+  termsAndPrivacyConsent: z.boolean().optional(),
+  logisticsProcessingConsent: z.boolean().optional()
 });
 
 // Schema for user login

@@ -184,7 +184,37 @@ const signup = async (req, res) => {
       landmark: req.body.landmark || ''
     };
 
-    // Create user with explicit role, referral code, and optional referredBy
+    // DPDP Act, 2023 Statutory Consent & Timestamp Audit Trail
+    const is18Plus = Boolean(req.body.is18Plus);
+    const termsAndPrivacyConsent = Boolean(req.body.termsAndPrivacyConsent || req.body.agreedToTerms);
+    const logisticsProcessingConsent = Boolean(req.body.logisticsProcessingConsent || req.body.consentLogistics);
+
+    if (!is18Plus || !termsAndPrivacyConsent || !logisticsProcessingConsent) {
+      return res.status(400).json({
+        error: 'DPDP Act Consent Required: You must confirm you are 18+ years of age and affirmatively agree to both the Terms & Privacy Policy and logistics data processing to register.'
+      });
+    }
+
+    const clientIp = (
+      req.headers['cf-connecting-ip'] ||
+      (typeof req.headers['x-forwarded-for'] === 'string' ? req.headers['x-forwarded-for'].split(',')[0].trim() : null) ||
+      req.ip ||
+      req.socket?.remoteAddress ||
+      ''
+    );
+    const clientUserAgent = (req.headers['user-agent'] || '').slice(0, 300);
+
+    const consentRecord = {
+      consentVersion: 'DPDP-2023-v1.0',
+      agreedAt: new Date(),
+      is18Plus: true,
+      termsAndPrivacyConsent: true,
+      logisticsProcessingConsent: true,
+      ipAddress: clientIp,
+      userAgent: clientUserAgent
+    };
+
+    // Create user with explicit role, referral code, consentRecord, and optional referredBy
     const user = await User.create({
       email: normalizedEmail,
       passwordHash,
@@ -197,7 +227,8 @@ const signup = async (req, res) => {
       pincode,
       pickupAddress,
       referralCode: newReferralCode,
-      referredBy: referrer ? referrer._id : null
+      referredBy: referrer ? referrer._id : null,
+      consentRecord
     });
 
     if (user) {
