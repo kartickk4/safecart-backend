@@ -51,7 +51,7 @@ const generateReferralCode = async () => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No O/0/1/I confusion
   let code, exists;
   do {
-    const suffix = Array.from({ length: 5 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+    const suffix = Array.from({ length: 5 }, () => chars[crypto.randomInt(0, chars.length)]).join('');
     code = `SK-${suffix}`;
     exists = await User.findOne({ referralCode: code });
   } while (exists);
@@ -222,7 +222,24 @@ const login = async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    if (user && (await bcrypt.compare(password, user.passwordHash))) {
+    // SECURITY: Account Lockout check against distributed brute force (#05)
+    if (user.lockUntil && user.lockUntil > Date.now()) {
+      const minutesRemaining = Math.max(1, Math.ceil((user.lockUntil.getTime() - Date.now()) / (60 * 1000)));
+      return res.status(423).json({
+        error: `Account is temporarily locked due to multiple failed login attempts. Please try again after ${minutesRemaining} minute${minutesRemaining > 1 ? 's' : ''} or reset your password.`
+      });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.passwordHash);
+
+    if (user && isMatch) {
+      // Reset failed attempts upon successful authentication
+      if (user.failedLoginAttempts > 0 || user.lockUntil) {
+        user.failedLoginAttempts = 0;
+        user.lockUntil = null;
+        await user.save();
+      }
+
       // Sync Pro status from sibling account under same email if needed
       if (!user.isPro) {
         const proSibling = await User.findOne({ email: normalizedEmail, isPro: true });
@@ -241,6 +258,16 @@ const login = async (req, res) => {
         user: formatUserResponse(user)
       });
     } else {
+      // Increment failed attempts and trigger 15-min lockout at 5 attempts
+      user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
+      if (user.failedLoginAttempts >= 5) {
+        user.lockUntil = new Date(Date.now() + 15 * 60 * 1000);
+        await user.save();
+        return res.status(423).json({
+          error: 'Account has been temporarily locked for 15 minutes due to 5 consecutive failed login attempts. Please reset your password if you forgot it.'
+        });
+      }
+      await user.save();
       res.status(401).json({ error: 'Invalid email or password' });
     }
   } catch (error) {
@@ -299,8 +326,8 @@ const sendOtp = async (req, res) => {
       }
     }
 
-    // Generate 6-digit random OTP
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    // Generate 6-digit cryptographically secure OTP (#14)
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
 
     // Delete previous OTPs for this phone and role
     await Otp.deleteMany({ identifier: normalizedPhone, type: 'phone', role });
@@ -470,7 +497,8 @@ const sendEmailOtp = async (req, res) => {
       });
     }
 
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    // Generate 6-digit cryptographically secure email OTP (#14)
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
 
     // Delete previous email OTPs for this role
     await Otp.deleteMany({ identifier: normalizedEmail, type: 'email', role });
@@ -625,10 +653,17 @@ const forgotPassword = async (req, res) => {
     }
 
     if (!user) {
-      return res.status(404).json({ error: `No ${role} account registered with this ${rawPhone ? 'phone number' : 'email address'}.` });
+      // SECURITY: Generic response to defeat user enumeration attacks (CWE-204 / #04)
+      return res.json({
+        message: `If a ${role} account exists with this ${rawPhone ? 'phone number' : 'email address'}, a password reset verification code has been dispatched. Valid for 5 minutes.`,
+        smsDispatched: false,
+        emailDispatched: false,
+        identifier
+      });
     }
 
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    // Generate 6-digit cryptographically secure email OTP (#14)
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
 
     // Store OTP under identifier and user.phone/email
     await Otp.deleteMany({ identifier, type: 'password_reset', role });
@@ -667,7 +702,7 @@ const forgotPassword = async (req, res) => {
     }
 
     res.json({
-      message: `Password reset OTP sent to ${smsDispatched ? phoneToSendSms : (emailDispatched ? rawEmail : identifier)} (${role} Portal). Valid for 5 minutes.`,
+      message: `If a ${role} account exists with this ${rawPhone ? 'phone number' : 'email address'}, a password reset verification code has been dispatched. Valid for 5 minutes.`,
       smsDispatched,
       emailDispatched,
       identifier

@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const bcrypt = require('bcryptjs');
 
 function loadMod(type, name) {
   const candidates = [
@@ -105,6 +106,34 @@ const updateProfile = async (req, res) => {
     }
     if (req.body.platformType !== undefined) {
       user.platformType = req.body.platformType;
+    }
+
+    // SECURITY: Require current password confirmation before changing critical identifiers (email/phone) (#15)
+    const isEmailChanging = Boolean(email && email.toLowerCase().trim() !== user.email?.toLowerCase().trim());
+    const isPhoneChanging = Boolean(phone && phone.trim().replace(/\s+/g, '') !== (user.phone || '').trim().replace(/\s+/g, ''));
+
+    if (isEmailChanging || isPhoneChanging) {
+      const isOtpPlaceholder = user.email && (
+        user.email.endsWith('@securekaro-otp.in') ||
+        user.email.endsWith('@safecart-otp.in') ||
+        user.email.includes('-otp.in')
+      );
+      const hasPassword = Boolean(user.passwordHash && !user.googleId && !isOtpPlaceholder);
+
+      if (hasPassword) {
+        const { currentPassword } = req.body;
+        if (!currentPassword) {
+          return res.status(401).json({
+            error: 'Current account password is required to change your email or phone number for security.'
+          });
+        }
+        const isMatch = await bcrypt.compare(currentPassword, user.passwordHash);
+        if (!isMatch) {
+          return res.status(401).json({
+            error: 'Incorrect current password. Changing your email or phone number was denied.'
+          });
+        }
+      }
     }
 
     if (phone) {
@@ -220,6 +249,11 @@ const updateProfile = async (req, res) => {
       } catch (syncErr) {
         console.warn('[PROFILE] Bank details sync warning:', syncErr.message);
       }
+    }
+
+    if (isEmailChanging || isPhoneChanging) {
+      // Invalidate existing session tokens so stolen tokens cannot persist after identity change (#11 & #16)
+      user.tokenVersion = (user.tokenVersion || 0) + 1;
     }
 
     const updatedUser = await user.save();
