@@ -186,6 +186,8 @@ const corsOptions = {
     'x-active-role',
     'X-Idempotency-Key',
     'x-idempotency-key',
+    'X-2FA-Token',
+    'x-2fa-token',
     'Accept',
     'Cache-Control',
     'Pragma'

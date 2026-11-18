@@ -1184,10 +1184,16 @@ const publicPayShipment = async (req, res) => {
       });
     }
 
-    // In production, verify with PhonePe that the payment was genuinely completed
-    if (process.env.NODE_ENV === 'production' && shipment.phonepeMerchantTransactionId) {
+    // Verify with PhonePe that the payment was genuinely completed
+    const targetId = shipment.phonepeMerchantTransactionId;
+    if (process.env.NODE_ENV !== 'test') {
+      if (!targetId) {
+        return res.status(400).json({
+          error: 'No active payment session found for this shipment. Please initiate payment.',
+          paymentLink: shipment.paymentLink
+        });
+      }
       try {
-        const targetId = shipment.phonepeMerchantTransactionId;
         const linkDetails = await phonepeService.getPaymentStatus(targetId);
         const isSuccess = linkDetails?.success && linkDetails?.code === 'PAYMENT_SUCCESS';
         if (!isSuccess) {
@@ -1197,12 +1203,15 @@ const publicPayShipment = async (req, res) => {
           });
         }
       } catch (cfErr) {
-        console.warn('[Public Pay] PhonePe status verification error:', cfErr.message);
+        console.error('[Public Pay] PhonePe status verification error:', cfErr.message);
+        return res.status(502).json({
+          error: 'Unable to verify payment status with payment gateway. Please try again in a few moments.'
+        });
       }
     }
 
     const updatedShipment = await executeOrderPaymentAndCourierBooking(shipment, {
-      transactionRef: req.body.transactionRef || `PAY_${Date.now()}`,
+      transactionRef: targetId || req.body.transactionRef || `PAY_${Date.now()}`,
       gateway: req.body.gateway || 'integrated_gateway',
       carrierSlug: req.body.carrierSlug
     });

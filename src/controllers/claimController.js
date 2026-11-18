@@ -150,7 +150,7 @@ const getClaimByShipmentId = async (req, res) => {
       return res.status(404).json({ error: 'Associated shipment not found' });
     }
 
-    const isSender = shipment.senderId.toString() === req.user._id.toString();
+    const isSender = Boolean(shipment.senderId && shipment.senderId.toString() === req.user._id.toString());
     const isReceiver = isReceiverMatch(req.user.phone, shipment.receiverPhone);
 
     if (!isSender && !isReceiver && req.user.role !== 'Admin') {
