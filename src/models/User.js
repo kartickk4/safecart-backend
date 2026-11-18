@@ -192,6 +192,17 @@ const UserSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  // ─── TOTP / 2FA (Admin only) ───────────────────────────────────────────────
+  totpSecret: {
+    type: String,
+    default: null,
+    select: false   // never returned in normal queries — must be explicitly selected
+  },
+  is2FAEnabled: {
+    type: Boolean,
+    default: false
+  },
+  // ──────────────────────────────────────────────────────────────────────────
   createdAt: { 
     type: Date, 
     default: Date.now 

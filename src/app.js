@@ -48,6 +48,7 @@ const walletRoutes = loadModule('routes/walletRoutes.js', 'walletRoutes.js');
 const { sanitizeInput } = loadModule('middleware/sanitize.js', 'sanitize.js');
 const agentRoutes = loadModule('routes/agentRoutes.js', 'agentRoutes.js');
 const adminRoutes = loadModule('routes/adminRoutes.js', 'adminRoutes.js');
+const adminTwoFARoutes = loadModule('routes/adminTwoFARoutes.js', 'adminTwoFARoutes.js');
 const whatsappRoutes = loadModule('routes/whatsappRoutes.js', 'whatsappRoutes.js');
 const uploadRoutes = loadModule('routes/uploadRoutes.js', 'uploadRoutes.js');
 const { enforcePrivacyHeaders } = loadModule('middleware/cacheMiddleware.js', 'middleware/cacheMiddleware.js');
@@ -378,6 +379,7 @@ app.use('/api/v1/rewards', rewardRoutes);
 app.use('/api/v1/wallet', walletRoutes);
 app.use('/api/v1/agent', agentLimiter, agentRoutes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/auth/admin/2fa', adminTwoFARoutes);
 app.use('/api/v1/whatsapp', whatsappRoutes);
 app.use('/api/v1/upload', uploadRoutes);
 

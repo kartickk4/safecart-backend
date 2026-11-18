@@ -20,7 +20,7 @@ function loadMod(type, name) {
   return require(`./${name}`);
 }
 
-const { protect, admin } = loadMod('middleware', 'auth');
+const { protect, admin, requireAdmin2FA } = loadMod('middleware', 'auth');
 const adminController = loadMod('controllers', 'adminController');
 
 const router = express.Router();
@@ -28,6 +28,7 @@ const router = express.Router();
 // Apply authentication and admin authorization to ALL admin routes
 router.use(protect);
 router.use(admin);
+router.use(requireAdmin2FA); // FIX #20: 2FA enforcement — no-ops if is2FAEnabled=false
 
 // Analytics & Overview
 router.get('/analytics', adminController.getAnalyticsDashboard);
