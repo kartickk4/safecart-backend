@@ -1151,6 +1151,24 @@ const confirmReturnReceivedEscrow = async (shipmentId) => {
     }
   }
 
+  // Instant WhatsApp Notification for Return Refund
+  try {
+    const whatsappService = require('./whatsappService');
+    const targetPhone = shipment.receiverPhone || (receiver && receiver.phone);
+    if (whatsappService && whatsappService.sendRefundWhatsApp && targetPhone) {
+      await whatsappService.sendRefundWhatsApp({
+        phone: targetPhone,
+        receiverName: shipment.receiverName || (receiver && receiver.fullName),
+        shipmentId: shipment.shipmentId,
+        amount: shipment.amount,
+        isPartial: false,
+        reason: 'Returned package received and verified by seller'
+      });
+    }
+  } catch (waErr) {
+    console.warn('[WHATSAPP REFUND Note]:', waErr.message);
+  }
+
   // ── Reverse Shipping Fee Deduction (Seller Pays Policy) ───────────────────
   // In Indian e-commerce (Amazon, Meesho, etc.), reverse courier freight is charged
   // to the seller upon return receipt and debited from the seller's wallet/settlement.
@@ -1352,6 +1370,23 @@ const confirmDelivery = async (shipmentId, receiverId, { choice = 'keep_open_24h
     'shipping',
     shipment.shipmentId
   );
+
+  // Instant WhatsApp Notification for Parcel Delivery Confirmation
+  try {
+    const whatsappService = require('./whatsappService');
+    const targetPhone = shipment.receiverPhone || (receiver && receiver.phone);
+    if (whatsappService && whatsappService.sendDeliveredWhatsApp && targetPhone) {
+      await whatsappService.sendDeliveredWhatsApp({
+        phone: targetPhone,
+        receiverName: shipment.receiverName || (receiver && receiver.fullName),
+        shipmentId: shipment.shipmentId,
+        returnAllowed: Boolean(shipment.returnAllowed),
+        returnWindowHours: 24
+      });
+    }
+  } catch (waErr) {
+    console.warn('[WHATSAPP DELIVERED Note]:', waErr.message);
+  }
 
   return {
     shipment,
@@ -1703,6 +1738,24 @@ const respondToDiscount = async (shipmentId, responderId, accepted, isSupplier =
         'payment',
         shipment.shipmentId
       );
+
+      // Instant WhatsApp Notification for Partial Refund Credited
+      try {
+        const whatsappService = require('./whatsappService');
+        const targetPhone = shipment.receiverPhone || (receiver && receiver.phone);
+        if (whatsappService && whatsappService.sendRefundWhatsApp && targetPhone) {
+          await whatsappService.sendRefundWhatsApp({
+            phone: targetPhone,
+            receiverName: shipment.receiverName || (receiver && receiver.fullName),
+            shipmentId: shipment.shipmentId,
+            amount: buyerCredit,
+            isPartial: true,
+            reason: 'Seller approved partial discount/refund'
+          });
+        }
+      } catch (waErr) {
+        console.warn('[WHATSAPP PARTIAL REFUND Note]:', waErr.message);
+      }
     }
 
     const supplier = await User.findById(shipment.senderId);
@@ -2020,6 +2073,24 @@ const dispatchReplacement = async (shipmentId, supplierId, courierData = {}) => 
     shipment.shipmentId,
     'RETURN_ORDERS'
   );
+
+  // Instant WhatsApp Notification for Replacement Dispatched
+  try {
+    const whatsappService = require('./whatsappService');
+    const targetPhone = shipment.receiverPhone || (receiver && receiver.phone);
+    if (whatsappService && whatsappService.sendReplacementBookedWhatsApp && targetPhone) {
+      await whatsappService.sendReplacementBookedWhatsApp({
+        phone: targetPhone,
+        receiverName: shipment.receiverName || (receiver && receiver.fullName),
+        shipmentId: shipment.shipmentId,
+        carrierName: fwdName,
+        awbCode: fwdAwb,
+        trackUrl: `https://securekaro.in/tracking?id=${shipment.shipmentId}`
+      });
+    }
+  } catch (waErr) {
+    console.warn('[WHATSAPP REPLACEMENT Note]:', waErr.message);
+  }
 
   return {
     success: true,

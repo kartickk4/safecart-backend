@@ -21,7 +21,10 @@ const TEMPLATES = {
   NDR:          process.env.WA_TEMPLATE_NDR          || 'securekaro_ndr_alert',
   REVERSE_AWB:  process.env.WA_TEMPLATE_REVERSE_AWB  || 'securekaro_reverse_courier',
   PHOTO_REVIEW: process.env.WA_TEMPLATE_PHOTO_REVIEW || 'securekaro_photo_review',
-  PAYOUT:       process.env.WA_TEMPLATE_PAYOUT       || 'securekaro_payout_released'
+  PAYOUT:       process.env.WA_TEMPLATE_PAYOUT       || 'securekaro_payout_released',
+  REFUND:       process.env.WA_TEMPLATE_REFUND       || 'securekaro_refund_alert',
+  REPLACEMENT:  process.env.WA_TEMPLATE_REPLACEMENT  || 'securekaro_replacement_booked',
+  DELIVERED:    process.env.WA_TEMPLATE_DELIVERED    || 'securekaro_order_delivered'
 };
 
 /**
@@ -384,6 +387,94 @@ const sendPayoutReleasedWhatsApp = async ({ phone, senderName, shipmentId, amoun
   });
 };
 
+/**
+ * 8. Sends a refund or partial refund notification via WhatsApp Template.
+ * Template positional parameters:
+ * {{1}} Receiver Name
+ * {{2}} Refund Amount (e.g. ₹500)
+ * {{3}} Shipment ID
+ * {{4}} Refund Type ('Partial Refund' or 'Full Refund')
+ */
+const sendRefundWhatsApp = async ({ phone, receiverName, shipmentId, amount, isPartial = false, reason = '' }) => {
+  const name = receiverName || 'Customer';
+  const refundType = isPartial ? 'Partial Refund' : 'Full Refund';
+  const formattedAmount = `₹${Number(amount || 0).toLocaleString('en-IN')}`;
+
+  const fallbackText =
+    `💳 *SecureKaro — ${refundType} Credited!*\n\n` +
+    `Hello ${name}! 🎉\n\n` +
+    `Your *${refundType}* of *${formattedAmount}* for Order *#${shipmentId}* has been successfully processed and credited to your account.\n\n` +
+    (reason ? `📌 *Details:* ${reason}\n\n` : '') +
+    `_Thank you for choosing SecureKaro Delivery Shield._`;
+
+  return sendWhatsAppMessage({
+    phone,
+    templateName: TEMPLATES.REFUND,
+    parameters: [name, formattedAmount, shipmentId, refundType],
+    fallbackText
+  });
+};
+
+/**
+ * 9. Sends replacement order booked / dispatched notification via WhatsApp Template.
+ * Template positional parameters:
+ * {{1}} Receiver Name
+ * {{2}} Shipment ID
+ * {{3}} Carrier Name
+ * {{4}} Replacement Tracking ID / AWB Code
+ */
+const sendReplacementBookedWhatsApp = async ({ phone, receiverName, shipmentId, carrierName, awbCode, trackUrl }) => {
+  const name = receiverName || 'Customer';
+  const carrier = carrierName || 'Courier Partner';
+  const awb = awbCode || 'Assigned';
+  const trackingLink = trackUrl || `https://securekaro.in/tracking?id=${shipmentId}`;
+
+  const fallbackText =
+    `🔄 *SecureKaro — Replacement Order Dispatched!*\n\n` +
+    `Hello ${name}! 👋\n\n` +
+    `Your fresh replacement parcel for Order *#${shipmentId}* has been dispatched.\n\n` +
+    `🚚 *Courier Partner:* ${carrier}\n` +
+    `📦 *Tracking AWB:* ${awb}\n\n` +
+    `👉 *Track Your Replacement:* ${trackingLink}\n\n` +
+    `_Powered by SecureKaro Fast-Track Replacement Guarantee._`;
+
+  return sendWhatsAppMessage({
+    phone,
+    templateName: TEMPLATES.REPLACEMENT,
+    parameters: [name, shipmentId, carrier, awb],
+    fallbackText
+  });
+};
+
+/**
+ * 10. Sends parcel delivered notification via WhatsApp Template.
+ * Template positional parameters:
+ * {{1}} Receiver Name
+ * {{2}} Shipment ID
+ * {{3}} Return Window Info (e.g. '24-hour return window active' or 'Final Sale')
+ */
+const sendDeliveredWhatsApp = async ({ phone, receiverName, shipmentId, returnAllowed = true, returnWindowHours = 24 }) => {
+  const name = receiverName || 'Customer';
+  const returnInfo = returnAllowed 
+    ? `Your ${returnWindowHours}-hour return & protection window is now active.`
+    : `Delivery verified. No return policy on this parcel.`;
+
+  const fallbackText =
+    `📦 *SecureKaro — Parcel Delivered Successfully!*\n\n` +
+    `Hello ${name}! 👋\n\n` +
+    `Your shipment *#${shipmentId}* has been confirmed as delivered.\n\n` +
+    `🛡️ *Status:* ${returnInfo}\n\n` +
+    `If you have any issues with your parcel, visit your SecureKaro dashboard or contact support.\n\n` +
+    `_Thank you for choosing SecureKaro Logistics._`;
+
+  return sendWhatsAppMessage({
+    phone,
+    templateName: TEMPLATES.DELIVERED,
+    parameters: [name, shipmentId, returnInfo],
+    fallbackText
+  });
+};
+
 module.exports = {
   sendWhatsAppMessage,
   sendBookingConfirmationWhatsApp,
@@ -392,5 +483,8 @@ module.exports = {
   sendPhotoReviewChoiceWhatsApp,
   sendDeliveryOtpWhatsApp,
   sendPayoutReleasedWhatsApp,
-  sendNdrResolutionWhatsApp
+  sendNdrResolutionWhatsApp,
+  sendRefundWhatsApp,
+  sendReplacementBookedWhatsApp,
+  sendDeliveredWhatsApp
 };
