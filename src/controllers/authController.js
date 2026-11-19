@@ -185,13 +185,14 @@ const signup = async (req, res) => {
     };
 
     // DPDP Act, 2023 Statutory Consent & Timestamp Audit Trail
-    const is18Plus = Boolean(req.body.is18Plus);
-    const termsAndPrivacyConsent = Boolean(req.body.termsAndPrivacyConsent || req.body.agreedToTerms);
-    const logisticsProcessingConsent = Boolean(req.body.logisticsProcessingConsent || req.body.consentLogistics);
+    const singleBoxConsent = Boolean(req.body.agreedToDpdpConsent);
+    const is18Plus = singleBoxConsent || Boolean(req.body.is18Plus);
+    const termsAndPrivacyConsent = singleBoxConsent || Boolean(req.body.termsAndPrivacyConsent || req.body.agreedToTerms);
+    const logisticsProcessingConsent = singleBoxConsent || Boolean(req.body.logisticsProcessingConsent || req.body.consentLogistics);
 
     if (!is18Plus || !termsAndPrivacyConsent || !logisticsProcessingConsent) {
       return res.status(400).json({
-        error: 'DPDP Act Consent Required: You must confirm you are 18+ years of age and affirmatively agree to both the Terms & Privacy Policy and logistics data processing to register.'
+        error: 'DPDP Act Consent Required: You must confirm you are 18+ years of age and affirmatively agree to the Terms, Privacy Policy, and logistics data processing to register.'
       });
     }
 

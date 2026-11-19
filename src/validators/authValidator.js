@@ -8,6 +8,7 @@ const signupSchema = z.object({
   fullName: z.string().trim().min(2, 'Full name must be at least 2 characters long'),
   role: z.enum(['Supplier', 'Receiver']).optional().default('Receiver'),
   referralCode: z.string().trim().optional(),
+  agreedToDpdpConsent: z.boolean().optional(),
   is18Plus: z.boolean().optional(),
   termsAndPrivacyConsent: z.boolean().optional(),
   logisticsProcessingConsent: z.boolean().optional()
