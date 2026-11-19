@@ -496,6 +496,7 @@ const createShipment = async (req, res) => {
       }
 
       const isDeductFromSettlement = req.body.deductFromSettlement === true ||
+        req.body.rtoDeductFromSettlement === true ||
         req.body.codFeePaymentMethod === 'deduct_from_cod' ||
         req.body.codFeePaymentMethod === 'settlement_deduction';
 
@@ -688,6 +689,12 @@ const createShipment = async (req, res) => {
       codFeePaymentMethod: isCod ? codFeePaymentMethod : 'none',
       codFeePaidAt: isCod ? codFeePaidAt : undefined,
       codFeeTransactionRef: isCod ? codFeeTransactionRef : '',
+      deductFromSettlement: isCod ? isDeductFromSettlement : false,
+      rtoDeductFromSettlement: isCod ? isDeductFromSettlement : false,
+      rtoSettlementPending: false,
+      rtoSettlementDeductedAt: null,
+      rtoSettlementRecoveredInShipmentId: '',
+      rtoSettlementRecoveredAmount: 0,
       // Photo review option: default false, enabled only if seller toggles it
       photoReviewEnabled: Boolean(photoReviewEnabled),
       photoReviewFee: 0,
@@ -1612,7 +1619,7 @@ const markUndelivered = async (req, res) => {
       return res.status(403).json({ error: 'Not authorized to report undelivered status for this shipment' });
     }
 
-    const result = await escrow.refundUndeliveredEscrow(id, reason || 'Carrier delivery failed or returned to origin');
+    const result = await escrow.refundUndeliveredEscrow(id, reason || 'Carrier delivery failed or returned to origin', req.user._id);
     res.json(result);
   } catch (error) {
     console.error('Mark Undelivered Error:', error.message);

@@ -569,6 +569,30 @@ const ShipmentSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  deductFromSettlement: {
+    type: Boolean,
+    default: false
+  },
+  rtoDeductFromSettlement: {
+    type: Boolean,
+    default: false
+  },
+  rtoSettlementPending: {
+    type: Boolean,
+    default: false
+  },
+  rtoSettlementDeductedAt: {
+    type: Date,
+    default: null
+  },
+  rtoSettlementRecoveredInShipmentId: {
+    type: String,
+    default: ''
+  },
+  rtoSettlementRecoveredAmount: {
+    type: Number,
+    default: 0
+  },
 
   // ── In-Box QR Code Delivery Sign-Off System ───────────────────────────────
   // A unique token placed inside the parcel (as a printable QR) by the seller.
@@ -862,6 +886,10 @@ ShipmentSchema.index({ awbCode: 1 }, { sparse: true });
 // SPARSE — InboxQrToken for QR-scan and OTP delivery confirmation.
 // Covers: Shipment.findOne({ inboxQrToken: token })
 ShipmentSchema.index({ inboxQrToken: 1 }, { sparse: true });
+
+// COMPOSITE — Pending RTO settlement recovery lookup.
+// Covers: Shipment.find({ senderId, status: 'Undelivered', rtoSettlementPending: true })
+ShipmentSchema.index({ senderId: 1, status: 1, rtoSettlementPending: 1 });
 
 // SPARSE — YouPI payment ID for payment gateway webhooks.
 // Covers: Shipment.findOne({ youpiPaymentId })

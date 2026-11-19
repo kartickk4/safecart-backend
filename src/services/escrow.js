@@ -90,7 +90,55 @@ const releaseEscrow = async (shipmentId, receiverId) => {
   // do NOT deduct it again from the collected cash remittance!
   const freightDeduction = (isPaidOffline || codFeeAlreadyPaid) ? 0 : courierFreight;
   const totalDeductions = parseFloat((serviceFee + freightDeduction + codHandlingFee).toFixed(2));
-  const netPayout = Math.max(0, parseFloat((shipment.amount - totalDeductions).toFixed(2)));
+  let initialNetPayout = Math.max(0, parseFloat((shipment.amount - totalDeductions).toFixed(2)));
+
+  // Find sender and receiver user profiles
+  const sender = await User.findById(shipment.senderId);
+  const receiver = await findReceiverUser(shipment, receiverId);
+
+  // ── Settle Any Pending RTO Charges from this Settlement ───────────────────
+  // If seller previously had undelivered / RTO orders with "Deduct from Settlement",
+  // recover those pending return freight charges from this settlement payout.
+  let rtoDeductionAmount = 0;
+  const recoveredRtoShipments = [];
+
+  if (sender && !isPaidOffline && initialNetPayout > 0) {
+    const pendingRtos = await Shipment.find({
+      senderId: shipment.senderId,
+      status: 'Undelivered',
+      rtoSettlementPending: true
+    }).sort({ createdAt: 1 });
+
+    let remainingPayout = initialNetPayout;
+    for (const rtoShip of pendingRtos) {
+      const pendingCharge = Number(rtoShip.undeliveredSupplierCharge) || Number(rtoShip.deliveryCharge) || 40;
+      if (pendingCharge <= 0) {
+        rtoShip.rtoSettlementPending = false;
+        await rtoShip.save();
+        continue;
+      }
+      if (remainingPayout >= pendingCharge) {
+        remainingPayout = parseFloat((remainingPayout - pendingCharge).toFixed(2));
+        rtoDeductionAmount = parseFloat((rtoDeductionAmount + pendingCharge).toFixed(2));
+        rtoShip.rtoSettlementPending = false;
+        rtoShip.courierChargeDeductedFrom = 'cod_remittance';
+        rtoShip.courierChargeStatus = 'Deducted';
+        rtoShip.rtoSettlementDeductedAt = new Date();
+        rtoShip.rtoSettlementRecoveredInShipmentId = shipment.shipmentId;
+        await rtoShip.save();
+        recoveredRtoShipments.push({
+          shipmentId: rtoShip.shipmentId,
+          awbCode: rtoShip.awbCode || 'N/A',
+          amount: pendingCharge
+        });
+      } else {
+        // Payout doesn't fully cover this RTO, keep remaining for next settlement
+        break;
+      }
+    }
+    initialNetPayout = remainingPayout;
+  }
+  const netPayout = initialNetPayout;
 
   // Release the escrow funds (deduct courier freight & COD handling — no platform fee)
   shipment.status = 'Released';
@@ -106,15 +154,12 @@ const releaseEscrow = async (shipmentId, receiverId) => {
   shipment.courierChargeDeductedFrom = isPaidOffline ? 'seller_wallet' : (isCod ? 'cod_remittance' : 'escrow_settlement');
   shipment.courierChargeStatus = 'Deducted';
   shipment.netSellerPayout = netPayout;
+  shipment.rtoSettlementRecoveredAmount = rtoDeductionAmount;
   shipment.isOverMonthlyThreshold = false;
   shipment.principalDisbursedToSupplier = netPayout;
   shipment.confirmationWindowClosed = true;
   shipment.withdrawableAt = new Date();
   await shipment.save();
-
-  // Find sender and receiver user profiles
-  const sender = await User.findById(shipment.senderId);
-  const receiver = await findReceiverUser(shipment, receiverId);
 
   // Credit sender wallet balance if online escrow mode
   if (!isPaidOffline && sender) {
@@ -129,15 +174,25 @@ const releaseEscrow = async (shipmentId, receiverId) => {
     }
     try {
       const { recordTransaction } = require('./walletService');
+      const rtoNote = rtoDeductionAmount > 0
+        ? ` (Net after -₹${rtoDeductionAmount} RTO freight recovered for: ${recoveredRtoShipments.map(s => s.shipmentId).join(', ')})`
+        : '';
       await recordTransaction({
         userId: sender._id,
         type: 'credit',
         amount: netPayout,
         source: 'escrow_settlement',
-        description: `Order payout released for shipment ${shipment.shipmentId}`,
+        description: `Order payout released for shipment ${shipment.shipmentId}${rtoNote}`,
         balanceBefore: balBefore,
         balanceAfter: sender.walletBalance,
-        metadata: { shipmentId: shipment.shipmentId }
+        metadata: {
+          shipmentId: shipment.shipmentId,
+          grossAmount: shipment.amount,
+          freightDeduction,
+          codHandlingFee,
+          rtoDeductionAmount,
+          recoveredRtoShipments
+        }
       });
     } catch (e) {}
   }
@@ -154,7 +209,35 @@ const releaseEscrow = async (shipmentId, receiverId) => {
     // Notify sender that funds are payout-cleared minus courier freight & COD handling only
     const formattedCourier = courierFreight > 0 ? `, Courier Freight: -₹${courierFreight}` : '';
     const formattedCod = codHandlingFee > 0 ? `, COD Handling: -₹${codHandlingFee}` : '';
-    let payoutMsg = `Payment of ${formattedNet} for shipment ${shipment.shipmentId} has been released to your wallet (Gross: ${formattedAmount}${formattedCourier}${formattedCod}). Delivery protection service is FREE — no platform fee deducted.`;
+    const formattedRto = rtoDeductionAmount > 0 ? `, RTO Recovery: -₹${rtoDeductionAmount}` : '';
+    let payoutMsg = `Payment of ${formattedNet} for shipment ${shipment.shipmentId} has been released to your wallet (Gross: ${formattedAmount}${formattedCourier}${formattedCod}${formattedRto}). Delivery protection service is FREE — no platform fee deducted.`;
+    
+    if (sender.bankDetails && sender.bankDetails.accountNumber) {
+      payoutMsg += ` Funds ready for withdrawal to A/C ending in ...${sender.bankDetails.accountNumber.slice(-4)} via 24/7 IMPS (30–60 min settlement).`;
+    } else if (sender.bankDetails && sender.bankDetails.upiId) {
+      payoutMsg += ` Funds ready for withdrawal to UPI ID ${sender.bankDetails.upiId} (near-instant settlement).`;
+    } else {
+      payoutMsg += ` Add bank payout details to your profile to withdraw via 24/7 IMPS.`;
+    }
+    
+    await createNotification(
+      sender._id,
+      'payments',
+      `Order Payout Released — ${shipment.shipmentId}`,
+      payoutMsg,
+      'payment'
+    );
+
+    if (recoveredRtoShipments.length > 0) {
+      const orderList = recoveredRtoShipments.map(s => `${s.shipmentId} (₹${s.amount})`).join(', ');
+      await createNotification(
+        sender._id,
+        'payments',
+        `RTO Charges Deducted from Settlement: -₹${rtoDeductionAmount}`,
+        `Pending RTO return freight of ₹${rtoDeductionAmount} for undelivered shipment(s) [${orderList}] was recovered from your settlement payout for shipment ${shipment.shipmentId}.`,
+        'payment'
+      );
+    }
     
     if (sender.bankDetails && sender.bankDetails.accountNumber) {
       payoutMsg += ` Funds ready for withdrawal to A/C ending in ...${sender.bankDetails.accountNumber.slice(-4)} via 24/7 IMPS (30–60 min settlement).`;
@@ -391,16 +474,16 @@ const cancelEscrow = async (shipmentId, userId, reason = 'Cancelled by user') =>
  * Refunds escrow principal to Receiver for undelivered courier shipments.
  * Zero penalties / deductions applied (100% principal refunded to receiver).
  */
-const refundUndeliveredEscrow = async (shipmentId, reason = 'Carrier reported delivery failed / undelivered') => {
+const refundUndeliveredEscrow = async (shipmentId, reason = 'Carrier reported delivery failed / undelivered', callerId = null) => {
   const shipment = await Shipment.findOne({ shipmentId: shipmentId.toUpperCase() });
   
   if (!shipment) {
     throw new Error('Shipment not found');
   }
 
-  // Authorization check: Verify caller identity matches shipment participant
-  if (receiverId && shipment.receiverId && shipment.receiverId.toString() !== receiverId.toString()) {
-    if (shipment.senderId && shipment.senderId.toString() !== receiverId.toString()) {
+  // Authorization check: Verify caller identity matches shipment participant if callerId provided
+  if (callerId && shipment.receiverId && shipment.receiverId.toString() !== callerId.toString()) {
+    if (shipment.senderId && shipment.senderId.toString() !== callerId.toString()) {
       throw new Error('Unauthorized: User is not authorized to release this shipment payment');
     }
   }
@@ -421,8 +504,14 @@ const refundUndeliveredEscrow = async (shipmentId, reason = 'Carrier reported de
   const isOnlineEscrow = !isCod && !isPaidOffline;
 
   // Courier partner bills SecureKaro for the return freight (RTO).
-  // This return freight fee is deducted from the seller's wallet reserve buffer.
   const rtoFreightCharge = Number(shipment.deliveryCharge) || 40;
+
+  const shouldDeductFromSettlement = Boolean(
+    shipment.rtoDeductFromSettlement ||
+    shipment.deductFromSettlement ||
+    shipment.codFeePaymentMethod === 'deduct_from_cod' ||
+    shipment.codFeePaymentMethod === 'settlement_deduction'
+  );
 
   // Platform does not collect or hold parcel payment; refund of parcel principal is settled directly with seller
   const supplierRelief = 0;
@@ -447,6 +536,16 @@ const refundUndeliveredEscrow = async (shipmentId, reason = 'Carrier reported de
   shipment.principalRefundedToReceiver = 0;
   shipment.undeliveredReason = reason;
   shipment.undeliveredProcessedAt = new Date();
+
+  if (shouldDeductFromSettlement) {
+    shipment.rtoDeductFromSettlement = true;
+    shipment.rtoSettlementPending = true;
+    shipment.courierChargeDeductedFrom = 'pending_recovery';
+    shipment.courierChargeStatus = 'Pending';
+  } else {
+    shipment.courierChargeDeductedFrom = 'seller_wallet';
+    shipment.courierChargeStatus = 'Deducted';
+  }
   await shipment.save();
 
   // ── Format helpers ─────────────────────────────────────────────────────────
@@ -467,39 +566,70 @@ const refundUndeliveredEscrow = async (shipmentId, reason = 'Carrier reported de
   // ── Handle supplier wallet & notifications ─────────────────────────────────
   const supplier = await User.findById(shipment.senderId);
   if (supplier) {
-    // Deduct RTO return freight from seller's wallet atomically
-    const supplierBefore = await User.findOneAndUpdate(
-      { _id: supplier._id },
-      { $inc: { walletBalance: -rtoFreightCharge } },
-      { new: false }
-    );
-    const balBefore = supplierBefore ? parseFloat((Number(supplierBefore.walletBalance) || 0).toFixed(2)) : 0;
-    const balAfter = parseFloat((balBefore - rtoFreightCharge).toFixed(2));
+    if (shouldDeductFromSettlement) {
+      // Do NOT deduct immediately from wallet! Queued for deduction from upcoming order settlements
+      const currentBal = Number(supplier.walletBalance) || 0;
+      await recordTransaction({
+        userId: supplier._id,
+        type: 'debit',
+        amount: 0,
+        source: 'rto_freight',
+        description: `RTO return freight (₹${rtoFreightCharge}) queued for deduction from upcoming order settlements for undelivered shipment ${shipment.shipmentId} (AWB: ${shipment.awbCode || 'N/A'})`,
+        paymentGateway: 'settlement_adjustment',
+        balanceBefore: currentBal,
+        balanceAfter: currentBal,
+        metadata: {
+          shipmentId: shipment.shipmentId,
+          awbCode: shipment.awbCode,
+          reason,
+          rtoFreightCharge,
+          deductFromSettlement: true,
+          status: 'pending_settlement_deduction'
+        }
+      });
 
-    await recordTransaction({
-      userId: supplier._id,
-      type: 'debit',
-      amount: rtoFreightCharge,
-      source: 'rto_freight',
-      description: `RTO return freight charged by courier for undelivered shipment ${shipment.shipmentId} (AWB: ${shipment.awbCode || 'N/A'})`,
-      paymentGateway: 'system',
-      balanceBefore: balBefore,
-      balanceAfter: balAfter,
-      metadata: {
-        shipmentId: shipment.shipmentId,
-        awbCode: shipment.awbCode,
-        reason,
-        rtoFreightCharge
-      }
-    });
+      await createNotification(
+        supplier._id,
+        'local_shipping',
+        `RTO Return Freight Queued for Settlement: ${fmt(rtoFreightCharge)} (${shipment.shipmentId})`,
+        `Courier marked shipment ${shipment.shipmentId} as undelivered / RTO (${reason}). Return freight of ${fmt(rtoFreightCharge)} will be automatically deducted from your upcoming delivered order settlements instead of your wallet balance. The parcel is returning to your pickup address.`,
+        'payment'
+      );
+    } else {
+      // Deduct RTO return freight from seller's wallet atomically
+      const supplierBefore = await User.findOneAndUpdate(
+        { _id: supplier._id },
+        { $inc: { walletBalance: -rtoFreightCharge } },
+        { new: false }
+      );
+      const balBefore = supplierBefore ? parseFloat((Number(supplierBefore.walletBalance) || 0).toFixed(2)) : 0;
+      const balAfter = parseFloat((balBefore - rtoFreightCharge).toFixed(2));
 
-    await createNotification(
-      supplier._id,
-      'local_shipping',
-      `RTO Return Freight: -${fmt(rtoFreightCharge)} (${shipment.shipmentId})`,
-      `Courier marked shipment ${shipment.shipmentId} as undelivered / RTO (${reason}). Return freight of ${fmt(rtoFreightCharge)} was deducted from your wallet reserve. The parcel is returning to your pickup address.`,
-      'payment'
-    );
+      await recordTransaction({
+        userId: supplier._id,
+        type: 'debit',
+        amount: rtoFreightCharge,
+        source: 'rto_freight',
+        description: `RTO return freight charged by courier for undelivered shipment ${shipment.shipmentId} (AWB: ${shipment.awbCode || 'N/A'})`,
+        paymentGateway: 'system',
+        balanceBefore: balBefore,
+        balanceAfter: balAfter,
+        metadata: {
+          shipmentId: shipment.shipmentId,
+          awbCode: shipment.awbCode,
+          reason,
+          rtoFreightCharge
+        }
+      });
+
+      await createNotification(
+        supplier._id,
+        'local_shipping',
+        `RTO Return Freight: -${fmt(rtoFreightCharge)} (${shipment.shipmentId})`,
+        `Courier marked shipment ${shipment.shipmentId} as undelivered / RTO (${reason}). Return freight of ${fmt(rtoFreightCharge)} was deducted from your wallet reserve. The parcel is returning to your pickup address.`,
+        'payment'
+      );
+    }
   }
 
   return {
