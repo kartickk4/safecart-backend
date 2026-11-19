@@ -1,4 +1,4 @@
-﻿/**
+/**
  * aiRouterService.js
  * Intelligent Multi-Provider AI Routing Service for SecureKaro.
  * 

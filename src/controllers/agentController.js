@@ -338,9 +338,11 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
   }
 
   // If the user is requesting to book or start a shipment, bypass conversational AI and let the booking state machine handle it directly!
-  const lowerMsg = msg.toLowerCase().trim();
-  const isBookingRequest = /^(book|send|create|new|start|dispatch)\s*(a\s*)?(shipment|parcel|order|courier|delivery)?$/i.test(lowerMsg)
-    || lowerMsg === 'book' || lowerMsg === 'send parcel' || lowerMsg === 'book shipment' || lowerMsg === 'new shipment' || lowerMsg === 'book new shipment';
+  const cleanMsg = msg.replace(/[📦🚚🚀]/g, '').toLowerCase().trim();
+  const isBookingRequest = /^(book|send|create|new|start|dispatch)\b.*(shipment|parcel|order|courier|delivery|booking)/i.test(cleanMsg)
+    || /^(book|send|start|new)$/i.test(cleanMsg)
+    || cleanMsg.includes('book shipment')
+    || cleanMsg.includes('book a new shipment');
   if (isBookingRequest) {
     return null;
   }
@@ -891,9 +893,11 @@ const handleChat = async (req, res) => {
 
       // ── STEP 0: GREETING ─────────────────────────────────────────────────
       case STEPS.GREETING: {
-        const lowerMsg = (message || '').toLowerCase().trim();
-        const isBookingRequest = /^(book|send|create|new|start|dispatch)\s*(a\s*)?(shipment|parcel|order|courier|delivery)?$/i.test(lowerMsg)
-          || lowerMsg === 'book' || lowerMsg === 'send parcel' || lowerMsg === 'book shipment' || lowerMsg === 'new shipment' || lowerMsg === 'book new shipment';
+        const cleanMsg = (message || '').replace(/[📦🚚🚀]/g, '').toLowerCase().trim();
+        const isBookingRequest = /^(book|send|create|new|start|dispatch)\b.*(shipment|parcel|order|courier|delivery|booking)/i.test(cleanMsg)
+          || /^(book|send|start|new)$/i.test(cleanMsg)
+          || cleanMsg.includes('book shipment')
+          || cleanMsg.includes('book a new shipment');
 
         // ── AI-Powered 1-Click WhatsApp / Social Media Order Extractor ───────
         try {
