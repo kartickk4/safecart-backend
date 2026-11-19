@@ -1,0 +1,3 @@
+# SecureKaro Agent Instructions
+Read and strictly adhere to SECUREKARO_INVARIANTS.md before editing code.
+Always verify syntax (`node -c <file>`) before committing changes.
