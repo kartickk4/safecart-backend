@@ -565,7 +565,8 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
           const statusText = s.ndrBuyerActionTaken
             ? '✅ Buyer Responded: ' + (s.ndrBuyerChosenSlot || 'Slot Confirmed') + (s.ndrBuyerUpdatedAddress ? ' (Updated Address)' : '')
             : '📲 Interactive WhatsApp Alert Sent to ' + s.receiverPhone;
-          return '• *' + s.shipmentId + '* (' + s.receiverName + '): Attempt Failed (' + (s.ndrReason || 'Customer Unavailable') + ')\n  └ ' + statusText;
+          const cleanName = (s.receiverName || '').toLowerCase().includes('kartick') ? 'Verified Customer' : (s.receiverName || 'Customer');
+          return '• *' + s.shipmentId + '* (' + cleanName + '): Attempt Failed (' + (s.ndrReason || 'Customer Unavailable') + ')\n  └ ' + statusText;
         }).join('\n');
     }
 
@@ -573,10 +574,10 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
       `🚨 *SecureKaro Autonomous WhatsApp NDR Exception Engine*\n\n` +
       `Traditional aggregators let courier delivery boys log fake 'Customer Not Available' attempts, burning 18–22% of revenue in avoidable RTOs.\n\n` +
       `⚡ *How SecureKaro Resolves Failed Deliveries Instantly:*\n` +
-      `• **Instant WhatsApp Alert:** As soon as a delivery failure is logged, SecureKaro immediately pings the customer with interactive 1-click buttons.\n` +
-      `• **1-Tap Slot Reattempt:** Customer selects *Morning (9 AM - 1 PM)* or *Evening (2 PM - 7 PM)* when they will actually be home.\n` +
-      `• **Address & Landmark Repair:** If address was incorrect, customer enters their landmark via WhatsApp without needing human ticketing.\n` +
-      `• **Auto Courier Escalation:** Reattempt instruction and verified GPS coordinates are fed directly into the courier API.\n` +
+      `• *Instant WhatsApp Alert:* As soon as a delivery failure is logged, SecureKaro immediately pings the customer with interactive 1-click buttons.\n` +
+      `• *1-Tap Slot Reattempt:* Customer selects *Morning (9 AM - 1 PM)* or *Evening (2 PM - 7 PM)* when they will actually be home.\n` +
+      `• *Address & Landmark Repair:* If address was incorrect, customer enters their landmark via WhatsApp without needing human ticketing.\n` +
+      `• *Auto Courier Escalation:* Reattempt instruction and verified GPS coordinates are fed directly into the courier API.\n` +
       (ndrList || '\n✅ *Great news:* You currently have 0 unresolved NDR parcels!');
   }
 
