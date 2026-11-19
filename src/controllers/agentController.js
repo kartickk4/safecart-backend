@@ -308,11 +308,10 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
     session.isEditing = false;
     session.editingField = '';
 
-    const firstName = user.fullName ? user.fullName.split(' ')[0] : 'Merchant';
     return {
       handled: true,
       reply:
-        `👋 Hi ${firstName}! I'm *SecureKaro AI Agent* 🚀 — your autonomous logistics partner & intelligent e-commerce problem solver.\n\n` +
+        `👋 Hello! I'm *SecureKaro AI Agent* 🚀 — your autonomous logistics partner & intelligent e-commerce problem solver.\n\n` +
         `Here is what I can do for you:\n` +
         `• 📦 *Book a Shipment* — Type parcel details in one go or step-by-step\n` +
         `• 🔍 *Live Tracking* — Type *"track SPL-..."* or ask for your latest order status\n` +
@@ -336,6 +335,14 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
         reply: `🛑 *Booking draft cancelled.*\n\nI'm ready for anything else! You can ask questions, track shipments, check your wallet, or type *"Book shipment"* whenever you're ready.`
       };
     }
+  }
+
+  // If the user is requesting to book or start a shipment, bypass conversational AI and let the booking state machine handle it directly!
+  const lowerMsg = msg.toLowerCase().trim();
+  const isBookingRequest = /^(book|send|create|new|start|dispatch)\s*(a\s*)?(shipment|parcel|order|courier|delivery)?$/i.test(lowerMsg)
+    || lowerMsg === 'book' || lowerMsg === 'send parcel' || lowerMsg === 'book shipment' || lowerMsg === 'new shipment' || lowerMsg === 'book new shipment';
+  if (isBookingRequest) {
+    return null;
   }
 
   let intelligentReply = null;
@@ -581,17 +588,28 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
       (ndrList || '\n✅ *Great news:* You currently have 0 unresolved NDR parcels!');
   }
 
-  // 11D. True Cost-to-Deliver Courier Routing
-  else if (/\b(cost to deliver|true cost|cheapest courier|best courier|courier routing|courier rank|allocation)\b/i.test(msg)) {
+  // 11D. Live Courier Rates & Pricing Matrix (Transparent Rates, NOT an abstract formula!)
+  else if (/\b(shipping rate|shipping rates|courier rate|courier rates|freight rate|freight rates|shipping cost|shipping costs|delivery charge|delivery charges|rate card|rates|cost to deliver|delivery cost|price list|courier charges|how much is shipping|cheapest courier|best courier)\b/i.test(msg)) {
     intelligentReply =
-      `📊 *True Cost-to-Deliver vs Cheap Freight*\n\n` +
-      `Many aggregators advertise deceptively cheap base freight (e.g. ₹42), but assign carriers with 20%+ RTO failure rates and frequent ₹120 weight penalties — resulting in a real cost of **₹85+ per delivered parcel**!\n\n` +
-      `⭐ *How SecureKaro Optimizes Your Shipping Cost:*\n` +
-      `• **Real Cost Formula:** Freight + (RTO Failure Risk × Return Fee) + Weight Dispute Risk\n` +
-      `• **Delivery Reliability:** Quotes show real Pincode Delivery Success Rates (e.g. 94% Success).\n` +
-      `• **AI Profit Winner:** Automatically highlights the courier with the lowest total expected cost.\n\n` +
-      `🚚 *Want to check exact rates for your route?*\n` +
-      `Type: *"Rate from 110001 to 700049 for 0.5 kg"* or tap the **Rates** tab below!`;
+      `📊 *SecureKaro Live Courier Rate Card & Pricing Matrix*\n\n` +
+      `All rates start at 0.5 kg (500g) base weight across 29,000+ Indian pincodes with free doorstep pickup:\n\n` +
+      `📦 *Standard Forward Courier Rates (per 0.5 kg slab):*\n` +
+      `• *Within City (Local):* ₹42 – ₹48 (Same day / 24 hrs)\n` +
+      `• *Within State (Regional):* ₹52 – ₹58 (1–2 days)\n` +
+      `• *Metro to Metro:* ₹62 – ₹68 (2–3 days)\n` +
+      `• *Rest of India (National):* ₹72 – ₹84 (3–4 days)\n` +
+      `• *Special Zones (J&K, North East):* ₹95 – ₹115 (4–6 days)\n\n` +
+      `🚚 *Supported Courier Partners & Perks:*\n` +
+      `• *Shadowfax Direct:* Starts at ₹42 • ₹0 COD Fee • Instant wallet remittance\n` +
+      `• *Delhivery Surface/Air:* Starts at ₹44 • 94% delivery success rate • Best coverage\n` +
+      `• *DTDC Express:* Starts at ₹49 • High-reliability air & surface network\n` +
+      `• *BlueDart / Xpressbees:* Premium fast-transit commercial express\n\n` +
+      `💵 *Transparent Billing & Benefits:*\n` +
+      `• *COD Collection Fee:* ₹0 on Shadowfax Direct; nominal (~₹40) on others\n` +
+      `• *Weight Protection:* Standard 500g increments (Weight Shield protected)\n` +
+      `• *Doorstep Pickup:* 100% Free pickup from your registered hub\n\n` +
+      `🔍 *Want live rates for a specific route?*\n` +
+      `Type: *"Rate to 700001 for 0.5 kg"* or tap *"Book Shipment"* to compare live rates across all carriers!`;
   }
 
   // 11E. Instant Pincode & Courier Rate Checker Tool
@@ -664,9 +682,8 @@ const resolveIntelligentQuery = async (rawMessage, user, session) => {
 
   // 14. General Greetings & Capabilities Overview
   else if (/^(hi|hello|hey|namaste|greetings|help|who are you|what can you do|features)$/i.test(msg)) {
-    const firstName = user.fullName ? user.fullName.split(' ')[0] : 'Merchant';
     intelligentReply =
-      `👋 Hi ${firstName}! I am your **SecureKaro AI Logistics Assistant & Problem Solver** 🚀\n\n` +
+      `👋 Hello! I am your **SecureKaro AI Logistics Assistant & Problem Solver** 🚀\n\n` +
       `I can help you with:\n` +
       `• 📦 *Booking Shipments:* Step-by-step or paste all parcel details in one sentence\n` +
       `• 🔍 *Live Tracking:* Just ask *"track SPL-..."* to see parcel milestones and courier status\n` +

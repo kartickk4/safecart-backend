@@ -400,12 +400,14 @@ async function answerMerchantQuery({ query, user, context }) {
     "Guidelines:\n" +
     "- NEVER use the word 'Escrow' or 'SecureKaro Escrow'. Refer to 'SecureKaro Delivery Protection' instead.\n" +
     "- NEVER claim a buyer payment link is sent for bookings.\n" +
+    "- Address the user professionally as 'Merchant' or 'Seller' — never use personal individual names.\n" +
+    "- Always format lists with clean '• ' bullets on separate lines with clear line breaks. Never concatenate points with dashes on a single line.\n" +
     "- Respond completely without cutting off mid-sentence, using crisp formatting (*bold*) and concise bullet points (2-4 short paragraphs max).\n" +
     "- If the user asks in Hinglish or Hindi, answer naturally in friendly Hinglish/Hindi.\n" +
     "- Never invent fake tracking numbers or false account balances.";
 
   const userContextInfo =
-    `Merchant Name: ${user.fullName || 'Merchant'}\n` +
+    `Merchant: Verified Seller\n` +
     `Merchant Pincode: ${user.pincode || '110001'}\n` +
     `Available Wallet Balance: ₹${user.walletBalance || 0}\n` +
     `Recent Shipments Context: ${JSON.stringify(context?.recentShipments || [])}\n` +
