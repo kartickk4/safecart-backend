@@ -6,7 +6,7 @@ const signupSchema = z.object({
   password: z.string().min(6, 'Password must be at least 6 characters long'),
   phone: z.string().trim().min(10, 'Phone number must be at least 10 digits'),
   fullName: z.string().trim().min(2, 'Full name must be at least 2 characters long'),
-  role: z.enum(['Supplier', 'Receiver']).optional().default('Receiver'),
+  role: z.enum(['Supplier', 'Receiver']).optional().default('Supplier'),
   referralCode: z.string().trim().optional(),
   agreedToDpdpConsent: z.boolean().optional(),
   is18Plus: z.boolean().optional(),

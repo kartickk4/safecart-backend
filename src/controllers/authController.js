@@ -255,7 +255,7 @@ const signup = async (req, res) => {
  */
 const login = async (req, res) => {
   const { email, password } = req.body;
-  const role = req.body.role === 'Supplier' ? 'Supplier' : 'Receiver';
+  const requestedRole = req.body.role;
 
   try {
     if (!email || !password) {
@@ -275,18 +275,27 @@ const login = async (req, res) => {
       });
     }
 
-    // Check for user email matching specific role
-    let user = await User.findOne({ email: normalizedEmail, role }).select('+passwordHash');
-
-    // If not found with specified role, check if account exists under another role for clear feedback
-    if (!user) {
-      const alternateUser = await User.findOne({ email: normalizedEmail });
-      if (alternateUser) {
-        return res.status(401).json({ 
-          error: `No ${role} account registered for this email. Found a ${alternateUser.role} account. Please select the correct portal.` 
-        });
+    // Check for user email matching specific role, defaulting to Supplier (Seller Hub)
+    let user;
+    if (requestedRole) {
+      user = await User.findOne({ email: normalizedEmail, role: requestedRole }).select('+passwordHash');
+      if (!user) {
+        const alternateUser = await User.findOne({ email: normalizedEmail });
+        if (alternateUser) {
+          return res.status(401).json({ 
+            error: `No ${requestedRole} account registered for this email. Found a ${alternateUser.role} account. Please select the correct portal.` 
+          });
+        }
+        return res.status(401).json({ error: 'Invalid email or password' });
       }
-      return res.status(401).json({ error: 'Invalid email or password' });
+    } else {
+      user = await User.findOne({ email: normalizedEmail, role: 'Supplier' }).select('+passwordHash');
+      if (!user) {
+        user = await User.findOne({ email: normalizedEmail }).select('+passwordHash');
+      }
+      if (!user) {
+        return res.status(401).json({ error: 'Invalid email or password' });
+      }
     }
 
     // SECURITY: Account Lockout check against distributed brute force (#05)
@@ -356,7 +365,7 @@ const sendOtp = async (req, res) => {
     role = phone.role || role;
     phone = phone.phone;
   }
-  role = role === 'Supplier' ? 'Supplier' : 'Receiver';
+  role = role === 'Receiver' ? 'Receiver' : 'Supplier';
 
   if (!phone || typeof phone !== 'string') {
     return res.status(400).json({ error: 'Phone number is required' });
@@ -439,7 +448,7 @@ const verifyOtp = async (req, res) => {
     createIfNotFound = phone.createIfNotFound !== undefined ? phone.createIfNotFound : createIfNotFound;
     phone = phone.phone;
   }
-  role = role === 'Supplier' ? 'Supplier' : 'Receiver';
+  role = role === 'Receiver' ? 'Receiver' : 'Supplier';
 
   if (!phone || !code) {
     return res.status(400).json({ error: 'Phone and OTP code are required' });
@@ -721,7 +730,7 @@ const forgotPassword = async (req, res) => {
     phone = email.phone || phone;
     email = email.email;
   }
-  role = role === 'Supplier' ? 'Supplier' : 'Receiver';
+  role = role === 'Receiver' ? 'Receiver' : 'Supplier';
 
   const rawPhone = (phone || '').toString().trim().replace(/\s+/g, '');
   const rawEmail = (email || '').toString().toLowerCase().trim();
@@ -826,7 +835,7 @@ const resetPassword = async (req, res) => {
     phone = email.phone || phone;
     email = email.email;
   }
-  role = role === 'Supplier' ? 'Supplier' : 'Receiver';
+  role = role === 'Receiver' ? 'Receiver' : 'Supplier';
 
   const rawPhone = (phone || '').toString().trim().replace(/\s+/g, '');
   const rawEmail = (email || '').toString().toLowerCase().trim();
@@ -1020,7 +1029,7 @@ const googleAuth = async (req, res) => {
         avatarUrl: avatarUrl || '',
         googleId: googleId || '',
         passwordHash: dummyPassword,
-        role: requestedRole || 'Receiver',
+        role: requestedRole || 'Supplier',
         isEmailVerified: true,
         referralCode: newReferralCode,
         referredBy: referrer ? referrer._id : null
