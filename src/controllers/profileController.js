@@ -473,12 +473,22 @@ const sendPhoneVerificationOtp = async (req, res) => {
 
     // Send SMS
     const smsService = loadMod('services', 'smsService');
+    let smsResult = null;
     try {
       if (smsService && smsService.sendSmsOtp) {
-        await smsService.sendSmsOtp(normalizedPhone, otpCode, 'BANK_DETAILS_UPDATE');
+        smsResult = await smsService.sendSmsOtp(normalizedPhone, otpCode, 'BANK_DETAILS_UPDATE');
       }
     } catch (smsErr) {
       console.warn('[SMS Dispatch Warning]:', smsErr.message);
+      smsResult = { success: false, error: smsErr.message };
+    }
+
+    if (smsResult && !smsResult.success) {
+      console.error('[SMS Delivery Failed]:', smsResult.error);
+      return res.status(502).json({
+        error: smsResult.error || 'Failed to deliver SMS. Please check your SMS provider configuration.',
+        ...(process.env.NODE_ENV !== 'production' && { debugOtp: otpCode })
+      });
     }
 
     return res.json({

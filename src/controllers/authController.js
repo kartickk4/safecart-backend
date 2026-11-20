@@ -419,10 +419,19 @@ const sendOtp = async (req, res) => {
       attempts: 0
     });
 
+    let smsResult = null;
     try {
-      await smsService.sendSmsOtp(normalizedPhone, otpCode, 'SIGNUP_AUTH');
+      smsResult = await smsService.sendSmsOtp(normalizedPhone, otpCode, 'SIGNUP_AUTH');
     } catch (smsErr) {
       console.warn('[SMS SERVICE Dispatch Warning]:', smsErr.message);
+      smsResult = { success: false, error: smsErr.message };
+    }
+
+    if (smsResult && !smsResult.success) {
+      console.error('[SMS Delivery Failed]:', smsResult.error);
+      return res.status(502).json({
+        error: smsResult.error || 'Failed to dispatch SMS code.'
+      });
     }
 
     res.json({
