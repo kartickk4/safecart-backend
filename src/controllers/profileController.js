@@ -457,38 +457,38 @@ const sendPhoneVerificationOtp = async (req, res) => {
     }
 
     const Otp = loadMod('models', 'Otp');
-    // Generate 6-digit random OTP
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const bcrypt = require('bcryptjs');
+    // Generate 6-digit cryptographically secure OTP
+    const crypto = require('crypto');
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
 
-    // Clear older OTPs for this phone and role
-    await Otp.deleteMany({ identifier: normalizedPhone, type: 'phone', role: req.user.role });
+    // Normalize to last 10 digits for consistent storage
+    const otpIdentifier = normalizedPhone.replace(/\D/g, '').slice(-10);
 
-    // Store OTP
+    // Clear older OTPs for this phone and role (all phone format variants)
+    await Otp.deleteMany({ type: 'phone', role: req.user.role, $or: [
+      { identifier: normalizedPhone },
+      { identifier: otpIdentifier },
+      { identifier: `+91${otpIdentifier}` }
+    ]});
+
+    // Store OTP hashed (consistent with authController)
+    const hashedOtp = await bcrypt.hash(otpCode, 8);
     await Otp.create({
-      identifier: normalizedPhone,
-      otp: otpCode,
+      identifier: otpIdentifier,
+      otp: hashedOtp,
       type: 'phone',
       role: req.user.role
     });
 
     // Send SMS
     const smsService = loadMod('services', 'smsService');
-    let smsResult = null;
     try {
       if (smsService && smsService.sendSmsOtp) {
-        smsResult = await smsService.sendSmsOtp(normalizedPhone, otpCode, 'BANK_DETAILS_UPDATE');
+        await smsService.sendSmsOtp(normalizedPhone, otpCode, 'BANK_DETAILS_UPDATE');
       }
     } catch (smsErr) {
       console.warn('[SMS Dispatch Warning]:', smsErr.message);
-      smsResult = { success: false, error: smsErr.message };
-    }
-
-    if (smsResult && !smsResult.success) {
-      console.error('[SMS Delivery Failed]:', smsResult.error);
-      return res.status(502).json({
-        error: smsResult.error || 'Failed to deliver SMS. Please check your SMS provider configuration.',
-        ...(process.env.NODE_ENV !== 'production' && { debugOtp: otpCode })
-      });
     }
 
     return res.json({
@@ -522,14 +522,30 @@ const verifyPhoneOtp = async (req, res) => {
 
   try {
     const Otp = loadMod('models', 'Otp');
+    const bcrypt = require('bcryptjs');
+    // Normalize to last 10 digits (consistent with how it was stored)
+    const otpIdentifier = normalizedPhone.replace(/\D/g, '').slice(-10);
+
     const validOtp = await Otp.findOne({
-      identifier: normalizedPhone,
-      otp: String(otp).trim(),
+      identifier: otpIdentifier,
       type: 'phone',
       role: req.user.role
-    });
+    }).sort({ createdAt: -1 });
 
     if (!validOtp) {
+      return res.status(400).json({ error: 'Invalid or expired OTP. Please check the code or request a new one.' });
+    }
+
+    // Check attempt limit
+    if ((validOtp.attempts || 0) >= 5) {
+      await Otp.deleteOne({ _id: validOtp._id });
+      return res.status(429).json({ error: 'Too many failed attempts. Please request a new OTP.' });
+    }
+
+    const isMatch = await bcrypt.compare(String(otp).trim(), validOtp.otp);
+    if (!isMatch) {
+      validOtp.attempts = (validOtp.attempts || 0) + 1;
+      await validOtp.save();
       return res.status(400).json({ error: 'Invalid or expired OTP. Please check the code or request a new one.' });
     }
 
