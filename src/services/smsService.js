@@ -52,17 +52,22 @@ const sendSmsOtp = async (phone, otpCode, purpose = 'SIGNUP_AUTH') => {
   const dltParams = DLT_TEMPLATE_MAP[purpose] || DLT_TEMPLATE_MAP['SIGNUP_AUTH'];
 
   try {
-    const response = await axios.get('https://www.fast2sms.com/dev/bulkV2', {
-      params: {
-        authorization: fast2smsKey,
+    const response = await axios.post('https://www.fast2sms.com/dev/bulkV2',
+      new URLSearchParams({
         sender_id: dltParams.sender_id,
-        message_id: dltParams.message_id,
-        variables_values: dltParams.variables_values,
+        message: dltParams.message_id,
         route: 'dlt',
-        numbers: cleanPhone
-      },
-      timeout: 10000
-    });
+        numbers: cleanPhone,
+        variables_values: dltParams.variables_values
+      }).toString(),
+      {
+        headers: {
+          authorization: fast2smsKey,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        timeout: 10000
+      }
+    );
 
     console.log(`[SMS OTP - ${purpose}] Fast2SMS response for +91${cleanPhone}:`, response.data?.message || response.data);
     return {
