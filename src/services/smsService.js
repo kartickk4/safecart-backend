@@ -53,10 +53,8 @@ const sendSmsOtp = async (phone, otpCode, purpose = 'SIGNUP_AUTH') => {
 
   try {
     const response = await axios.post('https://www.fast2sms.com/dev/bulkV2', {
-      route: 'dlt',
-      sender_id: dltParams.sender_id,
-      message: dltParams.message_id,
-      variables_values: dltParams.variables_values,
+      route: 'otp',
+      variables_values: otpCode,
       numbers: cleanPhone
     }, {
       headers: {
