@@ -51,15 +51,24 @@ const sendSmsOtp = async (phone, otpCode, purpose = 'SIGNUP_AUTH') => {
   };
   const dltParams = DLT_TEMPLATE_MAP[purpose] || DLT_TEMPLATE_MAP['SIGNUP_AUTH'];
 
+  // DLT template IDs (Fast2SMS Content Template Message IDs, Sender: SECKRO)
+  // Template 232172: "{#number#} is your OTP to reset your SecureKaro account password. Valid for {#number#} minutes..."
+  // Template 232171: "{#number#} is your OTP to update bank account or UPI details on SecureKaro. Valid for {#number#} minutes..."
+  // IMPORTANT: pipe | must NOT be URL-encoded — build raw form string to preserve it
+  const DLT_TEMPLATE_MAP = {
+    SIGNUP_AUTH:         { sender_id: 'SECKRO', message_id: '232172', variables_values: `${otpCode}|10` },
+    PASSWORD_RESET:      { sender_id: 'SECKRO', message_id: '232172', variables_values: `${otpCode}|10` },
+    BANK_DETAILS_UPDATE: { sender_id: 'SECKRO', message_id: '232171', variables_values: `${otpCode}|10` }
+  };
+  const dltParams = DLT_TEMPLATE_MAP[purpose] || DLT_TEMPLATE_MAP['SIGNUP_AUTH'];
+
   try {
-    const response = await axios.post('https://www.fast2sms.com/dev/bulkV2', {
-      route: 'otp',
-      variables_values: otpCode,
-      numbers: cleanPhone
-    }, {
+    // Build raw form body — do NOT use URLSearchParams (it encodes | as %7C breaking Fast2SMS variable substitution)
+    const rawBody = `sender_id=${encodeURIComponent(dltParams.sender_id)}&message=${dltParams.message_id}&route=dlt&numbers=${cleanPhone}&variables_values=${dltParams.variables_values}`;
+    const response = await axios.post('https://www.fast2sms.com/dev/bulkV2', rawBody, {
       headers: {
         authorization: fast2smsKey,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/x-www-form-urlencoded'
       },
       timeout: 10000
     });
