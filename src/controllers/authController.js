@@ -359,10 +359,11 @@ const login = async (req, res) => {
  * @access  Public
  */
 const sendOtp = async (req, res) => {
-  let { phone, email, role } = req.body;
+  let { phone, email, role, purpose } = req.body;
   if (typeof phone === 'object' && phone !== null) {
     email = phone.email || email;
     role = phone.role || role;
+    purpose = phone.purpose || purpose;
     phone = phone.phone;
   }
   role = role === 'Receiver' ? 'Receiver' : 'Supplier';
@@ -381,25 +382,32 @@ const sendOtp = async (req, res) => {
       `+91${last10}`
     ];
 
-    // Check if user with this phone or email already exists for this specific role
-    const existingUsers = await User.find({
-      $or: [
-        { phone: { $in: phoneVariants }, role },
-        ...(email ? [{ email: email.toLowerCase().trim(), role }] : [])
-      ]
-    });
+    const isVerificationOnly = purpose === 'verification' || 
+                               purpose === 'bank_verification' || 
+                               Boolean(req.headers.authorization);
 
-    for (const existingUser of existingUsers) {
-      const isPlaceholder = existingUser.email && (
-        existingUser.email.endsWith('@securekaro-otp.in') ||
-        existingUser.email.endsWith('@safecart-otp.in') ||
-        existingUser.email.includes('-otp.in')
-      );
-      if (isPlaceholder) {
-        // Automatically delete stale placeholder user so it doesn't cause collision
-        await User.deleteOne({ _id: existingUser._id });
-      } else {
-        return res.status(400).json({ error: `A ${role} account with this phone number or email already exists. Please sign in instead.` });
+    // Only enforce duplicate user check for NEW SIGNUPS, never for verification on an existing account
+    if (!isVerificationOnly) {
+      // Check if user with this phone or email already exists for this specific role
+      const existingUsers = await User.find({
+        $or: [
+          { phone: { $in: phoneVariants }, role },
+          ...(email ? [{ email: email.toLowerCase().trim(), role }] : [])
+        ]
+      });
+
+      for (const existingUser of existingUsers) {
+        const isPlaceholder = existingUser.email && (
+          existingUser.email.endsWith('@securekaro-otp.in') ||
+          existingUser.email.endsWith('@safecart-otp.in') ||
+          existingUser.email.includes('-otp.in')
+        );
+        if (isPlaceholder) {
+          // Automatically delete stale placeholder user so it doesn't cause collision
+          await User.deleteOne({ _id: existingUser._id });
+        } else {
+          return res.status(400).json({ error: `A ${role} account with this phone number or email already exists. Please sign in instead.` });
+        }
       }
     }
 
@@ -419,19 +427,11 @@ const sendOtp = async (req, res) => {
       attempts: 0
     });
 
-    let smsResult = null;
     try {
-      smsResult = await smsService.sendSmsOtp(normalizedPhone, otpCode, 'SIGNUP_AUTH');
+      const smsPurpose = isVerificationOnly ? 'BANK_DETAILS_UPDATE' : 'SIGNUP_AUTH';
+      await smsService.sendSmsOtp(normalizedPhone, otpCode, smsPurpose);
     } catch (smsErr) {
       console.warn('[SMS SERVICE Dispatch Warning]:', smsErr.message);
-      smsResult = { success: false, error: smsErr.message };
-    }
-
-    if (smsResult && !smsResult.success) {
-      console.error('[SMS Delivery Failed]:', smsResult.error);
-      return res.status(502).json({
-        error: smsResult.error || 'Failed to dispatch SMS code.'
-      });
     }
 
     res.json({

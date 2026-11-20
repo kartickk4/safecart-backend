@@ -41,26 +41,14 @@ const sendSmsOtp = async (phone, otpCode, purpose = 'SIGNUP_AUTH') => {
   }
 
   // DLT template IDs (Fast2SMS Content Template Message IDs, Sender: SECKRO)
-  // Template 232172: "{#number#} is your OTP to reset your SecureKaro account password. Valid for {#number#} minutes..."
-  // Template 232171: "{#number#} is your OTP to update bank account or UPI details on SecureKaro. Valid for {#number#} minutes..."
-  // variables_values: pipe-separated values for each {#number#} variable in the template
+  // Template 232307: "{#number#} is your OTP to update bank account or UPI details on SecureKaro. Valid for {#number#} minutes..."
+  // IMPORTANT: pipe | must NOT be URL-encoded — raw form string preserves it
   const DLT_TEMPLATE_MAP = {
-    SIGNUP_AUTH:         { sender_id: 'SECKRO', message_id: '232172', variables_values: `${otpCode}|10` },
-    PASSWORD_RESET:      { sender_id: 'SECKRO', message_id: '232172', variables_values: `${otpCode}|10` },
-    BANK_DETAILS_UPDATE: { sender_id: 'SECKRO', message_id: '232171', variables_values: `${otpCode}|10` }
+    SIGNUP_AUTH:         { sender_id: 'SECKRO', message_id: '232307', variables_values: `${otpCode}|10` },
+    PASSWORD_RESET:      { sender_id: 'SECKRO', message_id: '232307', variables_values: `${otpCode}|10` },
+    BANK_DETAILS_UPDATE: { sender_id: 'SECKRO', message_id: '232307', variables_values: `${otpCode}|10` }
   };
-  const dltParams = DLT_TEMPLATE_MAP[purpose] || DLT_TEMPLATE_MAP['SIGNUP_AUTH'];
-
-  // DLT template IDs (Fast2SMS Content Template Message IDs, Sender: SECKRO)
-  // Template 232172: "{#number#} is your OTP to reset your SecureKaro account password. Valid for {#number#} minutes..."
-  // Template 232171: "{#number#} is your OTP to update bank account or UPI details on SecureKaro. Valid for {#number#} minutes..."
-  // IMPORTANT: pipe | must NOT be URL-encoded — build raw form string to preserve it
-  const DLT_TEMPLATE_MAP = {
-    SIGNUP_AUTH:         { sender_id: 'SECKRO', message_id: '232172', variables_values: `${otpCode}|10` },
-    PASSWORD_RESET:      { sender_id: 'SECKRO', message_id: '232172', variables_values: `${otpCode}|10` },
-    BANK_DETAILS_UPDATE: { sender_id: 'SECKRO', message_id: '232171', variables_values: `${otpCode}|10` }
-  };
-  const dltParams = DLT_TEMPLATE_MAP[purpose] || DLT_TEMPLATE_MAP['SIGNUP_AUTH'];
+  const dltParams = DLT_TEMPLATE_MAP[purpose] || DLT_TEMPLATE_MAP['BANK_DETAILS_UPDATE'];
 
   try {
     // Build raw form body — do NOT use URLSearchParams (it encodes | as %7C breaking Fast2SMS variable substitution)
