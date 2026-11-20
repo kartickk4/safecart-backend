@@ -51,15 +51,16 @@ const sendSmsOtp = async (phone, otpCode, purpose = 'SIGNUP_AUTH') => {
   // - 232310: Login and Sign Up OTP
   // - 232308: Forgot Password OTP
   // - 232307: Bank Details & Security Verification OTP
-  // - 232017: Wallet Recharge Alert
-  // - 232191: Shipment Booking Alert
+  // - 232320: Wallet Recharge Alert
+  // - 232321: Shipment Booking & Tracking Alert
   const DLT_TEMPLATE_MAP = {
     SIGNUP_AUTH:         { sender_id: 'SECKRO', message_id: '232310', variables_values: `${otpCode}|10` },
     LOGIN_AUTH:          { sender_id: 'SECKRO', message_id: '232310', variables_values: `${otpCode}|10` },
     PASSWORD_RESET:      { sender_id: 'SECKRO', message_id: '232308', variables_values: `${otpCode}|10` },
     BANK_DETAILS_UPDATE: { sender_id: 'SECKRO', message_id: '232307', variables_values: `${otpCode}|10` },
-    WALLET_RECHARGE:     { sender_id: 'SECKRO', message_id: '232017', variables_values: `${otpCode}|${otpCode}` },
-    BOOKING_ALERT:       { sender_id: 'SECKRO', message_id: '232191', variables_values: `${otpCode}` }
+    WALLET_RECHARGE:     { sender_id: 'SECKRO', message_id: '232320', variables_values: `${otpCode}|${otpCode}` },
+    BOOKING_ALERT:       { sender_id: 'SECKRO', message_id: '232321', variables_values: `${otpCode}` },
+    TRACKING_ALERT:      { sender_id: 'SECKRO', message_id: '232321', variables_values: `${otpCode}` }
   };
   const dltParams = DLT_TEMPLATE_MAP[purpose] || DLT_TEMPLATE_MAP['SIGNUP_AUTH'];
 
@@ -142,12 +143,12 @@ const sendPaymentLinkSms = async ({ phone, shipmentId, amount, description, carr
     console.warn('[WHATSAPP ROUTE Note]:', waErr.message);
   }
 
-  // Dispatch DLT SMS alert via Fast2SMS Template 232191
+  // Dispatch DLT SMS alert via Fast2SMS Template 232321 (Parcel Tracking & Booking)
   try {
     const fast2smsKey = process.env.FAST2SMS_API_KEY;
     const shortTrackingId = shipmentId ? String(shipmentId).slice(-10) : 'PARCEL';
     if (fast2smsKey && cleanPhone.length === 10) {
-      const rawBody = `sender_id=SECKRO&message=232191&route=dlt&numbers=${cleanPhone}&variables_values=${encodeURIComponent(shortTrackingId)}`;
+      const rawBody = `sender_id=SECKRO&message=232321&route=dlt&numbers=${cleanPhone}&variables_values=${encodeURIComponent(shortTrackingId)}`;
       await axios.post('https://www.fast2sms.com/dev/bulkV2', rawBody, {
         headers: { authorization: fast2smsKey, 'Content-Type': 'application/x-www-form-urlencoded' },
         timeout: 10000
@@ -268,11 +269,26 @@ const sendDispatchTrackingSms = async ({ phone, shipmentId, receiverName, carrie
     console.warn('[WHATSAPP ROUTE Note]:', waErr.message);
   }
 
+  // Dispatch DLT Parcel Tracking SMS alert via Fast2SMS Template 232321
+  try {
+    const fast2smsKey = process.env.FAST2SMS_API_KEY;
+    const trackingCode = awbCode || (shipmentId ? String(shipmentId).slice(-10) : 'PARCEL');
+    if (fast2smsKey && cleanPhone.length === 10) {
+      const rawBody = `sender_id=SECKRO&message=232321&route=dlt&numbers=${cleanPhone}&variables_values=${encodeURIComponent(trackingCode)}`;
+      await axios.post('https://www.fast2sms.com/dev/bulkV2', rawBody, {
+        headers: { authorization: fast2smsKey, 'Content-Type': 'application/x-www-form-urlencoded' },
+        timeout: 10000
+      });
+    }
+  } catch (dltErr) {
+    console.warn('[DLT TRACKING SMS Warning]:', dltErr.message);
+  }
+
   return { success: true, phone: cleanPhone, smsText, routedToWhatsApp: true };
 };
 
 /**
- * Sends Wallet Recharge alert via Fast2SMS DLT Template 232017.
+ * Sends Wallet Recharge alert via Fast2SMS DLT Template 232320.
  */
 const sendWalletRechargeSms = async ({ phone, amount, balance }) => {
   const cleanPhone = (phone || '').toString().trim().replace(/\D/g, '').slice(-10);
@@ -283,7 +299,7 @@ const sendWalletRechargeSms = async ({ phone, amount, balance }) => {
     const numAmount = Math.round(Number(amount) || 0);
     const numBal = Math.round(Number(balance) || numAmount);
     const vars = `${numAmount}|${numBal}`;
-    const rawBody = `sender_id=SECKRO&message=232017&route=dlt&numbers=${cleanPhone}&variables_values=${vars}`;
+    const rawBody = `sender_id=SECKRO&message=232320&route=dlt&numbers=${cleanPhone}&variables_values=${vars}`;
     const response = await axios.post('https://www.fast2sms.com/dev/bulkV2', rawBody, {
       headers: { authorization: fast2smsKey, 'Content-Type': 'application/x-www-form-urlencoded' },
       timeout: 10000
