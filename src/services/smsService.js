@@ -16,11 +16,18 @@ const axios = require('axios');
  * ALL other notifications (Order payment links, courier booking, tracking, 
  * delivery verification OTPs, returns & payouts) are routed EXCLUSIVELY via WhatsApp.
  */
-const ALLOWED_SMS_PURPOSES = ['SIGNUP_AUTH', 'PASSWORD_RESET', 'BANK_DETAILS_UPDATE'];
+const ALLOWED_SMS_PURPOSES = [
+  'SIGNUP_AUTH',
+  'LOGIN_AUTH',
+  'PASSWORD_RESET',
+  'BANK_DETAILS_UPDATE',
+  'WALLET_RECHARGE',
+  'BOOKING_ALERT'
+];
 
 const sendSmsOtp = async (phone, otpCode, purpose = 'SIGNUP_AUTH') => {
   if (!ALLOWED_SMS_PURPOSES.includes(purpose)) {
-    console.warn(`[SMS POLICY ENFORCED] SMS suppressed for unauthorized purpose: '${purpose}'. Only Sign-Up, Password Reset, and Bank Details OTPs are delivered via Phone SMS. All other messages route through WhatsApp.`);
+    console.warn(`[SMS POLICY ENFORCED] SMS suppressed for unauthorized purpose: '${purpose}'. Only approved transactional OTPs and alerts are delivered via Phone SMS.`);
     return { success: false, suppressed: true, reason: 'unauthorized_sms_purpose', otpCode };
   }
 
@@ -40,15 +47,21 @@ const sendSmsOtp = async (phone, otpCode, purpose = 'SIGNUP_AUTH') => {
     return { success: false, mode: 'invalid_phone', otpCode };
   }
 
-  // DLT template IDs (Fast2SMS Content Template Message IDs, Sender: SECKRO)
-  // Template 232307: "{#number#} is your OTP to update bank account or UPI details on SecureKaro. Valid for {#number#} minutes..."
-  // IMPORTANT: pipe | must NOT be URL-encoded — raw form string preserves it
+  // Official Fast2SMS DLT Content Template Mapping (Sender: SECKRO)
+  // - 232310: Login and Sign Up OTP
+  // - 232308: Forgot Password OTP
+  // - 232307: Bank Details & Security Verification OTP
+  // - 232017: Wallet Recharge Alert
+  // - 232191: Shipment Booking Alert
   const DLT_TEMPLATE_MAP = {
-    SIGNUP_AUTH:         { sender_id: 'SECKRO', message_id: '232307', variables_values: `${otpCode}|10` },
-    PASSWORD_RESET:      { sender_id: 'SECKRO', message_id: '232307', variables_values: `${otpCode}|10` },
-    BANK_DETAILS_UPDATE: { sender_id: 'SECKRO', message_id: '232307', variables_values: `${otpCode}|10` }
+    SIGNUP_AUTH:         { sender_id: 'SECKRO', message_id: '232310', variables_values: `${otpCode}|10` },
+    LOGIN_AUTH:          { sender_id: 'SECKRO', message_id: '232310', variables_values: `${otpCode}|10` },
+    PASSWORD_RESET:      { sender_id: 'SECKRO', message_id: '232308', variables_values: `${otpCode}|10` },
+    BANK_DETAILS_UPDATE: { sender_id: 'SECKRO', message_id: '232307', variables_values: `${otpCode}|10` },
+    WALLET_RECHARGE:     { sender_id: 'SECKRO', message_id: '232017', variables_values: `${otpCode}|${otpCode}` },
+    BOOKING_ALERT:       { sender_id: 'SECKRO', message_id: '232191', variables_values: `${otpCode}` }
   };
-  const dltParams = DLT_TEMPLATE_MAP[purpose] || DLT_TEMPLATE_MAP['BANK_DETAILS_UPDATE'];
+  const dltParams = DLT_TEMPLATE_MAP[purpose] || DLT_TEMPLATE_MAP['SIGNUP_AUTH'];
 
   try {
     // Build raw form body — do NOT use URLSearchParams (it encodes | as %7C breaking Fast2SMS variable substitution)
@@ -127,6 +140,21 @@ const sendPaymentLinkSms = async ({ phone, shipmentId, amount, description, carr
     }
   } catch (waErr) {
     console.warn('[WHATSAPP ROUTE Note]:', waErr.message);
+  }
+
+  // Dispatch DLT SMS alert via Fast2SMS Template 232191
+  try {
+    const fast2smsKey = process.env.FAST2SMS_API_KEY;
+    const shortTrackingId = shipmentId ? String(shipmentId).slice(-10) : 'PARCEL';
+    if (fast2smsKey && cleanPhone.length === 10) {
+      const rawBody = `sender_id=SECKRO&message=232191&route=dlt&numbers=${cleanPhone}&variables_values=${encodeURIComponent(shortTrackingId)}`;
+      await axios.post('https://www.fast2sms.com/dev/bulkV2', rawBody, {
+        headers: { authorization: fast2smsKey, 'Content-Type': 'application/x-www-form-urlencoded' },
+        timeout: 10000
+      });
+    }
+  } catch (dltErr) {
+    console.warn('[DLT BOOKING SMS Warning]:', dltErr.message);
   }
 
   return {
@@ -243,9 +271,34 @@ const sendDispatchTrackingSms = async ({ phone, shipmentId, receiverName, carrie
   return { success: true, phone: cleanPhone, smsText, routedToWhatsApp: true };
 };
 
+/**
+ * Sends Wallet Recharge alert via Fast2SMS DLT Template 232017.
+ */
+const sendWalletRechargeSms = async ({ phone, amount, balance }) => {
+  const cleanPhone = (phone || '').toString().trim().replace(/\D/g, '').slice(-10);
+  const fast2smsKey = process.env.FAST2SMS_API_KEY;
+  if (!fast2smsKey || cleanPhone.length !== 10) return { success: false };
+
+  try {
+    const numAmount = Math.round(Number(amount) || 0);
+    const numBal = Math.round(Number(balance) || numAmount);
+    const vars = `${numAmount}|${numBal}`;
+    const rawBody = `sender_id=SECKRO&message=232017&route=dlt&numbers=${cleanPhone}&variables_values=${vars}`;
+    const response = await axios.post('https://www.fast2sms.com/dev/bulkV2', rawBody, {
+      headers: { authorization: fast2smsKey, 'Content-Type': 'application/x-www-form-urlencoded' },
+      timeout: 10000
+    });
+    return { success: true, requestId: response.data?.request_id };
+  } catch (err) {
+    console.warn('[WALLET RECHARGE SMS Warning]:', err.response?.data?.message || err.message);
+    return { success: false, error: err.message };
+  }
+};
+
 module.exports = {
   sendSmsOtp,
   sendPaymentLinkSms,
+  sendWalletRechargeSms,
   sendReverseCourierAssignedSms,
   sendPhotoReviewChoiceSms,
   sendDispatchTrackingSms

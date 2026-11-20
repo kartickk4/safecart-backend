@@ -175,6 +175,18 @@ const verifyPayment = async (req, res) => {
 
     console.log(`[Wallet] Seller ${user._id} recharged ₹${numAmount} (Total paid: ₹${calculatedTotal}). Balance: ₹${balanceBefore} -> ₹${balanceAfter}`);
 
+    // Dispatch Wallet Recharge SMS via Fast2SMS DLT Template 232017
+    try {
+      const smsService = loadMod('services', 'smsService');
+      if (smsService && smsService.sendWalletRechargeSms && (user.phone || req.user.phone)) {
+        smsService.sendWalletRechargeSms({
+          phone: user.phone || req.user.phone,
+          amount: numAmount,
+          balance: balanceAfter
+        });
+      }
+    } catch (_) {}
+
     res.json({
       success: true,
       walletBalance: balanceAfter,
