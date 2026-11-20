@@ -465,12 +465,11 @@ const sendPhoneVerificationOtp = async (req, res) => {
     // Normalize to last 10 digits for consistent storage
     const otpIdentifier = normalizedPhone.replace(/\D/g, '').slice(-10);
 
-    // Clear older OTPs for this phone and role (all phone format variants)
-    await Otp.deleteMany({ type: 'phone', role: req.user.role, $or: [
-      { identifier: normalizedPhone },
-      { identifier: otpIdentifier },
-      { identifier: `+91${otpIdentifier}` }
-    ]});
+    // Clear older OTPs for this phone (all phone format variants)
+    await Otp.deleteMany({
+      type: 'phone',
+      identifier: { $in: [normalizedPhone, otpIdentifier, `+91${otpIdentifier}`] }
+    });
 
     // Store OTP hashed (consistent with authController)
     const hashedOtp = await bcrypt.hash(otpCode, 8);
@@ -478,7 +477,7 @@ const sendPhoneVerificationOtp = async (req, res) => {
       identifier: otpIdentifier,
       otp: hashedOtp,
       type: 'phone',
-      role: req.user.role
+      role: req.user?.role || 'Supplier'
     });
 
     // Send SMS
@@ -527,9 +526,8 @@ const verifyPhoneOtp = async (req, res) => {
     const otpIdentifier = normalizedPhone.replace(/\D/g, '').slice(-10);
 
     const validOtp = await Otp.findOne({
-      identifier: otpIdentifier,
-      type: 'phone',
-      role: req.user.role
+      identifier: { $in: [otpIdentifier, normalizedPhone, `+91${otpIdentifier}`] },
+      type: 'phone'
     }).sort({ createdAt: -1 });
 
     if (!validOtp) {
@@ -542,7 +540,16 @@ const verifyPhoneOtp = async (req, res) => {
       return res.status(429).json({ error: 'Too many failed attempts. Please request a new OTP.' });
     }
 
-    const isMatch = await bcrypt.compare(String(otp).trim(), validOtp.otp);
+    const inputOtp = String(otp).trim();
+    let isMatch = (validOtp.otp === inputOtp);
+    if (!isMatch) {
+      try {
+        isMatch = await bcrypt.compare(inputOtp, validOtp.otp);
+      } catch (_) {
+        isMatch = false;
+      }
+    }
+
     if (!isMatch) {
       validOtp.attempts = (validOtp.attempts || 0) + 1;
       await validOtp.save();
