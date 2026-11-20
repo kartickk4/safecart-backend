@@ -1,8 +1,8 @@
 const axios = require('axios');
 
 /**
- * Sends a real OTP SMS to any Indian phone number via Fast2SMS Non-DLT OTP Route.
- * No DLT registration required. Delivers to Airtel, Jio, Vi, BSNL instantly.
+ * Sends a real OTP SMS to any Indian phone number via Fast2SMS DLT Route.
+ * Uses Jio DLT approved templates (Sender: SECKRO). Delivers to Airtel, Jio, Vi, BSNL.
  * @param {string} phone - Target phone number (any format — we extract last 10 digits)
  * @param {string} otpCode - 6-digit OTP code to send
  */
@@ -40,12 +40,22 @@ const sendSmsOtp = async (phone, otpCode, purpose = 'SIGNUP_AUTH') => {
     return { success: false, mode: 'invalid_phone', otpCode };
   }
 
+  // DLT template IDs (Jio DLT approved, Sender: SECKRO)
+  const DLT_TEMPLATE_MAP = {
+    SIGNUP_AUTH:         { sender_id: 'SECKRO', message_id: '232172', variables_values: otpCode },
+    PASSWORD_RESET:      { sender_id: 'SECKRO', message_id: '232172', variables_values: otpCode },
+    BANK_DETAILS_UPDATE: { sender_id: 'SECKRO', message_id: '232171', variables_values: otpCode }
+  };
+  const dltParams = DLT_TEMPLATE_MAP[purpose] || DLT_TEMPLATE_MAP['SIGNUP_AUTH'];
+
   try {
     const response = await axios.get('https://www.fast2sms.com/dev/bulkV2', {
       params: {
         authorization: fast2smsKey,
-        variables_values: otpCode,
-        route: 'otp',
+        sender_id: dltParams.sender_id,
+        message_id: dltParams.message_id,
+        variables_values: dltParams.variables_values,
+        route: 'dlt',
         numbers: cleanPhone
       },
       timeout: 10000
