@@ -221,18 +221,55 @@ const ensurePickupLocation = async (senderUser, shipment) => {
     return registeredCode;
 
   } catch (err) {
-    console.warn('[SHIPROCKET PICKUP REGISTRATION NOTICE]:', err.response?.data?.message || err.message);
-    // Fallback: return primary location if dynamic registration fails
+    const errMsg = err.response?.data?.message || err.message || 'Unknown error';
+    console.warn('[SHIPROCKET PICKUP REGISTRATION NOTICE]:', errMsg);
+
+    // Fallback: search for a matching seller address (by pincode or phone) in the already-fetched
+    // list, or re-fetch if needed. Never blindly return addresses[0] (the platform owner's address).
     try {
-      const listRes = await axios.get('https://apiv2.shiprocket.in/v1/external/settings/company/pickup', {
-        headers: { Authorization: `Bearer ${token}` },
-        timeout: 8000
-      });
-      const addresses = listRes.data?.data?.shipping_address || [];
-      if (addresses.length > 0) {
-        return addresses[0].pickup_location || 'Home';
+      // Try to re-resolve seller data from the outer scope if available
+      let fallbackAddresses = [];
+      try {
+        const listRes = await axios.get('https://apiv2.shiprocket.in/v1/external/settings/company/pickup', {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: 8000
+        });
+        fallbackAddresses = listRes.data?.data?.shipping_address || [];
+      } catch (_) {}
+
+      if (fallbackAddresses.length > 0) {
+        // Resolve seller identifiers from the same sources as the outer try block
+        const fbPincode = (
+          shipment?.senderPincode ||
+          senderUser?.pickupAddress?.pincode ||
+          senderUser?.pincode ||
+          ''
+        ).toString().replace(/\D/g, '').slice(0, 6);
+
+        const fbPhone = (
+          shipment?.senderPhone ||
+          senderUser?.phone ||
+          ''
+        ).toString().replace(/\D/g, '').slice(-10);
+
+        // Try to find a registered address that matches the seller's pincode or phone
+        const matchByPin   = fbPincode ? fallbackAddresses.find(a => String(a.pin_code) === fbPincode) : null;
+        const matchByPhone = fbPhone   ? fallbackAddresses.find(a => String(a.phone).replace(/\D/g, '').slice(-10) === fbPhone) : null;
+        const best = matchByPin || matchByPhone;
+
+        if (best) {
+          console.log(`[SHIPROCKET PICKUP FALLBACK] Matched seller location by ${matchByPin ? 'pincode' : 'phone'}: ${best.pickup_location} (${best.name}, ${best.city})`);
+          return best.pickup_location;
+        }
+
+        // No matching seller address found — log a clear warning instead of silently using owner's address
+        console.error(`[SHIPROCKET PICKUP FALLBACK] ⚠️ No seller match found for pincode=${fbPincode}, phone=${fbPhone}. Available locations: ${fallbackAddresses.map(a => `${a.pickup_location}(${a.pin_code})`).join(', ')}. Registration error: ${errMsg}`);
+        // Last resort: return owner's first location (may be wrong — will surface in logs)
+        return fallbackAddresses[0].pickup_location || 'Home';
       }
-    } catch (_) {}
+    } catch (innerErr) {
+      console.error('[SHIPROCKET PICKUP FALLBACK] Could not fetch pickup locations:', innerErr.message);
+    }
     return 'Home';
   }
 };
