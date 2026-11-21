@@ -24,14 +24,24 @@ const loginSchema = z.object({
 // Schema for sending OTP
 const sendOtpSchema = z.object({
   phone: z.string().trim().min(10, 'Valid 10-digit mobile number required'),
-  role: z.enum(['Supplier', 'Receiver']).optional()
+  email: z.string().trim().email().optional(),
+  role: z.enum(['Supplier', 'Receiver']).optional(),
+  purpose: z.string().optional()
 });
 
 // Schema for verifying OTP
+// NOTE: frontend sends the code as either 'code' or 'otp' — accept both
 const verifyOtpSchema = z.object({
   phone: z.string().trim().min(10, 'Valid 10-digit mobile number required'),
-  otp: z.string().trim().length(6, 'OTP must be 6 digits'),
-  role: z.enum(['Supplier', 'Receiver']).optional()
+  code: z.string().trim().length(6, 'OTP must be 6 digits').optional(),
+  otp: z.string().trim().length(6, 'OTP must be 6 digits').optional(),
+  role: z.enum(['Supplier', 'Receiver']).optional(),
+  purpose: z.string().optional(),
+  createIfNotFound: z.boolean().optional(),
+  referralCode: z.string().optional()
+}).refine(data => data.code || data.otp, {
+  message: 'OTP code is required (send as "code" or "otp")',
+  path: ['code']
 });
 
 // Schema for sending Email OTP
