@@ -238,23 +238,38 @@ const ensurePickupLocation = async (senderUser, shipment) => {
 };
 
 /**
- * Match user-selected carrier slug to available Shiprocket courier companies
+ * Match user-selected carrier slug to available Shiprocket courier companies.
+ * Supports compound slugs like 'shadowfax_direct', 'delhivery_direct', 'shadowfax_technologies'.
+ * Returns null (not cheapest fallback) if the user explicitly selected a carrier and it is unavailable,
+ * so the caller can decide whether to abort or notify the user.
  */
 const findMatchingCourier = (availableCouriers, targetCarrierSlug) => {
   if (!availableCouriers || availableCouriers.length === 0) return null;
 
   const slug = (targetCarrierSlug || 'auto').toLowerCase();
 
-  // If user selected specific courier partner, find closest matching active courier
+  // If user explicitly selected 'auto', pick cheapest
+  if (slug === 'auto') {
+    const sorted = [...availableCouriers].sort((a, b) => (Number(a.rate) || 999) - (Number(b.rate) || 999));
+    return sorted[0];
+  }
+
+  // Compound slug keywords — most specific first so 'shadowfax_direct' wins over 'shadowfax'
   const slugKeywords = {
-    bluedart: ['blue dart', 'bluedart'],
-    delhivery: ['delhivery'],
-    shadowfax: ['shadowfax'],
-    ekart: ['ekart'],
-    dtdc: ['dtdc'],
-    xpressbees: ['xpressbees', 'xpress bees'],
-    ecom: ['ecom express', 'ecom'],
-    smartr: ['smartr']
+    shadowfax_direct:    ['shadowfax direct'],
+    shadowfax_technologies: ['shadowfax technologies', 'shadowfax tech'],
+    shadowfax:           ['shadowfax'],
+    bluedart:            ['blue dart', 'bluedart'],
+    delhivery_direct:    ['delhivery direct'],
+    delhivery:           ['delhivery'],
+    ekart:               ['ekart'],
+    dtdc:                ['dtdc'],
+    xpressbees:          ['xpressbees', 'xpress bees'],
+    ecom:                ['ecom express', 'ecom'],
+    smartr:              ['smartr'],
+    nimbuspost:          ['nimbuspost'],
+    indiapost:           ['india post', 'speed post'],
+    rapido:              ['rapido'],
   };
 
   const keywords = slugKeywords[slug];
@@ -263,10 +278,16 @@ const findMatchingCourier = (availableCouriers, targetCarrierSlug) => {
       const name = (c.courier_name || '').toLowerCase();
       return keywords.some(k => name.includes(k));
     });
-    if (match) return match;
+    if (match) {
+      return match;
+    }
+    // User explicitly chose a carrier that is NOT available on this route — return null
+    // so the caller can fall back to cheapest and log a warning, rather than silently booking wrong carrier
+    console.warn(`[SHIPROCKET CARRIER MATCH] Chosen carrier slug "${targetCarrierSlug}" not found in available couriers. Available: ${availableCouriers.map(c => c.courier_name).join(', ')}`);
+    return null;
   }
 
-  // If 'auto' or no keyword match found, pick the lowest rate available courier
+  // Unknown slug — pick cheapest as default
   const sorted = [...availableCouriers].sort((a, b) => (Number(a.rate) || 999) - (Number(b.rate) || 999));
   return sorted[0];
 };

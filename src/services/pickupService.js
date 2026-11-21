@@ -244,8 +244,8 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
     shipment.pickupAgentPhone = executive.phone;
     shipment.pickupLocationAddress = pickupAddressStr;
     shipment.pickupRateComparison = comparison;
-    const isDelhiveryDirect = String(assignedCarrierSlug || '') === 'delhivery_direct';
-    const isShadowfaxDirect = String(assignedCarrierSlug || '') === 'shadowfax_direct';
+    const isDelhiveryDirect = String(assignedCarrierSlug || '').startsWith('delhivery');
+    const isShadowfaxDirect = String(assignedCarrierSlug || '').startsWith('shadowfax');
     const isNimbus = String(assignedCarrierSlug || '').startsWith('nimbus_');
     shipment.pickupAggregator = isDelhiveryDirect 
       ? 'Delhivery Direct Production Network' 
