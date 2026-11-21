@@ -763,28 +763,32 @@ const forgotPassword = async (req, res) => {
 
     if (rawPhone) {
       const last10 = rawPhone.replace(/\D/g, '').slice(-10);
-      user = await User.findOne({
-        $or: [
-          { phone: rawPhone, role },
-          { phone: last10, role },
-          { phone: `+91${last10}`, role }
-        ]
-      });
+      const phoneQueries = [
+        { phone: rawPhone },
+        { phone: last10 },
+        { phone: `+91${last10}` }
+      ];
+      user = await User.findOne({ $or: phoneQueries, role });
+      if (!user) {
+        user = await User.findOne({ $or: phoneQueries });
+      }
       identifier = rawPhone;
     } else {
       user = await User.findOne({ email: rawEmail, role });
+      if (!user) {
+        user = await User.findOne({ email: rawEmail });
+      }
       identifier = rawEmail;
     }
 
     if (!user) {
-      // SECURITY: Generic response to defeat user enumeration attacks (CWE-204 / #04)
-      return res.json({
-        message: `If a ${role} account exists with this ${rawPhone ? 'phone number' : 'email address'}, a password reset verification code has been dispatched. Valid for 5 minutes.`,
-        smsDispatched: false,
-        emailDispatched: false,
-        identifier
+      return res.status(404).json({
+        error: `No account found with this ${rawPhone ? 'mobile number' : 'email address'}. Please verify your details or sign up.`
       });
     }
+
+    // Sync role with actual account role
+    role = user.role || role;
 
     // Generate 6-digit cryptographically secure email OTP (#14)
     const otpCode = crypto.randomInt(100000, 1000000).toString();
@@ -872,19 +876,29 @@ const resetPassword = async (req, res) => {
       identifiersToCheck.push(last10, `+91${last10}`);
     }
 
-    const validOtp = await Otp.findOne({
+    // Find valid OTP matching identifier (check with role first, fallback to without role)
+    let validOtp = await Otp.findOne({
       identifier: { $in: identifiersToCheck },
       type: 'password_reset',
       role
     }).sort({ createdAt: -1 });
 
     if (!validOtp) {
+      validOtp = await Otp.findOne({
+        identifier: { $in: identifiersToCheck },
+        type: 'password_reset'
+      }).sort({ createdAt: -1 });
+    }
+
+    if (!validOtp) {
       return res.status(400).json({ error: 'Invalid or expired password reset OTP code' });
     }
 
+    const effectiveRole = validOtp.role || role;
+
     // H-02: Invalidate OTP after 5 consecutive incorrect attempts
     if ((validOtp.attempts || 0) >= 5) {
-      await Otp.deleteMany({ identifier: { $in: identifiersToCheck }, type: 'password_reset', role });
+      await Otp.deleteMany({ identifier: { $in: identifiersToCheck }, type: 'password_reset' });
       return res.status(429).json({ error: 'Too many failed attempts. This password reset code has been invalidated. Please request a new code.' });
     }
 
@@ -895,25 +909,25 @@ const resetPassword = async (req, res) => {
       return res.status(400).json({ error: 'Invalid or expired password reset OTP code' });
     }
 
-    await Otp.deleteMany({ identifier: { $in: identifiersToCheck }, type: 'password_reset', role });
+    await Otp.deleteMany({ identifier: { $in: identifiersToCheck }, type: 'password_reset' });
 
     let user = null;
     if (rawEmail) {
-      user = await User.findOne({ email: rawEmail, role });
+      user = await User.findOne({ email: rawEmail, role: effectiveRole }) || await User.findOne({ email: rawEmail });
     }
     if (!user && rawPhone) {
       const last10 = rawPhone.replace(/\D/g, '').slice(-10);
       user = await User.findOne({
         $or: [
-          { phone: rawPhone, role },
-          { phone: last10, role },
-          { phone: `+91${last10}`, role }
+          { phone: rawPhone },
+          { phone: last10 },
+          { phone: `+91${last10}` }
         ]
       });
     }
 
     if (!user) {
-      return res.status(404).json({ error: `No ${role} account found matching this identifier.` });
+      return res.status(404).json({ error: `No account found matching this identifier.` });
     }
 
     const salt = await bcrypt.genSalt(10);

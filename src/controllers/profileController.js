@@ -1,6 +1,33 @@
 const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+const JWT_SECRET = process.env.JWT_SECRET;
+
+const generateAccessToken = (userOrId, tokenVersion = 0) => {
+  let id = userOrId;
+  let version = tokenVersion;
+  if (userOrId && typeof userOrId === 'object' && userOrId._id) {
+    id = userOrId._id;
+    version = userOrId.tokenVersion !== undefined ? userOrId.tokenVersion : 0;
+  }
+  return jwt.sign({ id, tokenVersion: version }, JWT_SECRET, {
+    expiresIn: '7d',
+  });
+};
+
+const setAuthCookie = (res, token) => {
+  if (!res || !token) return;
+  try {
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'none',
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+  } catch (_) {}
+};
 
 function loadMod(type, name) {
   const candidates = [
@@ -110,7 +137,8 @@ const updateProfile = async (req, res) => {
 
     // SECURITY: Require current password confirmation before changing critical identifiers (email/phone) (#15)
     const isEmailChanging = Boolean(email && email.toLowerCase().trim() !== user.email?.toLowerCase().trim());
-    const isPhoneChanging = Boolean(phone && phone.trim().replace(/\s+/g, '') !== (user.phone || '').trim().replace(/\s+/g, ''));
+    // Only considered changing if user already had a phone number, NOT when setting phone for the first time
+    const isPhoneChanging = Boolean(user.phone && phone && phone.trim().replace(/\s+/g, '') !== user.phone.trim().replace(/\s+/g, ''));
 
     if (isEmailChanging || isPhoneChanging) {
       const isOtpPlaceholder = user.email && (
@@ -261,6 +289,11 @@ const updateProfile = async (req, res) => {
     // Exclude password hash from response
     const userResponse = updatedUser.toObject();
     delete userResponse.passwordHash;
+
+    // Issue refreshed accessToken with updated tokenVersion so current valid session is not interrupted
+    const freshToken = generateAccessToken(updatedUser);
+    setAuthCookie(res, freshToken);
+    userResponse.accessToken = freshToken;
 
     res.json(userResponse);
   } catch (error) {
