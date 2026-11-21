@@ -7,7 +7,7 @@ const setAuthCookie = (res, token) => {
       sameSite: 'none',
       maxAge: 7 * 24 * 60 * 60 * 1000
     });
-  } catch (_) {}
+  } catch (_) { }
 };
 
 // M-07: Validate Pro subscription is currently active before inheriting across roles
@@ -53,7 +53,7 @@ function loadMod(type, name) {
     if (fs.existsSync(c + '.js')) return require(c + '.js');
     if (fs.existsSync(c)) return require(c);
   }
-  try { return require(`../${type}/${name}`); } catch(e) {}
+  try { return require(`../${type}/${name}`); } catch (e) { }
   return require(`./${name}`);
 }
 
@@ -148,7 +148,7 @@ const signup = async (req, res) => {
     const normalizedPhone = phone.trim().replace(/\s+/g, '');
 
     // Check if user account with this exact { email, role } or { phone, role } already exists
-    const userExists = await User.findOne({ 
+    const userExists = await User.findOne({
       $or: [
         { email: normalizedEmail, role },
         { phone: normalizedPhone, role }
@@ -291,8 +291,8 @@ const login = async (req, res) => {
       if (!user) {
         const alternateUser = await User.findOne(userQuery);
         if (alternateUser) {
-          return res.status(401).json({ 
-            error: `No ${requestedRole} account registered for this ${inputLabel}. Found a ${alternateUser.role} account. Please select the correct portal.` 
+          return res.status(401).json({
+            error: `No ${requestedRole} account registered for this ${inputLabel}. Found a ${alternateUser.role} account. Please select the correct portal.`
           });
         }
         return res.status(401).json({ error: `Invalid ${inputLabel} or password` });
@@ -391,9 +391,9 @@ const sendOtp = async (req, res) => {
       `+91${last10}`
     ];
 
-    const isVerificationOnly = purpose === 'verification' || 
-                               purpose === 'bank_verification' || 
-                               Boolean(req.headers.authorization);
+    const isVerificationOnly = purpose === 'verification' ||
+      purpose === 'bank_verification' ||
+      Boolean(req.headers.authorization);
 
     // Only enforce duplicate user check for NEW SIGNUPS, never for verification on an existing account
     if (!isVerificationOnly) {
@@ -505,9 +505,9 @@ const verifyOtp = async (req, res) => {
     await Otp.deleteOne({ _id: validOtp._id });
 
     // Check if verification-only (e.g. verifying phone during profile update or Google sign-in)
-    const isVerificationOnly = purpose === 'verification' || 
-                               createIfNotFound === false || 
-                               Boolean(req.headers.authorization);
+    const isVerificationOnly = purpose === 'verification' ||
+      createIfNotFound === false ||
+      Boolean(req.headers.authorization);
 
     const last10 = normalizedPhone.replace(/\D/g, '').slice(-10);
     const phoneVariants = [
@@ -530,19 +530,32 @@ const verifyOtp = async (req, res) => {
       }
 
       isNew = true;
-      const unguessableSecret = crypto.randomBytes(32).toString('hex');
-      const salt = await bcrypt.genSalt(10);
-      const passwordHash = await bcrypt.hash(unguessableSecret, salt);
+      let passwordHash;
+      if (req.body.password && typeof req.body.password === 'string' && req.body.password.length >= 6) {
+        const salt = await bcrypt.genSalt(10);
+        passwordHash = await bcrypt.hash(req.body.password, salt);
+      } else {
+        const unguessableSecret = crypto.randomBytes(32).toString('hex');
+        const salt = await bcrypt.genSalt(10);
+        passwordHash = await bcrypt.hash(unguessableSecret, salt);
+      }
+
       const newReferralCode = await generateReferralCode();
       let referrer = null;
       if (req.body.referralCode && req.body.referralCode.trim()) {
         referrer = await User.findOne({ referralCode: req.body.referralCode.trim().toUpperCase() });
       }
+
+      const assignedFullName = (req.body.fullName || '').toString().trim() || `${role} ${normalizedPhone.slice(-4)}`;
+      const assignedEmail = (req.body.email && req.body.email.includes('@'))
+        ? req.body.email.toLowerCase().trim()
+        : `${normalizedPhone.replace(/[^0-9]/g, '')}_${role.toLowerCase()}@securekaro-otp.in`;
+
       user = await User.create({
         phone: normalizedPhone,
-        email: `${normalizedPhone.replace(/[^0-9]/g, '')}_${role.toLowerCase()}@securekaro-otp.in`,
+        email: assignedEmail,
         passwordHash,
-        fullName: `${role} ${normalizedPhone.slice(-4)}`,
+        fullName: assignedFullName,
         role,
         referralCode: newReferralCode,
         referredBy: referrer ? referrer._id : null,
@@ -550,6 +563,21 @@ const verifyOtp = async (req, res) => {
       });
     } else {
       user.isPhoneVerified = true;
+      // If user was created with placeholder name/email, update to real ones if provided now
+      if (req.body.fullName && (user.fullName.startsWith('Supplier ') || user.fullName.startsWith('Receiver ') || user.fullName.startsWith('User '))) {
+        user.fullName = req.body.fullName.trim();
+      }
+      if (req.body.email && user.email.includes('-otp.in') && req.body.email.includes('@')) {
+        const cleanReqEmail = req.body.email.toLowerCase().trim();
+        const existingAcc = await User.findOne({ email: cleanReqEmail, _id: { $ne: user._id } });
+        if (!existingAcc) {
+          user.email = cleanReqEmail;
+        }
+      }
+      if (req.body.password && typeof req.body.password === 'string' && req.body.password.length >= 6) {
+        const salt = await bcrypt.genSalt(10);
+        user.passwordHash = await bcrypt.hash(req.body.password, salt);
+      }
       await user.save();
     }
 
@@ -571,7 +599,7 @@ const verifyOtp = async (req, res) => {
     }
 
     const accessToken = generateAccessToken(user);
-      setAuthCookie(res, accessToken);
+    setAuthCookie(res, accessToken);
 
     res.json({
       accessToken,
@@ -1090,7 +1118,7 @@ const googleAuth = async (req, res) => {
     }
 
     const accessToken = generateAccessToken(user);
-      setAuthCookie(res, accessToken);
+    setAuthCookie(res, accessToken);
 
     res.json({
       accessToken,
@@ -1216,7 +1244,7 @@ const switchRole = async (req, res) => {
     }
 
     const accessToken = generateAccessToken(newAccount);
-      setAuthCookie(res, accessToken);
+    setAuthCookie(res, accessToken);
     return res.json({
       accessToken,
       isNewAccount: true,
