@@ -232,7 +232,7 @@ const signup = async (req, res) => {
     });
 
     if (user) {
-      const accessToken = generateAccessToken(user._id);
+      const accessToken = generateAccessToken(user);
       setAuthCookie(res, accessToken);
 
       res.status(201).json({
@@ -327,7 +327,7 @@ const login = async (req, res) => {
         }
       }
 
-      const accessToken = generateAccessToken(user._id);
+      const accessToken = generateAccessToken(user);
       setAuthCookie(res, accessToken);
 
       res.json({
@@ -559,7 +559,7 @@ const verifyOtp = async (req, res) => {
       }
     }
 
-    const accessToken = generateAccessToken(user._id);
+    const accessToken = generateAccessToken(user);
       setAuthCookie(res, accessToken);
 
     res.json({
@@ -1064,7 +1064,7 @@ const googleAuth = async (req, res) => {
       }
     }
 
-    const accessToken = generateAccessToken(user._id);
+    const accessToken = generateAccessToken(user);
       setAuthCookie(res, accessToken);
 
     res.json({
@@ -1095,7 +1095,7 @@ const switchRole = async (req, res) => {
 
     if (currentUser.role === role) {
       return res.json({
-        accessToken: generateAccessToken(currentUser._id),
+        accessToken: generateAccessToken(currentUser),
         isNewAccount: false,
         user: formatUserResponse(currentUser, role)
       });
@@ -1118,7 +1118,7 @@ const switchRole = async (req, res) => {
         alternateUser.proUpgradedAt = currentUser.proUpgradedAt || new Date();
       }
       await alternateUser.save();
-      const accessToken = generateAccessToken(alternateUser._id);
+      const accessToken = generateAccessToken(alternateUser);
       setAuthCookie(res, accessToken);
       return res.json({
         accessToken,
@@ -1181,7 +1181,7 @@ const switchRole = async (req, res) => {
             await raceAccount.save();
           }
           return res.json({
-            accessToken: generateAccessToken(raceAccount._id),
+            accessToken: generateAccessToken(raceAccount),
             isNewAccount: false,
             user: formatUserResponse(raceAccount, role)
           });
@@ -1190,7 +1190,7 @@ const switchRole = async (req, res) => {
       throw createErr;
     }
 
-    const accessToken = generateAccessToken(newAccount._id);
+    const accessToken = generateAccessToken(newAccount);
       setAuthCookie(res, accessToken);
     return res.json({
       accessToken,
