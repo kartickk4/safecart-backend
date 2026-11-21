@@ -513,11 +513,11 @@ const sendPhoneVerificationOtp = async (req, res) => {
       role: req.user?.role || 'Supplier'
     });
 
-    // Send SMS
+    // Send SMS via Fast2SMS DLT Template 232354 (Update Phone Number)
     const smsService = loadMod('services', 'smsService');
     try {
       if (smsService && smsService.sendSmsOtp) {
-        await smsService.sendSmsOtp(normalizedPhone, otpCode, 'BANK_DETAILS_UPDATE');
+        await smsService.sendSmsOtp(normalizedPhone, otpCode, 'PHONE_UPDATE');
       }
     } catch (smsErr) {
       console.warn('[SMS Dispatch Warning]:', smsErr.message);

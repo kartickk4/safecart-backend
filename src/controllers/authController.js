@@ -437,7 +437,9 @@ const sendOtp = async (req, res) => {
     });
 
     try {
-      const smsPurpose = isVerificationOnly ? 'BANK_DETAILS_UPDATE' : 'SIGNUP_AUTH';
+      const smsPurpose = purpose === 'bank_verification' || purpose === 'bank_update'
+        ? 'BANK_DETAILS_UPDATE'
+        : (isVerificationOnly || purpose === 'phone_update' || purpose === 'update_phone' ? 'PHONE_UPDATE' : 'SIGNUP_AUTH');
       await smsService.sendSmsOtp(normalizedPhone, otpCode, smsPurpose);
     } catch (smsErr) {
       console.warn('[SMS SERVICE Dispatch Warning]:', smsErr.message);

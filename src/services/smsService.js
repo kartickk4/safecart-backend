@@ -21,6 +21,8 @@ const ALLOWED_SMS_PURPOSES = [
   'LOGIN_AUTH',
   'PASSWORD_RESET',
   'BANK_DETAILS_UPDATE',
+  'PHONE_UPDATE',
+  'UPDATE_PHONE',
   'WALLET_RECHARGE',
   'BOOKING_ALERT'
 ];
@@ -51,6 +53,7 @@ const sendSmsOtp = async (phone, otpCode, purpose = 'SIGNUP_AUTH') => {
   // - 232310: Login and Sign Up OTP
   // - 232308: Forgot Password OTP
   // - 232307: Bank Details & Security Verification OTP
+  // - 232354: Update Phone Number OTP
   // - 232320: Wallet Recharge Alert
   // - 232321: Shipment Booking & Tracking Alert
   const DLT_TEMPLATE_MAP = {
@@ -58,6 +61,8 @@ const sendSmsOtp = async (phone, otpCode, purpose = 'SIGNUP_AUTH') => {
     LOGIN_AUTH:          { sender_id: 'SECKRO', message_id: '232310', variables_values: `${otpCode}|10` },
     PASSWORD_RESET:      { sender_id: 'SECKRO', message_id: '232308', variables_values: `${otpCode}|10` },
     BANK_DETAILS_UPDATE: { sender_id: 'SECKRO', message_id: '232307', variables_values: `${otpCode}|10` },
+    PHONE_UPDATE:        { sender_id: 'SECKRO', message_id: '232354', variables_values: `${otpCode}|10` },
+    UPDATE_PHONE:        { sender_id: 'SECKRO', message_id: '232354', variables_values: `${otpCode}|10` },
     WALLET_RECHARGE:     { sender_id: 'SECKRO', message_id: '232320', variables_values: `${otpCode}|${otpCode}` },
     BOOKING_ALERT:       { sender_id: 'SECKRO', message_id: '232321', variables_values: `${otpCode}` },
     TRACKING_ALERT:      { sender_id: 'SECKRO', message_id: '232321', variables_values: `${otpCode}` }
@@ -67,13 +72,30 @@ const sendSmsOtp = async (phone, otpCode, purpose = 'SIGNUP_AUTH') => {
   try {
     // Build raw form body — do NOT use URLSearchParams (it encodes | as %7C breaking Fast2SMS variable substitution)
     const rawBody = `sender_id=${encodeURIComponent(dltParams.sender_id)}&message=${dltParams.message_id}&route=dlt&numbers=${cleanPhone}&variables_values=${dltParams.variables_values}`;
-    const response = await axios.post('https://www.fast2sms.com/dev/bulkV2', rawBody, {
-      headers: {
-        authorization: fast2smsKey,
-        'Content-Type': 'application/x-www-form-urlencoded'
-      },
-      timeout: 10000
-    });
+    let response;
+    try {
+      response = await axios.post('https://www.fast2sms.com/dev/bulkV2', rawBody, {
+        headers: {
+          authorization: fast2smsKey,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        timeout: 10000
+      });
+    } catch (apiErr) {
+      // If template expects a single variable (e.g. only OTP without expiry), retry with single variable
+      if (dltParams.variables_values && dltParams.variables_values.includes('|')) {
+        const singleVarBody = `sender_id=${encodeURIComponent(dltParams.sender_id)}&message=${dltParams.message_id}&route=dlt&numbers=${cleanPhone}&variables_values=${otpCode}`;
+        response = await axios.post('https://www.fast2sms.com/dev/bulkV2', singleVarBody, {
+          headers: {
+            authorization: fast2smsKey,
+            'Content-Type': 'application/x-www-form-urlencoded'
+          },
+          timeout: 10000
+        });
+      } else {
+        throw apiErr;
+      }
+    }
 
     console.log(`[SMS OTP - ${purpose}] Fast2SMS response for +91${cleanPhone}:`, response.data?.message || response.data);
     return {
