@@ -259,10 +259,13 @@ const login = async (req, res) => {
 
   try {
     if (!email || !password) {
-      return res.status(400).json({ error: 'Please enter both email and password' });
+      return res.status(400).json({ error: 'Please enter both email or mobile number and password' });
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
+    const rawInput = (email || '').toString().trim();
+    const cleanPhone = rawInput.replace(/\D/g, '').slice(-10);
+    const isPhone = !rawInput.includes('@') && cleanPhone.length === 10;
+    const normalizedEmail = rawInput.toLowerCase();
 
     // SECURITY: Block password login for OTP placeholder emails
     if (
@@ -275,26 +278,32 @@ const login = async (req, res) => {
       });
     }
 
-    // Check for user email matching specific role, defaulting to Supplier (Seller Hub)
+    const userQuery = isPhone
+      ? { phone: { $in: [rawInput, cleanPhone, `+91${cleanPhone}`] } }
+      : { email: normalizedEmail };
+
+    const inputLabel = isPhone ? 'mobile number' : 'email';
+
+    // Check for user matching specific role, defaulting to Supplier (Seller Hub)
     let user;
     if (requestedRole) {
-      user = await User.findOne({ email: normalizedEmail, role: requestedRole }).select('+passwordHash');
+      user = await User.findOne({ ...userQuery, role: requestedRole }).select('+passwordHash');
       if (!user) {
-        const alternateUser = await User.findOne({ email: normalizedEmail });
+        const alternateUser = await User.findOne(userQuery);
         if (alternateUser) {
           return res.status(401).json({ 
-            error: `No ${requestedRole} account registered for this email. Found a ${alternateUser.role} account. Please select the correct portal.` 
+            error: `No ${requestedRole} account registered for this ${inputLabel}. Found a ${alternateUser.role} account. Please select the correct portal.` 
           });
         }
-        return res.status(401).json({ error: 'Invalid email or password' });
+        return res.status(401).json({ error: `Invalid ${inputLabel} or password` });
       }
     } else {
-      user = await User.findOne({ email: normalizedEmail, role: 'Supplier' }).select('+passwordHash');
+      user = await User.findOne({ ...userQuery, role: 'Supplier' }).select('+passwordHash');
       if (!user) {
-        user = await User.findOne({ email: normalizedEmail }).select('+passwordHash');
+        user = await User.findOne(userQuery).select('+passwordHash');
       }
       if (!user) {
-        return res.status(401).json({ error: 'Invalid email or password' });
+        return res.status(401).json({ error: `Invalid ${inputLabel} or password` });
       }
     }
 

@@ -14,9 +14,9 @@ const signupSchema = z.object({
   logisticsProcessingConsent: z.boolean().optional()
 });
 
-// Schema for user login
+// Schema for user login - supports either email or phone number
 const loginSchema = z.object({
-  email: z.string().trim().email('Please provide a valid email address'),
+  email: z.string().trim().min(3, 'Please provide a valid email address or mobile number'),
   password: z.string().min(1, 'Password is required'),
   role: z.enum(['Supplier', 'Receiver', 'Admin', 'super_admin']).optional()
 });
