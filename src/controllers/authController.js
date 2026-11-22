@@ -531,9 +531,9 @@ const verifyOtp = async (req, res) => {
 
       isNew = true;
       let passwordHash;
-      if (req.body.password && typeof req.body.password === 'string' && req.body.password.length >= 6) {
+      if (req.body.password && typeof req.body.password === 'string' && req.body.password.trim().length >= 6) {
         const salt = await bcrypt.genSalt(10);
-        passwordHash = await bcrypt.hash(req.body.password, salt);
+        passwordHash = await bcrypt.hash(req.body.password.trim(), salt);
       } else {
         const unguessableSecret = crypto.randomBytes(32).toString('hex');
         const salt = await bcrypt.genSalt(10);
@@ -547,9 +547,14 @@ const verifyOtp = async (req, res) => {
       }
 
       const assignedFullName = (req.body.fullName || '').toString().trim() || `${role} ${normalizedPhone.slice(-4)}`;
-      const assignedEmail = (req.body.email && req.body.email.includes('@'))
-        ? req.body.email.toLowerCase().trim()
-        : `${normalizedPhone.replace(/[^0-9]/g, '')}_${role.toLowerCase()}@securekaro-otp.in`;
+      let assignedEmail = `${normalizedPhone.replace(/[^0-9]/g, '')}_${role.toLowerCase()}@securekaro-otp.in`;
+      if (req.body.email && req.body.email.includes('@')) {
+        const candidateEmail = req.body.email.toLowerCase().trim();
+        const existingEmailUser = await User.findOne({ email: candidateEmail, role });
+        if (!existingEmailUser) {
+          assignedEmail = candidateEmail;
+        }
+      }
 
       user = await User.create({
         phone: normalizedPhone,
@@ -563,20 +568,29 @@ const verifyOtp = async (req, res) => {
       });
     } else {
       user.isPhoneVerified = true;
-      // If user was created with placeholder name/email, update to real ones if provided now
-      if (req.body.fullName && (user.fullName.startsWith('Supplier ') || user.fullName.startsWith('Receiver ') || user.fullName.startsWith('User '))) {
-        user.fullName = req.body.fullName.trim();
-      }
-      if (req.body.email && user.email.includes('-otp.in') && req.body.email.includes('@')) {
-        const cleanReqEmail = req.body.email.toLowerCase().trim();
-        const existingAcc = await User.findOne({ email: cleanReqEmail, _id: { $ne: user._id } });
-        if (!existingAcc) {
-          user.email = cleanReqEmail;
+      // If user had a placeholder name, upgrade to the real name if provided
+      if (req.body.fullName && typeof req.body.fullName === 'string' && req.body.fullName.trim()) {
+        const isPlaceholderName = !user.fullName || 
+          user.fullName.startsWith('Supplier ') || 
+          user.fullName.startsWith('Receiver ') || 
+          user.fullName.startsWith('User ') ||
+          user.fullName === `${role} ${normalizedPhone.slice(-4)}`;
+        if (isPlaceholderName) {
+          user.fullName = req.body.fullName.trim();
         }
       }
-      if (req.body.password && typeof req.body.password === 'string' && req.body.password.length >= 6) {
+      // If user had a placeholder email, upgrade to the real email if provided
+      if (req.body.email && req.body.email.includes('@') && user.email && user.email.includes('-otp.in')) {
+        const candidateEmail = req.body.email.toLowerCase().trim();
+        const existingEmailUser = await User.findOne({ email: candidateEmail, role, _id: { $ne: user._id } });
+        if (!existingEmailUser) {
+          user.email = candidateEmail;
+        }
+      }
+      // If password provided, update it
+      if (req.body.password && typeof req.body.password === 'string' && req.body.password.trim().length >= 6) {
         const salt = await bcrypt.genSalt(10);
-        user.passwordHash = await bcrypt.hash(req.body.password, salt);
+        user.passwordHash = await bcrypt.hash(req.body.password.trim(), salt);
       }
       await user.save();
     }

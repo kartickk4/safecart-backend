@@ -203,7 +203,7 @@ const updateProfile = async (req, res) => {
 
     if (email) {
       const normalizedEmail = email.toLowerCase().trim();
-      const existingEmail = await User.findOne({ email: normalizedEmail, _id: { $ne: user._id } });
+      const existingEmail = await User.findOne({ email: normalizedEmail, role: user.role, _id: { $ne: user._id } });
       if (existingEmail) {
         return res.status(400).json({ error: 'This email is already registered with another account.' });
       }
@@ -279,7 +279,13 @@ const updateProfile = async (req, res) => {
       }
     }
 
-    if (isEmailChanging || isPhoneChanging) {
+    const isOtpPlaceholderEmail = user.email && (
+      user.email.endsWith('@securekaro-otp.in') ||
+      user.email.endsWith('@safecart-otp.in') ||
+      user.email.includes('-otp.in')
+    );
+
+    if ((isEmailChanging && !isOtpPlaceholderEmail) || isPhoneChanging) {
       // Invalidate existing session tokens so stolen tokens cannot persist after identity change (#11 & #16)
       user.tokenVersion = (user.tokenVersion || 0) + 1;
     }

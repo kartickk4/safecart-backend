@@ -39,8 +39,8 @@ const verifyOtpSchema = z.object({
   purpose: z.string().optional(),
   createIfNotFound: z.boolean().optional(),
   referralCode: z.string().optional(),
-  fullName: z.string().optional(),
-  email: z.string().optional(),
+  fullName: z.string().trim().optional(),
+  email: z.string().trim().optional(),
   password: z.string().optional()
 }).refine(data => data.code || data.otp, {
   message: 'OTP code is required (send as "code" or "otp")',
