@@ -63,6 +63,10 @@ const ShipmentSchema = new mongoose.Schema({
     type: String,
     default: ""
   },
+  shippingLabelPdfBase64: {
+    type: String,
+    default: ""
+  },
 
   // Payment Gateway Fields (PhonePe PG / Gateway Integration)
   paymentLink: {

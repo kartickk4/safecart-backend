@@ -307,6 +307,9 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
             if (npRes.labelUrl) {
               shipment.shippingLabelUrl = npRes.labelUrl;
             }
+            if (npRes.labelPdfBase64) {
+              shipment.shippingLabelPdfBase64 = npRes.labelPdfBase64;
+            }
             if (npRes.courierName) {
               assignedCarrierName = formatCarrierBrandName(targetCarrierSlug, npRes.courierName);
               shipment.pickupCarrier = assignedCarrierName;

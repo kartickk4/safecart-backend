@@ -3724,8 +3724,15 @@ const getPrintableShippingLabel = async (req, res) => {
       }
     }
 
-    // 1. Direct Redirect to the Official Courier Label PDF if already generated
-    // (Exact PDF from Shiprocket, NimbusPost, Delhivery, or Shadowfax containing user's pickup address)
+    // 0. Direct serve if permanent carrier PDF is saved in MongoDB
+    if (shipment.shippingLabelPdfBase64) {
+      const pdfBuf = Buffer.from(shipment.shippingLabelPdfBase64, 'base64');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="shipping-label-${shipment.shipmentId}.pdf"`);
+      return res.send(pdfBuf);
+    }
+
+    // 1. Direct Redirect to the Official Courier Label PDF if already generated and NOT expired
     if (
       shipment.shippingLabelUrl &&
       typeof shipment.shippingLabelUrl === 'string' &&
@@ -3733,7 +3740,36 @@ const getPrintableShippingLabel = async (req, res) => {
       !shipment.shippingLabelUrl.includes('dummy.pdf') &&
       !shipment.shippingLabelUrl.includes('/api/v1/shipments')
     ) {
-      return res.redirect(shipment.shippingLabelUrl);
+      // Check if it is a pre-signed AWS S3 URL with an expiration timestamp
+      let isExpired = false;
+      if (shipment.shippingLabelUrl.includes('X-Amz-Expires') || shipment.shippingLabelUrl.includes('files.nimbuspost.com')) {
+        const dateMatch = shipment.shippingLabelUrl.match(/X-Amz-Date=([0-9]{8}T[0-9]{6}Z)/);
+        const expiresMatch = shipment.shippingLabelUrl.match(/X-Amz-Expires=([0-9]+)/);
+        if (dateMatch && expiresMatch) {
+          try {
+            const d = dateMatch[1];
+            const signedAt = Date.UTC(
+              parseInt(d.slice(0, 4), 10),
+              parseInt(d.slice(4, 6), 10) - 1,
+              parseInt(d.slice(6, 8), 10),
+              parseInt(d.slice(9, 11), 10),
+              parseInt(d.slice(11, 13), 10),
+              parseInt(d.slice(13, 15), 10)
+            );
+            const durationMs = parseInt(expiresMatch[1], 10) * 1000;
+            if (Date.now() > signedAt + durationMs) {
+              isExpired = true;
+            }
+          } catch (_) {
+            isExpired = true;
+          }
+        }
+      }
+
+      if (!isExpired) {
+        return res.redirect(shipment.shippingLabelUrl);
+      }
+      // If S3 pre-signed URL has expired, smoothly fall through to streaming our 4x6 thermal PDF!
     }
 
     // 2. On-the-fly Official Label Resolution by Carrier & AWB

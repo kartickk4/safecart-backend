@@ -410,13 +410,25 @@ async function createOrderInNimbusPost(shipment, senderUser = null, courierCompa
     if (res.data?.status && res.data?.data) {
       const awbNum = res.data.data.awb_number;
       const labelUrl = res.data.data.label || res.data.data.label_url || '';
+      let labelPdfBase64 = '';
+      if (labelUrl && typeof labelUrl === 'string' && labelUrl.startsWith('http')) {
+        try {
+          const pdfRes = await axios.get(labelUrl, { responseType: 'arraybuffer', timeout: 8000 });
+          if (pdfRes.data) {
+            labelPdfBase64 = Buffer.from(pdfRes.data).toString('base64');
+          }
+        } catch (pdfErr) {
+          console.warn('[NimbusPost Label Fetch Notice]:', pdfErr.message);
+        }
+      }
       return {
         success: true,
         orderId: res.data.data.order_id,
         shipmentId: res.data.data.shipment_id,
         awb: awbNum,
         courierName: res.data.data.courier_name,
-        labelUrl
+        labelUrl,
+        labelPdfBase64
       };
     }
   } catch (err) {
