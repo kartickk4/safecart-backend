@@ -23,6 +23,8 @@ const ALLOWED_SMS_PURPOSES = [
   'BANK_DETAILS_UPDATE',
   'PHONE_UPDATE',
   'UPDATE_PHONE',
+  'PHONE_UPDATE_STEP2',
+  'VERIFY_NEW_PHONE',
   'WALLET_RECHARGE',
   'BOOKING_ALERT'
 ];
@@ -63,6 +65,8 @@ const sendSmsOtp = async (phone, otpCode, purpose = 'SIGNUP_AUTH') => {
     BANK_DETAILS_UPDATE: { sender_id: 'SECKRO', message_id: '232307', variables_values: `${otpCode}|10` },
     PHONE_UPDATE:        { sender_id: 'SECKRO', message_id: '232354', variables_values: `${otpCode}|10` },
     UPDATE_PHONE:        { sender_id: 'SECKRO', message_id: '232354', variables_values: `${otpCode}|10` },
+    PHONE_UPDATE_STEP2:  { sender_id: 'SECKRO', message_id: '232310', variables_values: `${otpCode}|10` },
+    VERIFY_NEW_PHONE:    { sender_id: 'SECKRO', message_id: '232310', variables_values: `${otpCode}|10` },
     WALLET_RECHARGE:     { sender_id: 'SECKRO', message_id: '232320', variables_values: `${otpCode}|${otpCode}` },
     BOOKING_ALERT:       { sender_id: 'SECKRO', message_id: '232321', variables_values: `${otpCode}` },
     TRACKING_ALERT:      { sender_id: 'SECKRO', message_id: '232321', variables_values: `${otpCode}` }
