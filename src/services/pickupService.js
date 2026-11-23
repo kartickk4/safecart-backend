@@ -297,6 +297,10 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
           if (npRes?.orderId) {
             shipment.nimbusOrderId = npRes.orderId;
             shipment.nimbusShipmentId = npRes.shipmentId;
+            if (npRes.awb) {
+              shipment.awbCode = npRes.awb;
+              shipment.nimbusAwb = npRes.awb;
+            }
             const cleanOrderId = String(npRes.orderId).replace(/^NP[-_]/i, '');
             pickupToken = `NP-${cleanOrderId}`;
             shipment.pickupToken = pickupToken;

@@ -344,23 +344,40 @@ async function createOrderInNimbusPost(shipment, senderUser = null, courierCompa
       'State'
     ).trim();
 
+    const orderAmount = Number(shipment.itemPrice || shipment.amount || 1000);
+    const orderQty = Number(shipment.itemQuantity || 1);
+    const itemName = (shipment.description || 'Parcel Item').slice(0, 100);
+
     const payload = {
       order_number: String(shipment.trackingNumber || shipment.shipmentId || shipment._id),
       payment_type: (shipment.paymentMethod === 'cod' || shipment.paymentMode === 'cod') ? 'cod' : 'prepaid',
       package_type: 'box',
-      amount: String(shipment.itemPrice || shipment.amount || 1000),
-      total_amount: String(shipment.totalAmount || shipment.amount || shipment.itemPrice || 1000),
-      weight: String(Math.round((shipment.weightKg || 0.5) * 1000)),
+      order_amount: orderAmount,
+      order_total: orderAmount,
+      amount: orderAmount,
+      total_amount: orderAmount,
+      weight: Math.round((shipment.parcelWeight || shipment.weightKg || 0.5) * 1000),
+      length: Number(shipment.parcelLength || shipment.length || 10),
+      breadth: Number(shipment.parcelWidth || shipment.width || 10),
+      height: Number(shipment.parcelHeight || shipment.height || 10),
+      order_items: [
+        {
+          name: itemName,
+          qty: orderQty,
+          price: orderAmount,
+          sku: `SKU_${String(shipment.shipmentId || Date.now()).slice(-8)}`
+        }
+      ],
       consignee: {
         name: shipment.receiverName || 'Recipient',
         phone: String(shipment.receiverPhone || '9999999999').replace(/\D/g, '').slice(-10),
         address: shipment.deliveryAddress || shipment.receiverAddress || 'Delivery Address',
         pincode: String(shipment.receiverPincode || shipment.pincode || '400001').replace(/\D/g, '').slice(0, 6),
-        city: shipment.receiverCity || shipment.city || 'City',
-        state: shipment.receiverState || shipment.state || 'State'
+        city: shipment.receiverCity || shipment.city || 'Kolkata',
+        state: shipment.receiverState || shipment.state || 'West Bengal'
       },
       pickup: {
-        warehouse_name: `Seller_${sellerPhone || sellerPincode}`,
+        warehouse_name: 'Primary',
         name: sellerName,
         phone: sellerPhone,
         address: sellerAddress,
@@ -370,8 +387,16 @@ async function createOrderInNimbusPost(shipment, senderUser = null, courierCompa
       }
     };
 
-    if (courierCompanyId) {
-      payload.courier_id = courierCompanyId;
+    let selectedCourierId = courierCompanyId;
+    if (!selectedCourierId && shipment.carrierSlug && shipment.carrierSlug.startsWith('nimbus_')) {
+      const parts = shipment.carrierSlug.split('_');
+      const candidateId = parts[parts.length - 1];
+      if (candidateId && candidateId.length >= 10) {
+        selectedCourierId = candidateId;
+      }
+    }
+    if (selectedCourierId) {
+      payload.courier_id = selectedCourierId;
     }
 
     const res = await axios.post('https://api.nimbuspost.com/v1/shipments', payload, {
@@ -384,10 +409,7 @@ async function createOrderInNimbusPost(shipment, senderUser = null, courierCompa
 
     if (res.data?.status && res.data?.data) {
       const awbNum = res.data.data.awb_number;
-      let labelUrl = '';
-      if (awbNum) {
-        labelUrl = await generateNimbusPostLabel(awbNum);
-      }
+      const labelUrl = res.data.data.label || res.data.data.label_url || '';
       return {
         success: true,
         orderId: res.data.data.order_id,
