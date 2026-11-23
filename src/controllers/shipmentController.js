@@ -18,9 +18,9 @@ const { recordTransaction } = require('../services/walletService');
 
 // Helper to invalidate admin dashboard aggregates whenever shipment state changes
 const invalidateDashboardCache = () => {
-  cacheManager.invalidateTag('admin:analytics').catch(() => {});
-  cacheManager.invalidateTag('admin:finance').catch(() => {});
-  cacheManager.invalidatePattern('admin:*').catch(() => {});
+  cacheManager.invalidateTag('admin:analytics').catch(() => { });
+  cacheManager.invalidateTag('admin:finance').catch(() => { });
+  cacheManager.invalidatePattern('admin:*').catch(() => { });
 };
 
 /**
@@ -169,19 +169,21 @@ const getShipments = async (req, res) => {
     // Exclude dummy, mock, and sample records
     query.isDemo = { $ne: true };
     query.isSample = { $ne: true };
-    query.shipmentId = { $nin: [
-      'SPL-1404-M', 'SPL-3809-Y', 'SPL-6119-I', 'SPL-9912-N', 'SPL-4257-Z',
-      'SPL-5856-B', 'SPL-2808-B', 'SPL-3461-L', 'SPL-6587-P', 'SPL-5402-V',
-      'SPL-4318-N', 'SPL-2055-C', 'SPL-5396-U', 'SPL-6386-T', 'SPL-4433-J',
-      'SPL-6186-E', 'SPL-3158-U', 'SPL-4327-Z', 'SPL-3243-U', 'SPL-4285-D',
-      'SPL-6284-R', 'SPL-7845-D', 'SPL-3146-B'
-    ] };
+    query.shipmentId = {
+      $nin: [
+        'SPL-1404-M', 'SPL-3809-Y', 'SPL-6119-I', 'SPL-9912-N', 'SPL-4257-Z',
+        'SPL-5856-B', 'SPL-2808-B', 'SPL-3461-L', 'SPL-6587-P', 'SPL-5402-V',
+        'SPL-4318-N', 'SPL-2055-C', 'SPL-5396-U', 'SPL-6386-T', 'SPL-4433-J',
+        'SPL-6186-E', 'SPL-3158-U', 'SPL-4327-Z', 'SPL-3243-U', 'SPL-4285-D',
+        'SPL-6284-R', 'SPL-7845-D', 'SPL-3146-B'
+      ]
+    };
 
     // Server-Side High-Efficiency Pagination
     const totalCount = await Shipment.countDocuments(query);
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const limit = req.query.limit 
-      ? Math.min(100, Math.max(1, parseInt(req.query.limit, 10))) 
+    const limit = req.query.limit
+      ? Math.min(100, Math.max(1, parseInt(req.query.limit, 10)))
       : (req.query.page ? 20 : 0);
 
     let shipmentQuery = Shipment.find(query)
@@ -222,7 +224,7 @@ const getShipments = async (req, res) => {
 const getShipmentById = async (req, res) => {
   try {
     const id = req.params.id.toUpperCase();
-    
+
     // Concurrently fetch shipment and carrier journey
     const [shipment, journey] = await Promise.all([
       Shipment.findOne({ shipmentId: id }),
@@ -280,7 +282,7 @@ function resolveCarrierBrandName(slug, explicitName) {
   if (s.includes('smartr')) return 'Smartr Logistics';
   if (s.includes('trackon')) return 'Trackon Courier';
   if (s.includes('tpc') || s.includes('professional')) return 'The Professional Couriers';
-  
+
   const cleaned = s
     .replace(/^nimbus_/i, '')
     .replace(/_[a-f0-9]{16,}$/i, '')
@@ -310,9 +312,9 @@ function generateCleanAwbCode(carrierSlug) {
  * @access  Private
  */
 const createShipment = async (req, res) => {
-  const { 
-    receiverName, receiverPhone, receiverAddress, description, amount, city, 
-    fundEscrow, carrierSlug, awbCode, returnAllowed, paymentMode, 
+  const {
+    receiverName, receiverPhone, receiverAddress, description, amount, city,
+    fundEscrow, carrierSlug, awbCode, returnAllowed, paymentMode,
     isPrepaid, photoReviewEnabled, rtoProtectionEnabled,
     senderPincode: bodyScenderPincode, receiverPincode: bodyReceiverPincode,
     senderAddress: bodySenderAddress,
@@ -346,7 +348,7 @@ const createShipment = async (req, res) => {
           await sender.save();
         }
       } else {
-        return res.status(403).json({ 
+        return res.status(403).json({
           error: 'Phone verification required',
           code: 'PHONE_VERIFICATION_REQUIRED',
           message: 'Mobile number verification is mandatory before creating shipments on SecureKaro. Please verify your phone number via OTP to ensure secure delivery coordination.'
@@ -432,8 +434,8 @@ const createShipment = async (req, res) => {
       console.log(`[CARRIER] Pincode unavailable, fallback to: ${assignedCarrierSlug}`);
     }
 
-    const assignedAwbCode = awbCode && awbCode.trim() 
-      ? awbCode.trim().toUpperCase() 
+    const assignedAwbCode = awbCode && awbCode.trim()
+      ? awbCode.trim().toUpperCase()
       : generateCleanAwbCode(assignedCarrierSlug);
 
     const normalizedMode = (paymentMode || 'prepaid').toLowerCase() === 'cod' ? 'cod' : 'prepaid';
@@ -460,6 +462,7 @@ const createShipment = async (req, res) => {
     const activeShipmentsCount = await getActiveShipmentsCount(sender._id);
     const newActiveCount = activeShipmentsCount + 1;
     const requiredReserve = calculateSecurityReserve(newActiveCount);
+    const availableWallet = Number(sender.walletBalance) || 0;
 
     // ── COD Upfront Fee Calculation & Wallet Balance Adjustment ──
     let deliveryCharge = 0;
@@ -494,6 +497,8 @@ const createShipment = async (req, res) => {
           totalCodFees = Math.round(deliveryCharge + codCharge);
         }
       }
+
+      const totalRequiredForWalletAdjust = totalCodFees + requiredReserve;
 
       const isDeductFromSettlement = req.body.deductFromSettlement === true ||
         req.body.rtoDeductFromSettlement === true ||
@@ -571,7 +576,6 @@ const createShipment = async (req, res) => {
       const minCourierFloor = selectedCarrierRate || 40;
       deliveryCharge = Math.max(minCourierFloor, Number(rawDeliveryCharge) || minCourierFloor);
 
-      const availableWallet = Number(sender.walletBalance) || 0;
       // H-06: Never bypass wallet balance via unverified client request flags
       const isPaidUpfront = false;
       const totalRequiredForPrepaid = deliveryCharge + requiredReserve;
@@ -918,10 +922,10 @@ const createShipment = async (req, res) => {
  */
 const quoteCodFees = async (req, res) => {
   try {
-    const { 
-      amount = 0, 
-      senderPincode: bodySenderPincode, 
-      receiverPincode: bodyReceiverPincode, 
+    const {
+      amount = 0,
+      senderPincode: bodySenderPincode,
+      receiverPincode: bodyReceiverPincode,
       parcelWeight: bodyWeight = 0.5,
       parcelLength: bodyLength = 15,
       parcelWidth: bodyWidth = 10,
@@ -1185,9 +1189,9 @@ const publicPayShipment = async (req, res) => {
     }
 
     if (shipment.receiverPaymentDone && shipment.escrowStage >= 3) {
-      return res.json({ 
+      return res.json({
         message: 'Payment already completed for this order',
-        shipment 
+        shipment
       });
     }
 
@@ -1385,8 +1389,8 @@ const dispatchShipment = async (req, res) => {
     // ── Photo of Parcel on Weighing Scale: Mandatory for ALL shipments before dispatch ──
     const hasPhoto = (parcelPhotoUrl && parcelPhotoUrl.trim()) || (shipment.parcelPhotoUrl && shipment.parcelPhotoUrl.trim());
     if (!hasPhoto) {
-      return res.status(400).json({ 
-        error: 'A photo of the parcel resting on a weighing scale is mandatory for every shipment before courier dispatch to guarantee weight shield and zero-penalty protection.' 
+      return res.status(400).json({
+        error: 'A photo of the parcel resting on a weighing scale is mandatory for every shipment before courier dispatch to guarantee weight shield and zero-penalty protection.'
       });
     }
 
@@ -1395,8 +1399,8 @@ const dispatchShipment = async (req, res) => {
         const tenMinutes = 10 * 60 * 1000;
         const elapsed = Date.now() - new Date(shipment.parcelPhotoUploadedAt).getTime();
         if (elapsed > tenMinutes) {
-          return res.status(400).json({ 
-            error: 'The 10-minute retake window for parcel photo has expired. You can no longer change or retake this photo.' 
+          return res.status(400).json({
+            error: 'The 10-minute retake window for parcel photo has expired. You can no longer change or retake this photo.'
           });
         }
       }
@@ -1489,7 +1493,7 @@ const dispatchShipment = async (req, res) => {
       } catch (waErr) {
         console.error('[DISPATCH] WhatsApp notification failed (non-blocking):', waErr.message);
       }
-  
+
       // Automatically dispatch tracking alert to Receiver via SMS
       try {
         await smsService.sendDispatchTrackingSms({
@@ -1503,7 +1507,7 @@ const dispatchShipment = async (req, res) => {
       } catch (smsErr) {
         console.error('[DISPATCH] SMS notification failed (non-blocking):', smsErr.message);
       }
-  
+
       // In-app notification for receiver if registered on SecureKaro
       if (rawPhone.length >= 10) {
         try {
@@ -1523,8 +1527,8 @@ const dispatchShipment = async (req, res) => {
           console.error('[DISPATCH] In-app receiver notification failed (non-blocking):', notifErr.message);
         }
       }
-  
-  
+
+
     });
 
     res.json({
@@ -1850,7 +1854,7 @@ const confirmReturnReceived = async (req, res) => {
           shipment.shipmentId,
           'RETURN_ORDERS'
         );
-      } catch (_) {}
+      } catch (_) { }
 
       return res.json({
         success: true,
@@ -2119,8 +2123,8 @@ const toggleReturnOption = async (req, res) => {
     // Disallow disabling returns once payment link has been sent to receiver
     if (!newSetting && shipment.returnAllowed !== false) {
       if (shipment.paymentLink || shipment.paymentLinkSmsText || shipment.status !== 'Draft') {
-        return res.status(400).json({ 
-          error: 'Returns cannot be disabled after the payment link has been sent to the receiver.' 
+        return res.status(400).json({
+          error: 'Returns cannot be disabled after the payment link has been sent to the receiver.'
         });
       }
     }
@@ -2403,8 +2407,8 @@ const uploadParcelPhoto = async (req, res) => {
       const tenMinutes = 10 * 60 * 1000;
       const elapsed = Date.now() - new Date(shipment.parcelPhotoUploadedAt).getTime();
       if (elapsed > tenMinutes) {
-        return res.status(400).json({ 
-          error: 'The 10-minute retake window for parcel photo has expired. You can no longer change or retake this photo.' 
+        return res.status(400).json({
+          error: 'The 10-minute retake window for parcel photo has expired. You can no longer change or retake this photo.'
         });
       }
     }
@@ -2620,8 +2624,8 @@ const getQrLabel = async (req, res) => {
     }
     // Photo gate: only required when return is enabled (protects seller from wrong-item disputes)
     if (shipment.returnAllowed !== false && (!shipment.parcelPhotoUrl || !shipment.parcelPhotoUrl.trim())) {
-      return res.status(400).json({ 
-        error: 'Parcel photo is required to generate the QR label because you enabled the return option for this shipment.' 
+      return res.status(400).json({
+        error: 'Parcel photo is required to generate the QR label because you enabled the return option for this shipment.'
       });
     }
 
@@ -2670,8 +2674,8 @@ const getReplacementQrLabel = async (req, res) => {
       return res.status(403).json({ error: 'Only the seller can access this replacement QR label' });
     }
     if (!shipment.replacementItemDispatched) {
-      return res.status(400).json({ 
-        error: 'Replacement item has not been dispatched yet. Dispatch replacement first to generate the label.' 
+      return res.status(400).json({
+        error: 'Replacement item has not been dispatched yet. Dispatch replacement first to generate the label.'
       });
     }
 
@@ -3740,7 +3744,7 @@ const getPrintableShippingLabel = async (req, res) => {
     if (carrier.includes('delhivery') && awb) {
       const delhiveryLabel = `https://track.delhivery.com/api/p/packing_slip?wbns=${awb}&pdf=true`;
       shipment.shippingLabelUrl = delhiveryLabel;
-      await shipment.save().catch(() => {});
+      await shipment.save().catch(() => { });
       return res.redirect(delhiveryLabel);
     }
 
@@ -3748,7 +3752,7 @@ const getPrintableShippingLabel = async (req, res) => {
     if (carrier.includes('shadowfax') && awb) {
       const shadowfaxLabel = `https://dale.shadowfax.in/api/v4/clients/orders/${awb}/shipping_label/`;
       shipment.shippingLabelUrl = shadowfaxLabel;
-      await shipment.save().catch(() => {});
+      await shipment.save().catch(() => { });
       return res.redirect(shadowfaxLabel);
     }
 
@@ -3759,7 +3763,7 @@ const getPrintableShippingLabel = async (req, res) => {
         const npUrl = await generateNimbusPostLabel(awb);
         if (npUrl) {
           shipment.shippingLabelUrl = npUrl;
-          await shipment.save().catch(() => {});
+          await shipment.save().catch(() => { });
           return res.redirect(npUrl);
         }
       } catch (npErr) {
@@ -3784,7 +3788,7 @@ const getPrintableShippingLabel = async (req, res) => {
           const srUrl = labelRes.data?.label_url || labelRes.data?.response?.label_url;
           if (srUrl) {
             shipment.shippingLabelUrl = srUrl;
-            await shipment.save().catch(() => {});
+            await shipment.save().catch(() => { });
             return res.redirect(srUrl);
           }
         }
