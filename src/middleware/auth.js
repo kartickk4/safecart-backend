@@ -37,11 +37,15 @@ const protect = async (req, res, next) => {
   let token = (req.cookies && (req.cookies.token || req.cookies.securekaro_token));
 
   if (
-    (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) || token
+    (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) ||
+    token ||
+    (req.query && req.query.token)
   ) {
     try {
       if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
         token = req.headers.authorization.split(' ')[1];
+      } else if (req.query && req.query.token) {
+        token = req.query.token;
       }
       const decoded = jwt.verify(token, JWT_SECRET);
 

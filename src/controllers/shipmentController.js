@@ -3727,7 +3727,7 @@ const getPrintableShippingLabel = async (req, res) => {
       typeof shipment.shippingLabelUrl === 'string' &&
       shipment.shippingLabelUrl.startsWith('http') &&
       !shipment.shippingLabelUrl.includes('dummy.pdf') &&
-      !shipment.shippingLabelUrl.includes('/label')
+      !shipment.shippingLabelUrl.includes('/api/v1/shipments')
     ) {
       return res.redirect(shipment.shippingLabelUrl);
     }
