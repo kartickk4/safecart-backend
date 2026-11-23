@@ -90,6 +90,31 @@ const protect = async (req, res, next) => {
   }
 };
 
+const optionalAuth = async (req, res, next) => {
+  if (!JWT_SECRET) return next();
+
+  let token = (req.cookies && (req.cookies.token || req.cookies.securekaro_token));
+
+  if (
+    (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) ||
+    token ||
+    (req.query && req.query.token)
+  ) {
+    try {
+      if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+        token = req.headers.authorization.split(' ')[1];
+      } else if (req.query && req.query.token) {
+        token = req.query.token;
+      }
+      const decoded = jwt.verify(token, JWT_SECRET);
+      req.user = await User.findById(decoded.id).select('-passwordHash');
+    } catch (_) {
+      // Ignored for optional auth
+    }
+  }
+  return next();
+};
+
 const admin = (req, res, next) => {
   // SECURITY: Admin privileges must be confirmed from database records.
   // Supports dual-role accounts where role is 'Supplier'/'Receiver' but user has isAdmin=true or adminRole assigned.
@@ -167,4 +192,4 @@ const requireAdmin2FA = async (req, res, next) => {
   }
 };
 
-module.exports = { protect, admin, requireAdmin2FA };
+module.exports = { protect, optionalAuth, admin, requireAdmin2FA };

@@ -67,7 +67,7 @@ const {
   getNdrShipments
 } = loadMod('controllers', 'shipmentController');
 const { getSupportedCouriersList, getPincodeInfo } = loadMod('services', 'carrierRateService');
-const { protect } = loadMod('middleware', 'auth');
+const { protect, optionalAuth } = loadMod('middleware', 'auth');
 
 const rateLimit = require('express-rate-limit');
 // M-05: Rate limiter for public QR OTP routes (3 attempts per minute per IP)
@@ -239,7 +239,7 @@ router.route('/:id/parcel-photo')
 
 // ── In-Box QR Label (seller prints & puts inside parcel) ──────────────────
 router.route('/:id/label')
-  .get(protect, getPrintableShippingLabel);
+  .get(optionalAuth, getPrintableShippingLabel);
 
 router.route('/:id/qr-label')
   .get(protect, getQrLabel);
