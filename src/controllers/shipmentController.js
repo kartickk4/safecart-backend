@@ -472,6 +472,10 @@ const createShipment = async (req, res) => {
     let codFeePaymentMethod = 'none';
     let codFeePaidAt = null;
     let codFeeTransactionRef = '';
+    const isDeductFromSettlement = req.body.deductFromSettlement === true ||
+      req.body.rtoDeductFromSettlement === true ||
+      req.body.codFeePaymentMethod === 'deduct_from_cod' ||
+      req.body.codFeePaymentMethod === 'settlement_deduction';
 
     if (isCod) {
       codCharge = (req.body.codCharge !== undefined && !isNaN(Number(req.body.codCharge)) && Number(req.body.codCharge) >= 0)
@@ -499,11 +503,6 @@ const createShipment = async (req, res) => {
       }
 
       const totalRequiredForWalletAdjust = totalCodFees + requiredReserve;
-
-      const isDeductFromSettlement = req.body.deductFromSettlement === true ||
-        req.body.rtoDeductFromSettlement === true ||
-        req.body.codFeePaymentMethod === 'deduct_from_cod' ||
-        req.body.codFeePaymentMethod === 'settlement_deduction';
 
       if (isDeductFromSettlement) {
         // Merchant chose to deduct shipping charge & COD fee directly from the COD cash collected upon delivery:
