@@ -153,35 +153,39 @@ const sendPaymentLinkSms = async ({ phone, shipmentId, amount, description, carr
 
   console.log(`[SMS POLICY ENFORCED] SMS suppressed for Order #${shipmentId}. SMS is strictly reserved for: Signup OTP, Forgot Password OTP, Edit Phone OTP, Delivery Sign-off OTP. Routing to WhatsApp.`);
 
-  // Dispatch booking notification via WhatsApp
-  try {
-    if (whatsappService && whatsappService.sendBookingConfirmationWhatsApp) {
-      await whatsappService.sendBookingConfirmationWhatsApp({
-        phone: cleanPhone,
-        receiverName,
-        shipmentId,
-        carrierSlug: courier,
-        awbCode: 'PENDING_DISPATCH',
-        amount
-      });
-    }
-  } catch (waErr) {
-    console.warn('[WHATSAPP ROUTE Note]:', waErr.message);
+  // Dispatch booking notification via WhatsApp asynchronously (non-blocking)
+  if (whatsappService && whatsappService.sendBookingConfirmationWhatsApp) {
+    Promise.resolve().then(async () => {
+      try {
+        await whatsappService.sendBookingConfirmationWhatsApp({
+          phone: cleanPhone,
+          receiverName,
+          shipmentId,
+          carrierSlug: courier,
+          awbCode: 'PENDING_DISPATCH',
+          amount
+        });
+      } catch (waErr) {
+        console.warn('[WHATSAPP ROUTE Note]:', waErr.message);
+      }
+    });
   }
 
-  // Dispatch DLT SMS alert via Fast2SMS Template 232321 (Parcel Tracking & Booking)
-  try {
-    const fast2smsKey = process.env.FAST2SMS_API_KEY;
-    const shortTrackingId = shipmentId ? String(shipmentId).slice(-10) : 'PARCEL';
-    if (fast2smsKey && cleanPhone.length === 10) {
-      const rawBody = `sender_id=SECKRO&message=232321&route=dlt&numbers=${cleanPhone}&variables_values=${encodeURIComponent(shortTrackingId)}`;
-      await axios.post('https://www.fast2sms.com/dev/bulkV2', rawBody, {
-        headers: { authorization: fast2smsKey, 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: 10000
-      });
-    }
-  } catch (dltErr) {
-    console.warn('[DLT BOOKING SMS Warning]:', dltErr.message);
+  // Dispatch DLT SMS alert via Fast2SMS Template 232321 in background (non-blocking)
+  const fast2smsKey = process.env.FAST2SMS_API_KEY;
+  const shortTrackingId = shipmentId ? String(shipmentId).slice(-10) : 'PARCEL';
+  if (fast2smsKey && cleanPhone.length === 10) {
+    Promise.resolve().then(async () => {
+      try {
+        const rawBody = `sender_id=SECKRO&message=232321&route=dlt&numbers=${cleanPhone}&variables_values=${encodeURIComponent(shortTrackingId)}`;
+        await axios.post('https://www.fast2sms.com/dev/bulkV2', rawBody, {
+          headers: { authorization: fast2smsKey, 'Content-Type': 'application/x-www-form-urlencoded' },
+          timeout: 10000
+        });
+      } catch (dltErr) {
+        console.warn('[DLT BOOKING SMS Warning]:', dltErr.message);
+      }
+    });
   }
 
   return {

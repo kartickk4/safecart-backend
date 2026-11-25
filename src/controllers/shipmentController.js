@@ -387,8 +387,14 @@ const createShipment = async (req, res) => {
     let selectedCarrierRate = null;
     let allCarrierQuotes = [];
 
-    const checkIsCod = !isReverseShipment && (paymentMode || '').toLowerCase() === 'cod';
-    if (senderPincodeForRate && receiverPincodeForRate) {
+    const hasExplicitCarrier = Boolean(carrierSlug && carrierSlug !== 'add_later' && carrierSlug !== 'auto');
+    if (hasExplicitCarrier) {
+      assignedCarrierSlug = carrierSlug.toLowerCase();
+      assignedCarrierName = resolveCarrierBrandName(assignedCarrierSlug);
+      selectedCarrierRate = Number(req.body.deliveryCharge) || Number(req.body.freightCharge) || 40;
+      console.log(`[CARRIER] Manual selection (fast-path): ${assignedCarrierSlug} (${assignedCarrierName}) @ ₹${selectedCarrierRate}`);
+    } else if (senderPincodeForRate && receiverPincodeForRate) {
+      const checkIsCod = !isReverseShipment && (paymentMode || '').toLowerCase() === 'cod';
       if (isReverseShipment) {
         // Reverse route: Customer Doorstep (receiverPincode) -> Seller Warehouse (senderPincode)
         allCarrierQuotes = await getCarrierRatesAsync(
@@ -412,21 +418,18 @@ const createShipment = async (req, res) => {
           Number(amount) || 0
         );
       }
-    }
 
-    // If caller explicitly passed a carrier, honour it; otherwise auto-select cheapest
-    if (carrierSlug && carrierSlug !== 'add_later' && carrierSlug !== 'auto') {
-      assignedCarrierSlug = carrierSlug.toLowerCase();
-      const matched = allCarrierQuotes.find(q => q.slug === assignedCarrierSlug);
-      assignedCarrierName = resolveCarrierBrandName(assignedCarrierSlug, matched ? matched.name : null);
-      selectedCarrierRate = matched ? matched.price : (Number(req.body.deliveryCharge) || 40);
-      console.log(`[CARRIER] Manual selection: ${assignedCarrierSlug} (${assignedCarrierName}) @ ₹${selectedCarrierRate}`);
-    } else if (allCarrierQuotes.length > 0) {
-      const cheapest = allCarrierQuotes[0]; // Already sorted lowest first
-      assignedCarrierSlug = cheapest.slug;
-      assignedCarrierName = resolveCarrierBrandName(cheapest.slug, cheapest.name);
-      selectedCarrierRate = cheapest.price;
-      console.log(`[CARRIER] Auto-selected cheapest: ${assignedCarrierName} @ ₹${cheapest.price} (${senderPincodeForRate} → ${receiverPincodeForRate}, ${weightKgForRate}kg, dims: ${dimensionsForRate.length}x${dimensionsForRate.width}x${dimensionsForRate.height}cm)`);
+      if (allCarrierQuotes.length > 0) {
+        const cheapest = allCarrierQuotes[0]; // Already sorted lowest first
+        assignedCarrierSlug = cheapest.slug;
+        assignedCarrierName = resolveCarrierBrandName(cheapest.slug, cheapest.name);
+        selectedCarrierRate = cheapest.price;
+        console.log(`[CARRIER] Auto-selected cheapest: ${assignedCarrierName} @ ₹${cheapest.price} (${senderPincodeForRate} → ${receiverPincodeForRate})`);
+      } else {
+        assignedCarrierSlug = (process.env.DEFAULT_CARRIER || 'delhivery').toLowerCase();
+        assignedCarrierName = 'Delhivery Express';
+        console.log(`[CARRIER] Pincode quotes empty, fallback to: ${assignedCarrierSlug}`);
+      }
     } else {
       // Fallback: pincodes not provided, use env default or delhivery
       assignedCarrierSlug = (process.env.DEFAULT_CARRIER || 'delhivery').toLowerCase();
@@ -909,7 +912,7 @@ const createShipment = async (req, res) => {
         slug: shipment.pickupCarrierSlug || assignedCarrierSlug,
         name: shipment.pickupCarrier || assignedCarrierName || assignedCarrierSlug.toUpperCase(),
         shippingRate: shipment.pickupRate || selectedCarrierRate,
-        allQuotes: allCarrierQuotes.map(q => ({
+        allQuotes: (allCarrierQuotes || []).map(q => ({
           slug: q.slug,
           name: q.name,
           price: q.price,
