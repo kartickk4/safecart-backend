@@ -472,6 +472,9 @@ const createShipment = async (req, res) => {
     let codFeePaymentMethod = 'none';
     let codFeePaidAt = null;
     let codFeeTransactionRef = '';
+    let courierChargeDeducted = 0;
+    let courierChargeStatus = 'Pending';
+    let courierChargeDeductedFrom = 'none';
     const isDeductFromSettlement = req.body.deductFromSettlement === true ||
       req.body.rtoDeductFromSettlement === true ||
       req.body.codFeePaymentMethod === 'deduct_from_cod' ||
@@ -585,6 +588,10 @@ const createShipment = async (req, res) => {
           sender.walletBalance = parseFloat(Math.max(0, availableWallet - deliveryCharge).toFixed(2));
           await sender.save();
 
+          courierChargeDeducted = deliveryCharge;
+          courierChargeStatus = 'Deducted';
+          courierChargeDeductedFrom = 'seller_wallet';
+
           await recordTransaction({
             userId: sender._id,
             type: 'debit',
@@ -687,6 +694,9 @@ const createShipment = async (req, res) => {
       codAmount: isCod ? Number(amount) : 0,
       codCharge: isCod ? codCharge : 0,
       deliveryCharge: deliveryCharge,
+      courierChargeDeducted,
+      courierChargeStatus,
+      courierChargeDeductedFrom,
       codUpfrontFee: isCod ? totalCodFees : 0,
       codFeePaid: isCod ? codFeePaid : false,
       codFeePaymentMethod: isCod ? codFeePaymentMethod : 'none',
