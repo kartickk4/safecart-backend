@@ -559,11 +559,11 @@ const createShipment = async (req, res) => {
         return res.status(402).json({
           error: 'INSUFFICIENT_WALLET_BALANCE',
           code: 'COD_PAYMENT_REQUIRED',
-          message: `COD shipment requires ₹${totalCodFees} upfront fee plus a minimum security reserve of ₹${requiredReserve} (${newActiveCount} active shipment(s) @ ₹100/shipment, max ₹1,000). Your wallet balance is ₹${availableWallet}. Total required: ₹${totalRequiredForWalletAdjust}. Please top up ₹${shortfall} or select 'Deduct from COD Settlement' to pay on delivery.`,
+          message: `COD shipment requires ₹${totalCodFees} upfront fee. Your wallet balance is ₹${availableWallet}. Please top up ₹${shortfall} or select 'Deduct from COD Settlement' to pay on delivery.`,
           deliveryCharge,
           codCharge,
           totalCharge: totalCodFees,
-          requiredReserve,
+          requiredReserve: 0,
           activeShipmentsCount,
           totalRequired: totalRequiredForWalletAdjust,
           walletBalance: availableWallet,
@@ -606,7 +606,7 @@ const createShipment = async (req, res) => {
             paymentGateway: 'system',
             balanceBefore: balBefore,
             balanceAfter: sender.walletBalance,
-            metadata: { shipmentId, deliveryCharge, requiredReserve, isReverse: isReverseShipment }
+            metadata: { shipmentId, deliveryCharge, requiredReserve: 0, isReverse: isReverseShipment }
           });
         } else {
           const shortfall = Math.max(0, totalRequiredForPrepaid - availableWallet);
@@ -614,29 +614,16 @@ const createShipment = async (req, res) => {
             error: 'INSUFFICIENT_WALLET_BALANCE',
             code: isReverseShipment ? 'REVERSE_SHIPPING_PAYMENT_REQUIRED' : 'PREPAID_SHIPPING_PAYMENT_REQUIRED',
             message: isReverseShipment
-              ? `Reverse pickup shipment requires ₹${deliveryCharge} return freight plus a minimum security reserve of ₹${requiredReserve}. Your wallet balance is ₹${availableWallet}. Total required: ₹${totalRequiredForPrepaid}. Please recharge ₹${shortfall} in your wallet to book reverse pickup.`
-              : `Prepaid shipment requires ₹${deliveryCharge} courier delivery fee plus a minimum security reserve of ₹${requiredReserve} (${newActiveCount} active shipment(s) @ ₹100/shipment, max ₹1,000). Your wallet balance is ₹${availableWallet}. Total required: ₹${totalRequiredForPrepaid}. Please top up ₹${shortfall} in your wallet to book this shipment.`,
+              ? `Reverse pickup shipment requires ₹${deliveryCharge} return freight. Your wallet balance is ₹${availableWallet}. Please recharge ₹${shortfall} in your wallet to book reverse pickup.`
+              : `Prepaid shipment requires ₹${deliveryCharge} courier delivery fee. Your wallet balance is ₹${availableWallet}. Please top up ₹${shortfall} in your wallet to book this shipment.`,
             deliveryCharge,
             totalCharge: deliveryCharge,
-            requiredReserve,
+            requiredReserve: 0,
             activeShipmentsCount,
             totalRequired: totalRequiredForPrepaid,
             walletBalance: availableWallet,
             shortfall,
             canAdjustWallet: false
-          });
-        }
-      } else {
-        if (availableWallet < requiredReserve) {
-          const shortfall = Math.max(0, requiredReserve - availableWallet);
-          return res.status(402).json({
-            error: 'INSUFFICIENT_SECURITY_BUFFER',
-            code: 'SECURITY_BUFFER_REQUIRED',
-            message: `You must maintain a minimum wallet security buffer of ₹${requiredReserve} for ${newActiveCount} active shipment(s) (₹100/shipment, max ₹1,000). Your current wallet balance is ₹${availableWallet}. Please top up ₹${shortfall} to book this shipment.`,
-            requiredReserve,
-            activeShipmentsCount,
-            walletBalance: availableWallet,
-            shortfall
           });
         }
       }

@@ -608,11 +608,11 @@ const withdrawWallet = async (req, res) => {
     }
 
     const currentBalance = Number(currentSnapshot.walletBalance) || 0;
-    const maxWithdrawable = Math.max(0, parseFloat((currentBalance - requiredReserve).toFixed(2)));
+    const maxWithdrawable = Math.max(0, currentBalance);
 
     if (requested > maxWithdrawable) {
       return res.status(400).json({
-        error: `Cannot withdraw ₹${requested}. You have ${activeShipmentsCount} active shipment(s) requiring a minimum wallet security buffer of ₹${requiredReserve} (₹100/shipment, max ₹1,000). Maximum withdrawable balance is ₹${maxWithdrawable.toFixed(2)}.`
+        error: `Cannot withdraw ₹${requested}. Maximum withdrawable balance is ₹${maxWithdrawable.toFixed(2)}.`
       });
     }
 
@@ -620,9 +620,9 @@ const withdrawWallet = async (req, res) => {
     const requiresAdminApproval = velocity.requiresAdminApproval;
     const initialStatus = requiresAdminApproval ? 'pending' : 'success';
 
-    // Atomic deduction: prevents double-spending race conditions while guaranteeing reserve buffer
+    // Atomic deduction: prevents double-spending race conditions
     const user = await User.findOneAndUpdate(
-      { _id: req.user._id, walletBalance: { $gte: requested + requiredReserve } },
+      { _id: req.user._id, walletBalance: { $gte: requested } },
       { 
         $inc: { 
           walletBalance: -requested,
@@ -636,7 +636,7 @@ const withdrawWallet = async (req, res) => {
       const freshSnapshot = await User.findById(req.user._id);
       const available = freshSnapshot ? freshSnapshot.walletBalance : 0;
       return res.status(400).json({
-        error: `Insufficient withdrawable wallet balance (minimum ₹${requiredReserve} security buffer must be retained for ${activeShipmentsCount} active shipment(s)). Available: ₹${available.toFixed(2)}`
+        error: `Insufficient wallet balance. Available: ₹${available.toFixed(2)}`
       });
     }
 

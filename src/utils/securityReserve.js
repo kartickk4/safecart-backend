@@ -13,8 +13,8 @@ const ACTIVE_SHIPMENT_STATUSES = [
   'Replacement In Transit'
 ];
 
-const RESERVE_PER_SHIPMENT = 100;
-const MAX_RESERVE_CAP = 1000;
+const RESERVE_PER_SHIPMENT = 0;
+const MAX_RESERVE_CAP = 0;
 
 /**
  * Get count of active shipments for a sender
@@ -30,14 +30,14 @@ const getActiveShipmentsCount = async (userId) => {
 };
 
 /**
- * Calculate dynamic reserve required for a given number of active shipments
- * Rule: 1 shipment -> ₹100, 4 -> ₹400, max holding limit ₹1,000
- * @param {number} activeCount
+ * Standard Negative Balance Model:
+ * No artificial wallet lock or holding limit. Security reserve buffer is 0.
+ * In line with industry standards (Shiprocket, NimbusPost), sellers have full access to their wallet.
+ * Negative balance is permitted for RTO / adjustments and automatically recovered from future remittances.
  * @returns {number}
  */
-const calculateSecurityReserve = (activeCount) => {
-  const count = Math.max(0, parseInt(activeCount, 10) || 0);
-  return Math.min(MAX_RESERVE_CAP, count * RESERVE_PER_SHIPMENT);
+const calculateSecurityReserve = () => {
+  return 0;
 };
 
 module.exports = {
