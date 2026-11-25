@@ -478,10 +478,45 @@ async function generateNimbusPostLabel(awbNumbers) {
   return null;
 }
 
+/**
+ * Cancel shipment order in NimbusPost API
+ * @param {string} awbCode
+ * @returns {Promise<{success: boolean, message: string}>}
+ */
+async function cancelNimbusPostOrder(awbCode) {
+  if (!awbCode) return { success: false, message: 'No AWB provided' };
+  try {
+    const token = await getNimbusToken();
+    if (!token) {
+      console.log('[NimbusPost] Simulating order cancellation for AWB:', awbCode);
+      return { success: true, message: 'Simulated cancellation' };
+    }
+    const cleanAwb = String(awbCode).trim();
+    const res = await axios.post('https://api.nimbuspost.com/v1/shipments/cancel', {
+      awb: cleanAwb
+    }, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 10000
+    });
+    console.log(`[NimbusPost Cancel] Response for AWB ${cleanAwb}:`, res.data);
+    return {
+      success: Boolean(res.data?.status),
+      message: res.data?.message || 'NimbusPost shipment cancel requested'
+    };
+  } catch (err) {
+    console.warn('[NimbusPost Cancel Error]:', err.response?.data?.message || err.message);
+    return { success: false, message: err.response?.data?.message || err.message };
+  }
+}
+
 module.exports = {
   getNimbusToken,
   fetchLiveNimbusRates,
   getRealisticNimbusQuotes,
   createOrderInNimbusPost,
-  generateNimbusPostLabel
+  generateNimbusPostLabel,
+  cancelNimbusPostOrder
 };

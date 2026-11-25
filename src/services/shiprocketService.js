@@ -655,9 +655,41 @@ const createOrderInShiprocket = async (shipment, senderUser) => {
   }
 };
 
+/**
+ * Cancel an order in Shiprocket API
+ * @param {string|number} orderId
+ * @param {string} [awbCode]
+ * @returns {Promise<{success: boolean, message: string}>}
+ */
+const cancelShiprocketOrder = async (orderId, awbCode) => {
+  try {
+    const token = await getAuthToken();
+    if (!token) return { success: false, message: 'Shiprocket not authenticated' };
+    const payload = {};
+    if (orderId) payload.ids = [orderId];
+    if (awbCode) payload.awbs = [awbCode];
+    const res = await axios.post('https://apiv2.shiprocket.in/v1/external/orders/cancel', payload, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 10000
+    });
+    console.log(`[Shiprocket Cancel] Response for order ${orderId}:`, res.data);
+    return {
+      success: res.data?.status_code === 200 || res.status === 200,
+      message: res.data?.message || 'Shiprocket order cancellation requested'
+    };
+  } catch (err) {
+    console.warn('[Shiprocket Cancel Error]:', err.response?.data?.message || err.message);
+    return { success: false, message: err.response?.data?.message || err.message };
+  }
+};
+
 module.exports = {
   getAuthToken,
   ensurePickupLocation,
   createOrderInShiprocket,
-  autoAssignCourierAndPickup
+  autoAssignCourierAndPickup,
+  cancelShiprocketOrder
 };

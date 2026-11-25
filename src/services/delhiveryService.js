@@ -430,10 +430,42 @@ const createDelhiveryDirectOrder = async (shipment, senderUser) => {
   }
 };
 
+/**
+ * Cancel shipment in Delhivery Direct API
+ * @param {string} waybill
+ * @returns {Promise<{success: boolean, message: string}>}
+ */
+const cancelDelhiveryDirectOrder = async (waybill) => {
+  if (!waybill) return { success: false, message: 'No waybill provided' };
+  try {
+    const cleanWaybill = String(waybill).trim();
+    const res = await axios.post(`${BASE_URL}/api/p/edit`, {
+      waybill: cleanWaybill,
+      cancellation: 'true'
+    }, {
+      headers: {
+        'Authorization': `Token ${DELHIVERY_API_KEY}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      timeout: 10000
+    });
+    console.log(`[Delhivery Direct Cancel] Response for waybill ${cleanWaybill}:`, res.data);
+    return {
+      success: true,
+      message: res.data?.message || 'Delhivery shipment cancellation requested'
+    };
+  } catch (err) {
+    console.warn('[Delhivery Direct Cancel Error]:', err.response?.data || err.message);
+    return { success: false, message: err.response?.data?.message || err.message };
+  }
+};
+
 module.exports = {
   fetchDirectDelhiveryRate,
   checkDelhiveryServiceability,
   generateDelhiveryWaybill,
-  createDelhiveryDirectOrder
+  createDelhiveryDirectOrder,
+  cancelDelhiveryDirectOrder
 };
 

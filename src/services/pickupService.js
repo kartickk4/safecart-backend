@@ -408,7 +408,61 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
   }
 };
 
+/**
+ * Cancel shipment order with the courier partner / master account
+ * (NimbusPost, Shiprocket, Delhivery Direct, etc.)
+ * @param {object} shipment - Mongoose Shipment document
+ * @returns {Promise<{success: boolean, message: string}>}
+ */
+const cancelCarrierShipment = async (shipment) => {
+  if (!shipment) return { success: false, message: 'No shipment provided' };
+
+  const carrierSlug = String(shipment.carrierSlug || shipment.pickupCarrierSlug || '').toLowerCase();
+  const awb = shipment.awbCode || shipment.nimbusAwb || shipment.delhiveryWaybill || shipment.shadowfaxAwb;
+  console.log(`[CARRIER DISPATCH CANCEL] Cancelling carrier order for ${shipment.shipmentId} (Carrier: ${carrierSlug}, AWB: ${awb})`);
+
+  let cancelResult = { success: false, message: 'No provider matched' };
+
+  // 1. NimbusPost
+  if (carrierSlug.startsWith('nimbus_') || shipment.nimbusOrderId || shipment.nimbusAwb || (shipment.pickupAggregator && shipment.pickupAggregator.includes('NimbusPost'))) {
+    try {
+      const { cancelNimbusPostOrder } = require('./nimbuspostService');
+      cancelResult = await cancelNimbusPostOrder(awb);
+    } catch (npErr) {
+      console.warn('[CARRIER CANCEL] NimbusPost cancel error:', npErr.message);
+    }
+  } 
+  // 2. Delhivery Direct
+  else if (carrierSlug.startsWith('delhivery') || shipment.delhiveryWaybill) {
+    try {
+      const { cancelDelhiveryDirectOrder } = require('./delhiveryService');
+      cancelResult = await cancelDelhiveryDirectOrder(shipment.delhiveryWaybill || awb);
+    } catch (dlvErr) {
+      console.warn('[CARRIER CANCEL] Delhivery Direct cancel error:', dlvErr.message);
+    }
+  } 
+  // 3. Shiprocket
+  else if (shipment.shiprocketOrderId || (shipment.pickupAggregator && shipment.pickupAggregator.includes('Shiprocket'))) {
+    try {
+      const { cancelShiprocketOrder } = require('./shiprocketService');
+      cancelResult = await cancelShiprocketOrder(shipment.shiprocketOrderId, awb);
+    } catch (srErr) {
+      console.warn('[CARRIER CANCEL] Shiprocket cancel error:', srErr.message);
+    }
+  }
+
+  shipment.pickupStatus = 'Cancelled';
+  if (typeof shipment.save === 'function') {
+    try {
+      await shipment.save();
+    } catch (saveErr) {}
+  }
+
+  return cancelResult;
+};
+
 module.exports = {
   autoScheduleCourierPickup,
+  cancelCarrierShipment,
   PICKUP_EXECUTIVES
 };

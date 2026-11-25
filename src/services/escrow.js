@@ -397,6 +397,8 @@ const lockEscrow = async (shipmentId, claimUser) => {
 
 /**
  * Cancels shipment and handles escrow refund if applicable.
+ * Also automatically cancels the order in the carrier partner / master account
+ * (NimbusPost, Shiprocket, Delhivery Direct, etc.) before courier pickup.
  */
 const cancelEscrow = async (shipmentId, userId, reason = 'Cancelled by user') => {
   const shipment = await Shipment.findOne({ shipmentId: shipmentId.toUpperCase() });
@@ -406,18 +408,11 @@ const cancelEscrow = async (shipmentId, userId, reason = 'Cancelled by user') =>
 
   if (userId) {
     const callerId = userId._id ? userId._id.toString() : userId.toString();
-    const isSender = shipment.senderId && shipment.senderId.toString() === callerId;
-    const isReceiver = shipment.receiverId && shipment.receiverId.toString() === callerId;
-    const isAdmin = userId.role === 'Admin' || userId.role === 'super_admin';
+    const isSender = shipment.senderId && (shipment.senderId._id ? shipment.senderId._id.toString() : shipment.senderId.toString()) === callerId;
+    const isReceiver = shipment.receiverId && (shipment.receiverId._id ? shipment.receiverId._id.toString() : shipment.receiverId.toString()) === callerId;
+    const isAdmin = userId.role === 'Admin' || userId.role === 'super_admin' || userId.isAdmin;
     if (!isSender && !isReceiver && !isAdmin) {
       throw new Error('Unauthorized: User is not authorized to cancel this shipment');
-    }
-  }
-
-  // Authorization check: Verify caller identity matches shipment participant
-  if (receiverId && shipment.receiverId && shipment.receiverId.toString() !== receiverId.toString()) {
-    if (shipment.senderId && shipment.senderId.toString() !== receiverId.toString()) {
-      throw new Error('Unauthorized: User is not authorized to release this shipment payment');
     }
   }
 
@@ -429,20 +424,86 @@ const cancelEscrow = async (shipmentId, userId, reason = 'Cancelled by user') =>
     throw new Error('Cannot cancel a shipment whose order payment has already been released');
   }
 
-  if (['In Transit', 'Reached Destination Hub', 'Out for Delivery', 'Delivered'].includes(shipment.status)) {
-    throw new Error('Cannot cancel shipment once package is in transit with the carrier partner. Please file a dispute claim instead.');
+  // Prevent cancellation only if the package has physically been picked up by the courier
+  const isPhysicallyPickedUp = shipment.pickupStatus === 'Picked Up' ||
+    ['Reached Destination Hub', 'Out for Delivery', 'Delivered'].includes(shipment.status);
+
+  if (isPhysicallyPickedUp) {
+    throw new Error('Cannot cancel shipment once package has been physically picked up by the carrier. Please file a dispute claim instead.');
   }
 
-  const wasFunded = shipment.escrowStage >= 2;
+  // ── Auto-Cancel Courier Dispatch in Partner/Master Account (NimbusPost / Shiprocket / Delhivery) ──
+  try {
+    const { cancelCarrierShipment } = require('./pickupService');
+    await cancelCarrierShipment(shipment);
+  } catch (carrierErr) {
+    console.warn(`[CARRIER DISPATCH CANCEL WARNING] Could not cancel carrier for ${shipmentId}:`, carrierErr.message);
+  }
+
+  // ── Refund Freight & Upfront COD Charges to Seller Wallet if Deducted ──
+  try {
+    let refundToSeller = 0;
+    if (shipment.codFeePaid && shipment.codFeePaymentMethod === 'wallet_adjustment' && Number(shipment.codUpfrontFee) > 0) {
+      refundToSeller += Number(shipment.codUpfrontFee);
+      shipment.codFeePaid = false;
+    }
+    if (shipment.courierChargeStatus === 'Deducted' && Number(shipment.courierChargeDeducted) > 0) {
+      refundToSeller += Number(shipment.courierChargeDeducted);
+      shipment.courierChargeStatus = 'Refunded';
+    }
+
+    if (refundToSeller > 0 && shipment.senderId) {
+      const sender = await User.findById(shipment.senderId);
+      if (sender) {
+        const balBefore = Number(sender.walletBalance) || 0;
+        sender.walletBalance = parseFloat((balBefore + refundToSeller).toFixed(2));
+        await sender.save();
+
+        await recordTransaction({
+          userId: sender._id,
+          type: 'credit',
+          amount: refundToSeller,
+          source: 'cancelled_shipment_freight_refund',
+          description: `Refund for cancelled shipment ${shipment.shipmentId} courier & upfront charges`,
+          paymentGateway: 'system',
+          balanceBefore: balBefore,
+          balanceAfter: sender.walletBalance,
+          metadata: { shipmentId: shipment.shipmentId, refundedAmount: refundToSeller }
+        });
+      }
+    }
+  } catch (refundErr) {
+    console.warn(`[SELLER FREIGHT REFUND WARNING] for ${shipmentId}:`, refundErr.message);
+  }
+
+  const wasFunded = shipment.escrowStage >= 2 && !['cod', 'paid_offline'].includes(shipment.paymentMode);
 
   shipment.status = 'Cancelled';
   shipment.escrowStage = -2;
+  shipment.pickupStatus = 'Cancelled';
   shipment.cancelledAt = new Date();
   shipment.cancelReason = reason || 'Cancelled by user';
   if (wasFunded) {
     shipment.principalRefundedToReceiver = shipment.amount;
   }
   await shipment.save();
+
+  // ── Update CarrierJourney timeline with Cancellation milestone ──
+  try {
+    const CarrierJourney = require('../models/CarrierJourney');
+    const journey = await CarrierJourney.findOne({ shipmentId: shipment.shipmentId });
+    if (journey) {
+      journey.milestones.push({
+        status: 'Cancelled',
+        location: shipment.city || 'Origin Location',
+        detail: `Shipment cancelled before courier pickup (${reason || 'Cancelled by user'}). Master account courier booking cancelled.`,
+        time: new Date()
+      });
+      await journey.save();
+    }
+  } catch (jErr) {
+    console.warn('[CARRIER JOURNEY CANCEL NOTE]:', jErr.message);
+  }
 
   const formattedAmount = `₹${new Intl.NumberFormat('en-IN').format(shipment.amount)}`;
 
