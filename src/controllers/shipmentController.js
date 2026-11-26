@@ -3777,10 +3777,17 @@ const getPrintableShippingLabel = async (req, res) => {
 
     // Delhivery Official Packing Slip PDF
     if (carrier.includes('delhivery') && awb) {
-      const delhiveryLabel = `https://track.delhivery.com/api/p/packing_slip?wbns=${awb}&pdf=true`;
-      shipment.shippingLabelUrl = delhiveryLabel;
-      await shipment.save().catch(() => { });
-      return res.redirect(delhiveryLabel);
+      try {
+        const { fetchDelhiveryPackingSlipUrl } = require('../services/delhiveryService');
+        const s3PdfUrl = await fetchDelhiveryPackingSlipUrl(awb);
+        if (s3PdfUrl) {
+          shipment.shippingLabelUrl = s3PdfUrl;
+          await shipment.save().catch(() => { });
+          return res.redirect(s3PdfUrl);
+        }
+      } catch (dlvErr) {
+        console.warn('[Delhivery Label Resolution Warning]:', dlvErr.message);
+      }
     }
 
     // Shadowfax Official Thermal Label PDF

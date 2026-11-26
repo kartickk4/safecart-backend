@@ -311,6 +311,30 @@ const generateDelhiveryWaybill = async (count = 1) => {
 };
 
 /**
+ * Fetches the direct pre-signed Amazon S3 PDF packing slip URL from Delhivery
+ * @param {string} waybill
+ * @returns {Promise<string|null>}
+ */
+const fetchDelhiveryPackingSlipUrl = async (waybill) => {
+  try {
+    const cleanWaybill = String(waybill || '').trim();
+    if (!cleanWaybill) return null;
+    const res = await axios.get(`${BASE_URL}/api/p/packing_slip?wbns=${cleanWaybill}&pdf=true`, {
+      headers: {
+        'Authorization': `Token ${DELHIVERY_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 10000
+    });
+    const link = res.data?.packages?.[0]?.pdf_download_link;
+    return link || null;
+  } catch (err) {
+    console.warn('[Delhivery Packing Slip Error]:', err.response?.data || err.message);
+    return null;
+  }
+};
+
+/**
  * Manifests parcel directly on Delhivery CMU network.
  * Accurately routes pickup to the seller's doorstep.
  *
@@ -334,18 +358,36 @@ const createDelhiveryDirectOrder = async (shipment, senderUser) => {
 
   // 3. Format pickup (seller) and delivery (buyer) details
   const pickupPincode = String(shipment.senderPincode || senderUser?.pickupAddress?.pincode || senderUser?.pincode || '700049').replace(/\D/g, '').slice(0, 6);
-  const pickupAddress = (shipment.senderAddress || senderUser?.pickupAddress?.street || senderUser?.address || 'Seller Doorstep').trim();
+  let pickupCity = (shipment.senderCity || senderUser?.pickupAddress?.city || senderUser?.city || '').trim();
+  let pickupState = (shipment.senderState || senderUser?.pickupAddress?.state || senderUser?.state || '').trim();
+  if (!pickupCity) pickupCity = 'Kolkata';
+  if (!pickupState) pickupState = 'West Bengal';
+
+  let pickupAddress = (shipment.senderAddress || senderUser?.pickupAddress?.street || senderUser?.address || 'Seller Doorstep').trim();
+  if (!pickupAddress.toLowerCase().includes(pickupCity.toLowerCase())) {
+    pickupAddress = `${pickupAddress}, ${pickupCity}, ${pickupState} - ${pickupPincode}`;
+  }
+
   const pickupName = (shipment.senderName || senderUser?.businessName || senderUser?.fullName || 'SecureKaro Seller').trim();
   const pickupPhone = String(shipment.senderPhone || senderUser?.phone || '9999999999').replace(/\D/g, '').slice(-10);
 
   const deliveryPincode = String(shipment.receiverPincode || '110001').replace(/\D/g, '').slice(0, 6);
+  let deliveryCity = (shipment.receiverCity || '').trim();
+  let deliveryState = (shipment.receiverState || '').trim();
+  if (!deliveryCity) deliveryCity = 'Kolkata';
+  if (!deliveryState) deliveryState = 'West Bengal';
+
   const deliveryAddress = (shipment.receiverAddress || 'Buyer Address').trim();
   const deliveryName = (shipment.receiverName || 'Buyer').trim();
   const deliveryPhone = String(shipment.receiverPhone || '9876543210').replace(/\D/g, '').slice(-10);
 
-  const weightKg = parseFloat(shipment.weight || 0.5);
-  const isCod = Boolean(shipment.paymentMethod === 'cod' || shipment.isCod);
-  const totalAmount = parseFloat(shipment.escrowAmount || shipment.totalAmount || shipment.itemPrice || 0);
+  const weightKg = parseFloat(shipment.parcelWeight || shipment.weight || 0.5);
+  const isCod = Boolean(
+    (shipment.paymentMode || '').toLowerCase() === 'cod' ||
+    (shipment.paymentMethod || '').toLowerCase() === 'cod' ||
+    shipment.isCod
+  );
+  const totalAmount = parseFloat(shipment.amount || shipment.codAmount || shipment.escrowAmount || shipment.totalAmount || shipment.itemPrice || 0);
 
   const shipmentData = {
     shipments: [
@@ -354,19 +396,19 @@ const createDelhiveryDirectOrder = async (shipment, senderUser) => {
         name: deliveryName,
         add: deliveryAddress,
         pin: deliveryPincode,
-        city: shipment.receiverCity || '',
-        state: shipment.receiverState || '',
+        city: deliveryCity,
+        state: deliveryState,
         country: 'India',
         phone: deliveryPhone,
         order: shipment.shipmentId || `ORD_${Date.now()}`,
         payment_mode: isCod ? 'COD' : 'Pre-paid',
         return_pin: pickupPincode,
-        return_city: shipment.senderCity || '',
+        return_city: pickupCity,
         return_phone: pickupPhone,
         return_add: pickupAddress,
-        return_state: shipment.senderState || '',
+        return_state: pickupState,
         return_country: 'India',
-        products_desc: shipment.itemDescription || 'Consumer Merchandise',
+        products_desc: shipment.description || shipment.itemDescription || 'Consumer Merchandise',
         hsn_code: '',
         cod_amount: isCod ? String(totalAmount) : '0',
         order_date: new Date().toISOString().slice(0, 19).replace('T', ' '),
@@ -384,7 +426,7 @@ const createDelhiveryDirectOrder = async (shipment, senderUser) => {
     pickup_location: {
       name: warehouseName,
       add: pickupAddress,
-      city: shipment.senderCity || '',
+      city: pickupCity,
       pin_code: pickupPincode,
       country: 'India',
       phone: pickupPhone
@@ -413,6 +455,10 @@ const createDelhiveryDirectOrder = async (shipment, senderUser) => {
       throw new Error(`Delhivery booking failed: ${pkgRemarks || 'Manifest rejected by Delhivery'}`);
     }
 
+    // Attempt to resolve direct pre-signed Amazon S3 packing slip URL
+    let s3LabelUrl = await fetchDelhiveryPackingSlipUrl(waybill);
+    const finalLabelUrl = s3LabelUrl || `/api/v1/shipments/${shipment.shipmentId}/label?format=pdf`;
+
     return {
       success: true,
       awbCode: waybill,
@@ -420,7 +466,7 @@ const createDelhiveryDirectOrder = async (shipment, senderUser) => {
       courierName: 'Delhivery Express (Direct)',
       bookingRef: waybill,
       status: 'BOOKED',
-      labelUrl: `https://track.delhivery.com/api/p/packing_slip?wbns=${waybill}&pdf=true`,
+      labelUrl: finalLabelUrl,
       data: res.data
     };
 
@@ -466,6 +512,7 @@ module.exports = {
   checkDelhiveryServiceability,
   generateDelhiveryWaybill,
   createDelhiveryDirectOrder,
-  cancelDelhiveryDirectOrder
+  cancelDelhiveryDirectOrder,
+  fetchDelhiveryPackingSlipUrl
 };
 
