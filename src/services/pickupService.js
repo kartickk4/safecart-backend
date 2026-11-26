@@ -56,52 +56,7 @@ function formatCarrierBrandName(slug, explicitName) {
   return cleaned ? (cleaned.charAt(0).toUpperCase() + cleaned.slice(1)) : 'Courier Partner';
 }
 
-// Realistic simulated pickup executives across all popular courier partners
-const PICKUP_EXECUTIVES = {
-  delhivery: [
-    { name: 'Rajesh Kumar', phone: '+91 98112 40912' },
-    { name: 'Vikas Sharma', phone: '+91 98231 66491' },
-    { name: 'Suresh Patil', phone: '+91 98902 18450' }
-  ],
-  shadowfax: [
-    { name: 'Amit Verma', phone: '+91 98203 55819' },
-    { name: 'Sunil Yadav', phone: '+91 98450 33194' },
-    { name: 'Deepak Roy', phone: '+91 98310 99420' }
-  ],
-  ekart: [
-    { name: 'Sandeep Singh', phone: '+91 98721 88401' },
-    { name: 'Manoj Tiwari', phone: '+91 98190 22319' },
-    { name: 'Alok Sen', phone: '+91 98301 77145' }
-  ],
-  xpressbees: [
-    { name: 'Rahul Mehra', phone: '+91 98104 55192' },
-    { name: 'Tariq Khan', phone: '+91 98220 66318' },
-    { name: 'Arjun Das', phone: '+91 98402 11984' }
-  ],
-  dtdc: [
-    { name: 'Ramesh Nair', phone: '+91 98480 33412' },
-    { name: 'Pradeep Joshi', phone: '+91 98211 44590' },
-    { name: 'Sanjay Mehta', phone: '+91 98920 77314' }
-  ],
-  bluedart: [
-    { name: 'Rohit Malhotra', phone: '+91 98110 33819' },
-    { name: 'Devendra Chauhan', phone: '+91 98200 44910' },
-    { name: 'Gaurav Bhatia', phone: '+91 98451 22904' }
-  ],
-  ecom_express: [
-    { name: 'Hemant Bisht', phone: '+91 98188 55401' },
-    { name: 'Nitin Verma', phone: '+91 98230 77192' },
-    { name: 'Sachin Pawar', phone: '+91 98901 33481' }
-  ],
-  rapido: [
-    { name: 'Karthik Raja (Rapido Captain)', phone: '+91 98450 78210' },
-    { name: 'Prashant More (Rapido Captain)', phone: '+91 98205 61934' },
-    { name: 'Arun Kumar (Rapido Captain)', phone: '+91 98118 44021' }
-  ],
-  default: [
-    { name: 'Logistics Courier Agent', phone: '+91 98000 12345' }
-  ]
-};
+
 
 const PREFIX_MAP = {
   delhivery:    'SR-DLV',
@@ -285,21 +240,29 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
       ? 'Shadowfax Direct Production Network'
       : (isNimbus ? 'NimbusPost Multi-Carrier Network' : 'Shiprocket Multi-Carrier Network');
 
+    let isPickupConfirmed = false;
+    let dlRes = null;
+    let sfRes = null;
+    let npRes = null;
+
     // Multi-Gateway Dispatch: Route to Delhivery Direct, Shadowfax Direct, NimbusPost, or Shiprocket
     if (isDelhiveryDirect) {
       try {
         const { createDelhiveryDirectOrder } = require('./delhiveryService');
-        const dlRes = await createDelhiveryDirectOrder(shipment, sender, { pickupDateStr, pickupTimeStr });
+        dlRes = await createDelhiveryDirectOrder(shipment, sender, { pickupDateStr, pickupTimeStr });
         if (dlRes?.awbCode) {
           shipment.awbCode = dlRes.awbCode;
           shipment.delhiveryWaybill = dlRes.awbCode;
           pickupToken = dlRes.pickupId ? `DLV-PR-${dlRes.pickupId}` : `DLV-${dlRes.awbCode}`;
           shipment.pickupToken = pickupToken;
           assignedCarrierName = 'Delhivery Express (Direct)';
+          if (dlRes.pickupId) {
+            isPickupConfirmed = true;
+          }
           if (dlRes.labelUrl) {
             shipment.shippingLabelUrl = dlRes.labelUrl;
           }
-          console.log(`✅ [Delhivery Direct Dispatch] Successfully booked waybill: ${dlRes.awbCode}, PR: ${dlRes.pickupId || 'Auto'} for ${shipment.shipmentId}`);
+          console.log(`✅ [Delhivery Direct Dispatch] Successfully booked waybill: ${dlRes.awbCode}, PR: ${dlRes.pickupId || 'Pending'} for ${shipment.shipmentId}`);
         }
       } catch (dlErr) {
         console.warn('[DELHIVERY DIRECT SYNC NOTICE]:', dlErr.message);
@@ -307,7 +270,7 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
     } else if (isShadowfaxDirect) {
       try {
         const { createShadowfaxDirectOrder } = require('./shadowfaxService');
-        const sfRes = await createShadowfaxDirectOrder(shipment, sender);
+        sfRes = await createShadowfaxDirectOrder(shipment, sender);
         if (sfRes?.awbCode) {
           shipment.awbCode = sfRes.awbCode;
           shipment.shadowfaxAwb = sfRes.awbCode;
@@ -325,7 +288,7 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
     } else if (isNimbus) {
       try {
         if (typeof createOrderInNimbusPost === 'function') {
-          const npRes = await createOrderInNimbusPost(shipment, sender);
+          npRes = await createOrderInNimbusPost(shipment, sender);
           if (npRes?.orderId) {
             shipment.nimbusOrderId = npRes.orderId;
             shipment.nimbusShipmentId = npRes.shipmentId;
@@ -371,11 +334,13 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
       }
     }
 
+    shipment.pickupStatus = isPickupConfirmed ? 'Scheduled' : 'Manifest Generated';
+
     if (typeof shipment.save === 'function') {
       await shipment.save();
     }
 
-    // 7. Update CarrierJourney timeline with the auto-scheduled pickup milestone
+    // 7. Update CarrierJourney timeline with the accurate milestone
     try {
       let journey = await CarrierJourney.findOne({ shipmentId: shipment.shipmentId });
       if (!journey) {
@@ -391,10 +356,15 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
         ? `SecureKaro Hybrid Logistics Engine compared ${comparison.length} popular courier partners across Shiprocket & NimbusPost (Delhivery, Shadowfax, Ekart, Xpressbees, DTDC, BlueDart, Ecom Express). Lowest rate: ${assignedCarrierName} at ₹${assignedRate}.` 
         : '';
 
+      const milestoneStatus = isPickupConfirmed ? 'Pickup Scheduled' : 'Manifest Generated (Ready to Ship)';
+      const milestoneDetail = isPickupConfirmed
+        ? `Confirmed ${assignedCarrierName} pickup for slot: ${pickupSlot}. ${comparisonText} Courier Reference: ${pickupToken}. Pickup Executive: ${executive.name} (${executive.phone}).`
+        : `Manifest generated on ${assignedCarrierName} network (AWB: ${shipment.awbCode || pickupToken}). Pickup dispatch slot: ${pickupSlot}. ${comparisonText} Executive: ${executive.name} (${executive.phone}).`;
+
       journey.milestones.push({
-        status: 'Pickup Scheduled',
+        status: milestoneStatus,
         location: sender?.city || sender?.pickupAddress?.city || 'Origin Warehouse',
-        detail: `Auto-scheduled ${assignedCarrierName} pickup for slot: ${pickupSlot}. ${comparisonText} Courier Reference: ${pickupToken}. Executive: ${executive.name} (${executive.phone}).`,
+        detail: milestoneDetail,
         time: new Date()
       });
 
@@ -408,8 +378,8 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
       await createNotification(
         sender?._id || shipment.senderId,
         'local_shipping',
-        `Courier Pickup Auto-Scheduled: ${shipment.shipmentId}`,
-        `SecureKaro Hybrid Logistics Engine compared ${comparison.length} popular courier partners across Shiprocket & NimbusPost and auto-scheduled ${assignedCarrierName} (lowest rate: ₹${assignedRate}). Pickup slot: ${pickupSlot}. Courier Ref: ${pickupToken}. Executive: ${executive.name} (${executive.phone}).`,
+        `Courier ${isPickupConfirmed ? 'Pickup Scheduled' : 'Manifest Generated'}: ${shipment.shipmentId}`,
+        `SecureKaro Hybrid Logistics Engine compared ${comparison.length} popular courier partners and manifested with ${assignedCarrierName} (rate: ₹${assignedRate}). Pickup slot: ${pickupSlot}. Courier Ref: ${pickupToken}. Executive: ${executive.name} (${executive.phone}).`,
         'shipping'
       );
     }
