@@ -150,28 +150,50 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
     let assignedCarrierName = formatCarrierBrandName(targetCarrierSlug, matchedCarrier?.name);
     const assignedRate = matchedCarrier?.price || (targetCarrierSlug.includes('bluedart') ? 65 : 40);
 
-    // 2. Compute the optimal pickup time slot based on current time
-    const now = new Date();
-    const currentHour = now.getHours();
+    // 2. Compute the optimal pickup time slot strictly using Indian Standard Time (IST, UTC+5:30)
+    const nowUtc = new Date();
+    const istTime = new Date(nowUtc.getTime() + (5.5 * 60 * 60 * 1000));
+    const istHour = istTime.getUTCHours();
 
-    let pickupDate = new Date();
+    let pickupDate = new Date(istTime.getTime());
     let pickupSlot = '';
+    let pickupDateStr = '';
+    let pickupTimeStr = '14:00:00';
 
-    if (currentHour < 14) {
-      // Booked before 2:00 PM -> Same-Day Afternoon Pickup (2 PM - 6 PM)
+    if (istHour < 14) {
+      // Booked before 2:00 PM IST -> Same-Day Afternoon Pickup (2 PM - 6 PM)
       pickupSlot = 'Today, 02:00 PM - 06:00 PM (Same-Day Evening Slot)';
+      pickupTimeStr = '15:00:00';
+      const yyyy = pickupDate.getUTCFullYear();
+      const mm = String(pickupDate.getUTCMonth() + 1).padStart(2, '0');
+      const dd = String(pickupDate.getUTCDate()).padStart(2, '0');
+      pickupDateStr = `${yyyy}-${mm}-${dd}`;
     } else {
-      // Booked 2:00 PM or later -> Next-Day Morning Pickup (10 AM - 1 PM)
-      pickupDate.setDate(pickupDate.getDate() + 1);
+      // Booked 2:00 PM IST or later -> Next-Day Morning Pickup (10 AM - 1 PM)
+      pickupDate.setUTCDate(pickupDate.getUTCDate() + 1);
       // Skip Sunday if tomorrow is Sunday
-      if (pickupDate.getDay() === 0) {
-        pickupDate.setDate(pickupDate.getDate() + 1);
+      if (pickupDate.getUTCDay() === 0) {
+        pickupDate.setUTCDate(pickupDate.getUTCDate() + 1);
       }
-      const dayName = pickupDate.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
+      const dayName = pickupDate.toLocaleDateString('en-IN', {
+        timeZone: 'UTC',
+        weekday: 'short',
+        day: 'numeric',
+        month: 'short'
+      });
       pickupSlot = `${dayName}, 10:00 AM - 01:00 PM (Morning Slot)`;
+      pickupTimeStr = '11:00:00';
+      const yyyy = pickupDate.getUTCFullYear();
+      const mm = String(pickupDate.getUTCMonth() + 1).padStart(2, '0');
+      const dd = String(pickupDate.getUTCDate()).padStart(2, '0');
+      pickupDateStr = `${yyyy}-${mm}-${dd}`;
     }
 
-    // 3. Generate Courier Pickup Token / Reference via Shiprocket Engine
+    // 3. Generate Courier Pickup Token / Reference
+    const isDelhiveryDirect = String(assignedCarrierSlug || '').startsWith('delhivery');
+    const isShadowfaxDirect = String(assignedCarrierSlug || '').startsWith('shadowfax');
+    const isNimbus = String(assignedCarrierSlug || '').startsWith('nimbus_');
+
     let prefix = 'SR-PKP';
     for (const [key, val] of Object.entries(PREFIX_MAP)) {
       if (assignedCarrierSlug.includes(key)) {
@@ -181,16 +203,29 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
     }
     let pickupToken = `${prefix}-${Math.floor(100000 + Math.random() * 900000)}`;
 
-    // 4. Assign Pickup Executive
-    let execKey = 'default';
-    for (const key of Object.keys(PICKUP_EXECUTIVES)) {
-      if (key !== 'default' && assignedCarrierSlug.includes(key)) {
-        execKey = key;
-        break;
-      }
+    // 4. Assign Pickup Executive (Carrier-assigned for live couriers, no fake simulated names)
+    let executive;
+    if (isDelhiveryDirect) {
+      executive = {
+        name: 'Delhivery Field Executive',
+        phone: 'Assigned on morning dispatch'
+      };
+    } else if (isShadowfaxDirect) {
+      executive = {
+        name: 'Shadowfax Field Rider',
+        phone: 'Assigned on morning dispatch'
+      };
+    } else if (isNimbus) {
+      executive = {
+        name: `${assignedCarrierName} Logistics Partner`,
+        phone: 'Assigned upon carrier dispatch'
+      };
+    } else {
+      executive = {
+        name: 'Courier Field Executive',
+        phone: 'Assigned on morning dispatch'
+      };
     }
-    const execPool = PICKUP_EXECUTIVES[execKey] || PICKUP_EXECUTIVES.default;
-    const executive = execPool[Math.floor(Math.random() * execPool.length)];
 
     // 5. Construct full sender pickup location address
     const pickupAddressStr = shipment.senderAddress || 
@@ -244,9 +279,6 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
     shipment.pickupAgentPhone = executive.phone;
     shipment.pickupLocationAddress = pickupAddressStr;
     shipment.pickupRateComparison = comparison;
-    const isDelhiveryDirect = String(assignedCarrierSlug || '').startsWith('delhivery');
-    const isShadowfaxDirect = String(assignedCarrierSlug || '').startsWith('shadowfax');
-    const isNimbus = String(assignedCarrierSlug || '').startsWith('nimbus_');
     shipment.pickupAggregator = isDelhiveryDirect 
       ? 'Delhivery Direct Production Network' 
       : isShadowfaxDirect
@@ -257,17 +289,17 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
     if (isDelhiveryDirect) {
       try {
         const { createDelhiveryDirectOrder } = require('./delhiveryService');
-        const dlRes = await createDelhiveryDirectOrder(shipment, sender);
+        const dlRes = await createDelhiveryDirectOrder(shipment, sender, { pickupDateStr, pickupTimeStr });
         if (dlRes?.awbCode) {
           shipment.awbCode = dlRes.awbCode;
           shipment.delhiveryWaybill = dlRes.awbCode;
-          pickupToken = `DLV-${dlRes.awbCode}`;
+          pickupToken = dlRes.pickupId ? `DLV-PR-${dlRes.pickupId}` : `DLV-${dlRes.awbCode}`;
           shipment.pickupToken = pickupToken;
           assignedCarrierName = 'Delhivery Express (Direct)';
           if (dlRes.labelUrl) {
             shipment.shippingLabelUrl = dlRes.labelUrl;
           }
-          console.log(`✅ [Delhivery Direct Dispatch] Successfully booked waybill: ${dlRes.awbCode} for ${shipment.shipmentId}`);
+          console.log(`✅ [Delhivery Direct Dispatch] Successfully booked waybill: ${dlRes.awbCode}, PR: ${dlRes.pickupId || 'Auto'} for ${shipment.shipmentId}`);
         }
       } catch (dlErr) {
         console.warn('[DELHIVERY DIRECT SYNC NOTICE]:', dlErr.message);

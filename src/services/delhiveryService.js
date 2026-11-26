@@ -253,14 +253,17 @@ const ensureDelhiveryWarehouse = async (senderUser, shipment) => {
   const sellerEmail = senderUser?.email || `${sellerPhone}@securekaro.in`;
   const sellerCity = shipment.senderCity || senderUser?.pickupAddress?.city || senderUser?.city || 'City';
   const sellerState = shipment.senderState || senderUser?.pickupAddress?.state || senderUser?.state || 'State';
+  const sellerRegisteredName = (senderUser?.businessName || senderUser?.fullName || 'SecureKaro Merchant').trim();
 
   try {
     const res = await axios.post(`${BASE_URL}/api/backend/clientwarehouse/create/`, {
       name: warehouseName,
+      registered_name: sellerRegisteredName,
       email: sellerEmail,
       phone: sellerPhone,
       address: sellerAddress,
       city: sellerCity,
+      state: sellerState,
       country: 'India',
       pin: sellerPincode,
       return_address: sellerAddress,
@@ -282,6 +285,59 @@ const ensureDelhiveryWarehouse = async (senderUser, shipment) => {
     // If warehouse already exists, Delhivery returns 400 with 'already exists' - reuse it
     registeredWarehouses.add(warehouseName);
     return warehouseName;
+  }
+};
+
+/**
+ * Dispatches a First Mile Pickup Request to Delhivery HQ.
+ * Automatically schedules courier arrival at the seller doorstep and transitions status from "Ready to ship" to "Pickup scheduled".
+ *
+ * @param {string} warehouseName - Registered client warehouse name
+ * @param {string} pickupDateStr - Date in YYYY-MM-DD
+ * @param {string} pickupTimeStr - Time in HH:MM:SS (e.g. '11:00:00' or '14:00:00')
+ * @param {number} [packageCount=1] - Number of packages to be picked up
+ * @returns {Promise<Object>}
+ */
+const requestDelhiveryPickup = async (warehouseName, pickupDateStr, pickupTimeStr = '14:00:00', packageCount = 1) => {
+  if (!DELHIVERY_API_KEY) {
+    return { success: false, error: 'DELHIVERY_API_KEY missing' };
+  }
+
+  try {
+    const payload = {
+      pickup_location: warehouseName,
+      expected_package_count: packageCount || 1,
+      pickup_date: pickupDateStr,
+      pickup_time: pickupTimeStr
+    };
+
+    console.log(`[Delhivery Live Pickup Request] Dispatching to /fm/request/new/:`, JSON.stringify(payload));
+    const res = await axios.post(`${BASE_URL}/fm/request/new/`, payload, {
+      headers: {
+        'Authorization': `Token ${DELHIVERY_API_KEY}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      timeout: 10000
+    });
+
+    console.log(`✅ [Delhivery Pickup Request Created]:`, JSON.stringify(res.data));
+    const prId = res.data?.pr_id || res.data?.pickup_id || res.data?.id;
+    return {
+      success: true,
+      prId,
+      pickupDate: pickupDateStr,
+      pickupTime: pickupTimeStr,
+      center: res.data?.incoming_center_name,
+      message: res.data?.message || 'Pickup scheduled with Delhivery hub',
+      data: res.data
+    };
+  } catch (err) {
+    console.warn('[Delhivery Pickup Request Notice]:', err.response?.data || err.message);
+    return {
+      success: false,
+      error: err.response?.data?.error || err.response?.data?.message || err.message
+    };
   }
 };
 
@@ -342,7 +398,7 @@ const fetchDelhiveryPackingSlipUrl = async (waybill) => {
  * @param {Object} senderUser - Mongoose User document for the seller
  * @returns {Promise<Object>} Booking confirmation with AWB and status
  */
-const createDelhiveryDirectOrder = async (shipment, senderUser) => {
+const createDelhiveryDirectOrder = async (shipment, senderUser, pickupOptions = {}) => {
   if (!DELHIVERY_API_KEY) {
     throw new Error('DELHIVERY_API_KEY is not configured');
   }
@@ -459,6 +515,37 @@ const createDelhiveryDirectOrder = async (shipment, senderUser) => {
     let s3LabelUrl = await fetchDelhiveryPackingSlipUrl(waybill);
     const finalLabelUrl = s3LabelUrl || `/api/v1/shipments/${shipment.shipmentId}/label?format=pdf`;
 
+    // Compute optimal IST pickup date & time
+    const nowUtc = new Date();
+    const istTime = new Date(nowUtc.getTime() + (5.5 * 60 * 60 * 1000));
+    const istHour = istTime.getUTCHours();
+
+    let pDate = new Date(istTime.getTime());
+    let pTimeStr = '14:00:00';
+
+    if (istHour >= 14) {
+      // Past 2:00 PM IST -> Schedule for next business day morning
+      pDate.setUTCDate(pDate.getUTCDate() + 1);
+      if (pDate.getUTCDay() === 0) pDate.setUTCDate(pDate.getUTCDate() + 1);
+      pTimeStr = '11:00:00';
+    } else {
+      pTimeStr = '15:00:00';
+    }
+
+    const yyyy = pDate.getUTCFullYear();
+    const mm = String(pDate.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(pDate.getUTCDate()).padStart(2, '0');
+    const pDateStr = pickupOptions.pickupDateStr || `${yyyy}-${mm}-${dd}`;
+    const finalPickupTime = pickupOptions.pickupTimeStr || pTimeStr;
+
+    // Immediately schedule First Mile Pickup Request with Delhivery HQ
+    let pickupResult = null;
+    try {
+      pickupResult = await requestDelhiveryPickup(warehouseName, pDateStr, finalPickupTime, 1);
+    } catch (prErr) {
+      console.warn('[Delhivery PR Dispatch Exception]:', prErr.message);
+    }
+
     return {
       success: true,
       awbCode: waybill,
@@ -466,6 +553,10 @@ const createDelhiveryDirectOrder = async (shipment, senderUser) => {
       courierName: 'Delhivery Express (Direct)',
       bookingRef: waybill,
       status: 'BOOKED',
+      pickupId: pickupResult?.prId || null,
+      pickupStatus: pickupResult?.success ? 'Pickup Scheduled' : 'Ready to ship',
+      pickupDate: pDateStr,
+      pickupTime: finalPickupTime,
       labelUrl: finalLabelUrl,
       data: res.data
     };
@@ -513,6 +604,7 @@ module.exports = {
   generateDelhiveryWaybill,
   createDelhiveryDirectOrder,
   cancelDelhiveryDirectOrder,
-  fetchDelhiveryPackingSlipUrl
+  fetchDelhiveryPackingSlipUrl,
+  requestDelhiveryPickup
 };
 
