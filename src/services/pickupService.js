@@ -362,7 +362,7 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
       const milestoneStatus = isPickupConfirmed ? 'Pickup Scheduled' : 'Manifest Ready to Ship (Pickup Pending)';
       const milestoneDetail = isPickupConfirmed
         ? `Confirmed ${assignedCarrierName} pickup for slot: ${pickupSlot}. ${comparisonText} Courier Reference: ${pickupToken}. Pickup Executive: ${executive.name} (${executive.phone}).`
-        : `Manifest generated on ${assignedCarrierName} network (AWB: ${shipment.awbCode || pickupToken}). Dispatch slot: ${pickupSlot}. ${shipment.pickupError ? shipment.pickupError + ' ' : ''}${comparisonText}`;
+        : `Manifest generated on ${assignedCarrierName} network (AWB: ${shipment.awbCode || pickupToken}). Pickup dispatch slot: ${pickupSlot}. ${comparisonText} Executive: ${executive.name} (${executive.phone}).`;
 
       journey.milestones.push({
         status: milestoneStatus,
