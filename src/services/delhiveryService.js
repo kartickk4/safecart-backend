@@ -388,7 +388,7 @@ const fetchDelhiveryPackingSlipUrl = async (waybill) => {
         'Authorization': `Token ${DELHIVERY_API_KEY}`,
         'Content-Type': 'application/json'
       },
-      timeout: 10000
+      timeout: 2500
     });
     const link = res.data?.packages?.[0]?.pdf_download_link;
     return link || null;
@@ -518,10 +518,6 @@ const createDelhiveryDirectOrder = async (shipment, senderUser, pickupOptions = 
       throw new Error(`Delhivery booking failed: ${pkgRemarks || 'Manifest rejected by Delhivery'}`);
     }
 
-    // Attempt to resolve direct pre-signed Amazon S3 packing slip URL
-    let s3LabelUrl = await fetchDelhiveryPackingSlipUrl(waybill);
-    const finalLabelUrl = s3LabelUrl || `/api/v1/shipments/${shipment.shipmentId}/label?format=pdf`;
-
     // Compute optimal IST pickup date & time
     const nowUtc = new Date();
     const istTime = new Date(nowUtc.getTime() + (5.5 * 60 * 60 * 1000));
@@ -545,13 +541,15 @@ const createDelhiveryDirectOrder = async (shipment, senderUser, pickupOptions = 
     const pDateStr = pickupOptions.pickupDateStr || `${yyyy}-${mm}-${dd}`;
     const finalPickupTime = pickupOptions.pickupTimeStr || pTimeStr;
 
-    // Immediately schedule First Mile Pickup Request with Delhivery HQ
-    let pickupResult = null;
-    try {
-      pickupResult = await requestDelhiveryPickup(warehouseName, pDateStr, finalPickupTime, 1);
-    } catch (prErr) {
-      console.warn('[Delhivery PR Dispatch Exception]:', prErr.message);
-    }
+    // Run label resolution & First Mile Pickup Request concurrently for speed
+    const [labelSettled, pickupSettled] = await Promise.allSettled([
+      fetchDelhiveryPackingSlipUrl(waybill),
+      requestDelhiveryPickup(warehouseName, pDateStr, finalPickupTime, 1)
+    ]);
+
+    const s3LabelUrl = labelSettled.status === 'fulfilled' ? labelSettled.value : null;
+    const finalLabelUrl = s3LabelUrl || `/api/v1/shipments/${shipment.shipmentId}/label?format=pdf`;
+    const pickupResult = pickupSettled.status === 'fulfilled' ? pickupSettled.value : null;
 
     return {
       success: true,
