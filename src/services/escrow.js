@@ -432,14 +432,6 @@ const cancelEscrow = async (shipmentId, userId, reason = 'Cancelled by user') =>
     throw new Error('Cannot cancel shipment once package has been physically picked up by the carrier. Please file a dispute claim instead.');
   }
 
-  // ── Auto-Cancel Courier Dispatch in Partner/Master Account (NimbusPost / Shiprocket / Delhivery) ──
-  try {
-    const { cancelCarrierShipment } = require('./pickupService');
-    await cancelCarrierShipment(shipment);
-  } catch (carrierErr) {
-    console.warn(`[CARRIER DISPATCH CANCEL WARNING] Could not cancel carrier for ${shipmentId}:`, carrierErr.message);
-  }
-
   // ── Refund Freight & Upfront COD Charges to Seller Wallet if Deducted ──
   try {
     let refundToSeller = 0;
@@ -488,45 +480,59 @@ const cancelEscrow = async (shipmentId, userId, reason = 'Cancelled by user') =>
   }
   await shipment.save();
 
-  // ── Update CarrierJourney timeline with Cancellation milestone ──
-  try {
-    const CarrierJourney = require('../models/CarrierJourney');
-    const journey = await CarrierJourney.findOne({ shipmentId: shipment.shipmentId });
-    if (journey) {
-      journey.milestones.push({
-        status: 'Cancelled',
-        location: shipment.city || 'Origin Location',
-        detail: `Shipment cancelled before courier pickup (${reason || 'Cancelled by user'}). Master account courier booking cancelled.`,
-        time: new Date()
-      });
-      await journey.save();
-    }
-  } catch (jErr) {
-    console.warn('[CARRIER JOURNEY CANCEL NOTE]:', jErr.message);
-  }
-
+  // ── Background Side Effects: Courier API Cancel, Journey Timeline & Notifications ──
+  // Run asynchronously so the cancellation API responds instantaneously without waiting on external courier APIs
+  const shipmentSnapshot = shipment.toObject();
   const formattedAmount = `₹${new Intl.NumberFormat('en-IN').format(shipment.amount)}`;
+  setImmediate(() => {
+    (async () => {
+      try {
+        const { cancelCarrierShipment } = require('./pickupService');
+        await cancelCarrierShipment(shipmentSnapshot);
+      } catch (carrierErr) {
+        console.warn(`[CARRIER DISPATCH CANCEL WARNING] Could not cancel carrier for ${shipmentId}:`, carrierErr.message);
+      }
 
-  // Notify Sender
-  await createNotification(
-    shipment.senderId,
-    'cancel',
-    `Shipment Cancelled: ${shipment.shipmentId}`,
-    `Order ${shipment.shipmentId} was cancelled. ${wasFunded ? `Payment deposit of ${formattedAmount} refunded.` : ''} Reason: ${reason}`,
-    'alert'
-  );
+      try {
+        const CarrierJourney = require('../models/CarrierJourney');
+        const journey = await CarrierJourney.findOne({ shipmentId: shipmentSnapshot.shipmentId });
+        if (journey) {
+          journey.milestones.push({
+            status: 'Cancelled',
+            location: shipmentSnapshot.city || 'Origin Location',
+            detail: `Shipment cancelled before courier pickup (${reason || 'Cancelled by user'}). Master account courier booking cancelled.`,
+            time: new Date()
+          });
+          await journey.save();
+        }
+      } catch (jErr) {
+        console.warn('[CARRIER JOURNEY CANCEL NOTE]:', jErr.message);
+      }
 
-  // Notify Receiver about cancellation (Platform does not hold parcel payment)
-  const receiver = await findReceiverUser(shipment, userId);
-  if (receiver) {
-    await createNotification(
-      receiver._id,
-      'cancel',
-      `Shipment Cancelled: ${shipment.shipmentId}`,
-      `Order ${shipment.shipmentId} was cancelled (${reason}). If you made any advance payment directly to the merchant outside the platform, please contact the seller for your settlement or raise a dispute claim.`,
-      'alert'
-    );
-  }
+      try {
+        await createNotification(
+          shipmentSnapshot.senderId,
+          'cancel',
+          `Shipment Cancelled: ${shipmentSnapshot.shipmentId}`,
+          `Order ${shipmentSnapshot.shipmentId} was cancelled. ${wasFunded ? `Payment deposit of ${formattedAmount} refunded.` : ''} Reason: ${reason}`,
+          'alert'
+        );
+
+        const receiver = await findReceiverUser(shipmentSnapshot, userId);
+        if (receiver) {
+          await createNotification(
+            receiver._id,
+            'cancel',
+            `Shipment Cancelled: ${shipmentSnapshot.shipmentId}`,
+            `Order ${shipmentSnapshot.shipmentId} was cancelled (${reason}). If you made any advance payment directly to the merchant outside the platform, please contact the seller for your settlement or raise a dispute claim.`,
+            'alert'
+          );
+        }
+      } catch (notifErr) {
+        console.warn('[CANCEL NOTIFICATION NOTE]:', notifErr.message);
+      }
+    })();
+  });
 
   return shipment;
 };
