@@ -675,7 +675,7 @@ const createShipment = async (req, res) => {
       carrierSlug: assignedCarrierSlug,
       awbCode: shouldSkipPaymentLink ? assignedAwbCode : null,
       shippingLabelUrl: shouldSkipPaymentLink ? `/api/v1/shipments/${shipmentId}/label?format=pdf` : '',
-      pickupStatus: shouldSkipPaymentLink ? 'Scheduled' : 'Pending Buyer Payment',
+      pickupStatus: shouldSkipPaymentLink ? 'Ready to Ship' : 'Pending Buyer Payment',
       paymentLink: paymentLinkInfo.linkUrl,
       returnAllowed: isReturnAllowed,
       paymentLinkSmsText: smsRes.smsText,

@@ -195,7 +195,7 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
     shipment.pickupScheduledAt = new Date();
     shipment.pickupToken = pickupToken;
     shipment.pickupSlot = pickupSlot;
-    shipment.pickupStatus = 'Scheduled';
+    shipment.pickupStatus = 'Ready to Ship';
     shipment.pickupCarrier = assignedCarrierName;
     shipment.pickupCarrierSlug = assignedCarrierSlug;
     shipment.pickupRate = shipment.pickupRate || shipment.deliveryCharge || assignedRate;
@@ -258,6 +258,9 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
           assignedCarrierName = 'Delhivery Express (Direct)';
           if (dlRes.pickupId) {
             isPickupConfirmed = true;
+          }
+          if (dlRes.pickupError) {
+            shipment.pickupError = dlRes.pickupError;
           }
           if (dlRes.labelUrl) {
             shipment.shippingLabelUrl = dlRes.labelUrl;
@@ -334,7 +337,7 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
       }
     }
 
-    shipment.pickupStatus = isPickupConfirmed ? 'Scheduled' : 'Manifest Generated';
+    shipment.pickupStatus = isPickupConfirmed ? 'Scheduled' : 'Ready to Ship';
 
     if (typeof shipment.save === 'function') {
       await shipment.save();
@@ -356,10 +359,10 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
         ? `SecureKaro Hybrid Logistics Engine compared ${comparison.length} popular courier partners across Shiprocket & NimbusPost (Delhivery, Shadowfax, Ekart, Xpressbees, DTDC, BlueDart, Ecom Express). Lowest rate: ${assignedCarrierName} at ₹${assignedRate}.` 
         : '';
 
-      const milestoneStatus = isPickupConfirmed ? 'Pickup Scheduled' : 'Manifest Generated (Ready to Ship)';
+      const milestoneStatus = isPickupConfirmed ? 'Pickup Scheduled' : 'Manifest Ready to Ship (Pickup Pending)';
       const milestoneDetail = isPickupConfirmed
         ? `Confirmed ${assignedCarrierName} pickup for slot: ${pickupSlot}. ${comparisonText} Courier Reference: ${pickupToken}. Pickup Executive: ${executive.name} (${executive.phone}).`
-        : `Manifest generated on ${assignedCarrierName} network (AWB: ${shipment.awbCode || pickupToken}). Pickup dispatch slot: ${pickupSlot}. ${comparisonText} Executive: ${executive.name} (${executive.phone}).`;
+        : `Manifest generated on ${assignedCarrierName} network (AWB: ${shipment.awbCode || pickupToken}). Dispatch slot: ${pickupSlot}. ${shipment.pickupError ? shipment.pickupError + ' ' : ''}${comparisonText}`;
 
       journey.milestones.push({
         status: milestoneStatus,

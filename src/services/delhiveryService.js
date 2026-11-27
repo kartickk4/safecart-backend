@@ -334,9 +334,17 @@ const requestDelhiveryPickup = async (warehouseName, pickupDateStr, pickupTimeSt
     };
   } catch (err) {
     console.warn('[Delhivery Pickup Request Notice]:', err.response?.data || err.message);
+    let parsedErr = err.response?.data?.prepaid ||
+                    err.response?.data?.error ||
+                    err.response?.data?.message ||
+                    (typeof err.response?.data === 'string' ? err.response?.data : null) ||
+                    err.message;
+    if (typeof parsedErr === 'string' && parsedErr.includes('Client wallet balance')) {
+      parsedErr = `Delhivery master account wallet balance is below the ₹500 minimum required for pickup dispatch (${parsedErr}). Please top up your Delhivery One wallet.`;
+    }
     return {
       success: false,
-      error: err.response?.data?.error || err.response?.data?.message || err.message
+      error: parsedErr
     };
   }
 };
@@ -554,6 +562,7 @@ const createDelhiveryDirectOrder = async (shipment, senderUser, pickupOptions = 
       status: 'BOOKED',
       pickupId: pickupResult?.prId || null,
       pickupStatus: pickupResult?.success ? 'Pickup Scheduled' : 'Ready to ship',
+      pickupError: pickupResult?.success ? null : (pickupResult?.error || null),
       pickupDate: pDateStr,
       pickupTime: finalPickupTime,
       labelUrl: finalLabelUrl,
