@@ -420,9 +420,8 @@ const createDelhiveryDirectOrder = async (shipment, senderUser, pickupOptions = 
   if (!pickupState) pickupState = 'West Bengal';
 
   let pickupAddress = (shipment.senderAddress || senderUser?.pickupAddress?.street || senderUser?.address || 'Seller Doorstep').trim();
-  if (!pickupAddress.toLowerCase().includes(pickupCity.toLowerCase())) {
-    pickupAddress = `${pickupAddress}, ${pickupCity}, ${pickupState} - ${pickupPincode}`;
-  }
+  // Strip duplicate trailing city/state/pin if already present in street line so Delhivery label prints cleanly
+  pickupAddress = pickupAddress.replace(/,\s*Kolkata.*$/i, '').trim() || pickupAddress;
 
   const pickupName = (shipment.senderName || senderUser?.businessName || senderUser?.fullName || 'SecureKaro Seller').trim();
   const pickupPhone = String(shipment.senderPhone || senderUser?.phone || '9999999999').replace(/\D/g, '').slice(-10);
