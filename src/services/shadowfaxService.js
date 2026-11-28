@@ -50,12 +50,24 @@ const STATE_PIN_PREFIXES = {
   'JH': ['83']
 };
 
+const STATE_NAMES = {
+  DL: 'Delhi', HR: 'Haryana', PB_CH: 'Punjab', HP: 'Himachal Pradesh', JK_LA: 'Jammu and Kashmir',
+  UP_UT: 'Uttar Pradesh', RJ: 'Rajasthan', GJ: 'Gujarat', MH_GA: 'Maharashtra', MP: 'Madhya Pradesh',
+  CG: 'Chhattisgarh', TS: 'Telangana', AP: 'Andhra Pradesh', KA: 'Karnataka', TN_PY: 'Tamil Nadu',
+  KL: 'Kerala', WB_SK: 'West Bengal', OD: 'Odisha', AS: 'Assam', NE: 'Meghalaya', BR: 'Bihar', JH: 'Jharkhand'
+};
+
 function getStateCodeFromPin(pin) {
   const p2 = String(pin || '').trim().slice(0, 2);
   for (const [state, prefixes] of Object.entries(STATE_PIN_PREFIXES)) {
     if (prefixes.includes(p2)) return state;
   }
   return p2;
+}
+
+function getStateNameFromPin(pin) {
+  const code = getStateCodeFromPin(pin);
+  return STATE_NAMES[code] || 'West Bengal';
 }
 
 // Pincode zone classification helper for Shadowfax 360
@@ -255,8 +267,8 @@ const createShadowfaxDirectOrder = async (shipment, senderUser) => {
   const totalAmount = parseFloat(shipment.amount || shipment.codAmount || shipment.escrowAmount || shipment.totalAmount || 1000);
   const cleanOrderId = shipment.shipmentId || `SFX_${Date.now()}`;
 
-  const pickupState = (senderUser?.pickupAddress?.state || senderUser?.state || 'West Bengal').trim();
-  const deliveryState = (shipment.receiverState || 'West Bengal').trim();
+  const pickupState = (senderUser?.pickupAddress?.state || senderUser?.state || getStateNameFromPin(pickupPincode)).trim();
+  const deliveryState = (shipment.receiverState || getStateNameFromPin(deliveryPincode)).trim();
   const weightGrams = Math.max(100, Math.round((parseFloat(shipment.parcelWeight) || 0.5) * 1000));
   const l = parseFloat(shipment.parcelLength) || 15;
   const w = parseFloat(shipment.parcelWidth) || 10;
@@ -273,7 +285,7 @@ const createShadowfaxDirectOrder = async (shipment, senderUser) => {
       payment_mode: isCod ? 'COD' : 'Prepaid',
       cod_amount: isCod ? String(totalAmount) : '0',
       total_amount: totalAmount,
-      order_service: 'regular'
+      order_service: 'Regular'
     },
     customer_details: {
       name: deliveryName,

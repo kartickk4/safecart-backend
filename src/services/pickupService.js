@@ -285,6 +285,7 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
           }
           console.log(`✅ [Shadowfax Direct Dispatch] Successfully booked AWB: ${sfRes.awbCode} for ${shipment.shipmentId}`);
         } else if (sfRes?.error) {
+          shipment.awbCode = '';
           shipment.pickupError = sfRes.error;
           console.warn(`⚠️ [Shadowfax Direct Dispatch] Failed for ${shipment.shipmentId}: ${sfRes.error}`);
         }
