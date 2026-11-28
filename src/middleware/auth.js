@@ -57,14 +57,15 @@ const protect = async (req, res, next) => {
 
       // Check token version for instant session revocation (password reset, logout, compromise)
       const currentTokenVersion = req.user.tokenVersion || 0;
-      if (decoded.tokenVersion !== undefined && decoded.tokenVersion !== currentTokenVersion) {
+      if ((decoded.tokenVersion ?? 0) !== currentTokenVersion) {
         return res.status(401).json({ error: 'Session invalidated. Please log in again.' });
       }
 
-      // Check if user is suspended
+      // Check if user is suspended (match clean path without query string to prevent ?/profile bypass)
       if (req.user.isSuspended) {
+        const cleanPath = (req.originalUrl || req.path || '').split('?')[0].replace(/\/+$/, '');
         const allowedPaths = ['/profile', '/auth/me', '/auth/switch-role'];
-        const isAllowed = allowedPaths.some(p => req.originalUrl.includes(p));
+        const isAllowed = allowedPaths.some(p => cleanPath === p || cleanPath === `/api/v1${p}`);
         if (!isAllowed) {
           return res.status(403).json({
             error: 'Your account has been suspended. Please contact support@securekaro.in.',
@@ -107,7 +108,10 @@ const optionalAuth = async (req, res, next) => {
         token = req.query.token;
       }
       const decoded = jwt.verify(token, JWT_SECRET);
-      req.user = await User.findById(decoded.id).select('-passwordHash');
+      const user = await User.findById(decoded.id).select('-passwordHash');
+      if (user && !user.isSuspended && (decoded.tokenVersion ?? 0) === (user.tokenVersion || 0)) {
+        req.user = user;
+      }
     } catch (_) {
       // Ignored for optional auth
     }

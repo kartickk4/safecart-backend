@@ -331,8 +331,9 @@ const createShipment = async (req, res) => {
 
   try {
     const finalDescription = (description || '').trim() || 'General Merchandise Parcel';
-    if (!receiverName || !receiverPhone || !amount) {
-      return res.status(400).json({ error: 'Please enter recipient name, phone, and parcel amount' });
+    const numOrderAmount = Number(amount);
+    if (!receiverName || !receiverPhone || !Number.isFinite(numOrderAmount) || numOrderAmount <= 0) {
+      return res.status(400).json({ error: 'Please enter recipient name, phone, and a valid positive parcel amount' });
     }
 
     // SecureKaro rule: Sender MUST have verified mobile number before creating their first shipment
@@ -388,15 +389,9 @@ const createShipment = async (req, res) => {
     let allCarrierQuotes = [];
 
     const hasExplicitCarrier = Boolean(carrierSlug && carrierSlug !== 'add_later' && carrierSlug !== 'auto');
-    if (hasExplicitCarrier) {
-      assignedCarrierSlug = carrierSlug.toLowerCase();
-      assignedCarrierName = resolveCarrierBrandName(assignedCarrierSlug);
-      selectedCarrierRate = Number(req.body.deliveryCharge) || Number(req.body.freightCharge) || 40;
-      console.log(`[CARRIER] Manual selection (fast-path): ${assignedCarrierSlug} (${assignedCarrierName}) @ ₹${selectedCarrierRate}`);
-    } else if (senderPincodeForRate && receiverPincodeForRate) {
+    if (senderPincodeForRate && receiverPincodeForRate) {
       const checkIsCod = !isReverseShipment && (paymentMode || '').toLowerCase() === 'cod';
       if (isReverseShipment) {
-        // Reverse route: Customer Doorstep (receiverPincode) -> Seller Warehouse (senderPincode)
         allCarrierQuotes = await getCarrierRatesAsync(
           receiverPincodeForRate,
           senderPincodeForRate,
@@ -404,10 +399,9 @@ const createShipment = async (req, res) => {
           dimensionsForRate,
           true,
           false,
-          Number(amount) || 0
+          numOrderAmount
         );
       } else {
-        // Forward route: Seller Warehouse (senderPincode) -> Customer Doorstep (receiverPincode)
         allCarrierQuotes = await getCarrierRatesAsync(
           senderPincodeForRate,
           receiverPincodeForRate,
@@ -415,10 +409,26 @@ const createShipment = async (req, res) => {
           dimensionsForRate,
           false,
           checkIsCod,
-          Number(amount) || 0
+          numOrderAmount
         );
       }
+    }
 
+    if (hasExplicitCarrier) {
+      assignedCarrierSlug = carrierSlug.toLowerCase();
+      assignedCarrierName = resolveCarrierBrandName(assignedCarrierSlug);
+      const matchedQuote = allCarrierQuotes.find(q =>
+        String(q.slug || '').toLowerCase() === assignedCarrierSlug ||
+        String(q.baseSlug || '').toLowerCase() === assignedCarrierSlug
+      );
+      // Always prefer server-calculated quote rate; enforce minimum floor so client cannot tamper fees down to ₹1
+      const MIN_SERVER_RATE = 35;
+      const clientRate = Number(req.body.deliveryCharge) || Number(req.body.freightCharge) || 0;
+      selectedCarrierRate = matchedQuote
+        ? Math.max(MIN_SERVER_RATE, Number(matchedQuote.exactRate ?? matchedQuote.price) || MIN_SERVER_RATE)
+        : Math.max(MIN_SERVER_RATE, clientRate || 40);
+      console.log(`[CARRIER] Manual selection (server-verified): ${assignedCarrierSlug} (${assignedCarrierName}) @ ₹${selectedCarrierRate}`);
+    } else if (senderPincodeForRate && receiverPincodeForRate) {
       if (allCarrierQuotes.length > 0) {
         const cheapest = allCarrierQuotes[0]; // Already sorted lowest first
         assignedCarrierSlug = cheapest.slug;
@@ -525,10 +535,32 @@ const createShipment = async (req, res) => {
         codFeePaidAt = null;
         codFeeTransactionRef = '';
       } else if (availableWallet >= totalRequiredForWalletAdjust) {
-        // Charge is <= wallet balance and leaves the required security buffer intact:
-        const balBefore = availableWallet;
-        sender.walletBalance = parseFloat(Math.max(0, availableWallet - totalCodFees).toFixed(2));
-        await sender.save();
+        // Atomic debit with $gte precondition to defeat concurrent TOCTOU double-spends
+        const updatedSender = await User.findOneAndUpdate(
+          { _id: sender._id, walletBalance: { $gte: totalRequiredForWalletAdjust } },
+          { $inc: { walletBalance: -totalCodFees } },
+          { new: true }
+        );
+        if (!updatedSender) {
+          const shortfall = Math.max(0, totalRequiredForWalletAdjust - availableWallet);
+          return res.status(402).json({
+            error: 'INSUFFICIENT_WALLET_BALANCE',
+            code: 'COD_PAYMENT_REQUIRED',
+            message: `COD shipment requires ₹${totalCodFees} upfront fee. Please top up ₹${shortfall} or select 'Deduct from COD Settlement'.`,
+            deliveryCharge,
+            codCharge,
+            totalCharge: totalCodFees,
+            requiredReserve: 0,
+            activeShipmentsCount,
+            totalRequired: totalRequiredForWalletAdjust,
+            walletBalance: availableWallet,
+            shortfall,
+            canAdjustWallet: false
+          });
+        }
+        const balAfter = parseFloat(Number(updatedSender.walletBalance).toFixed(2));
+        const balBefore = parseFloat((balAfter + totalCodFees).toFixed(2));
+        sender.walletBalance = balAfter;
 
         codFeePaid = true;
         codFeePaymentMethod = 'wallet_adjustment';
@@ -544,15 +576,9 @@ const createShipment = async (req, res) => {
           description: `COD upfront booking fee for shipment ${shipmentId} (Delivery: ₹${deliveryCharge} + COD Handling: ₹${codCharge})`,
           paymentGateway: 'system',
           balanceBefore: balBefore,
-          balanceAfter: sender.walletBalance,
+          balanceAfter: balAfter,
           metadata: { shipmentId, deliveryCharge, codCharge, totalCodFees, requiredReserve }
         });
-      } else if (req.body.paymentTxnId && String(req.body.paymentTxnId).startsWith('PP_')) {
-        // Supplier paid the upfront fee via PhonePe online gateway
-        codFeePaid = true;
-        codFeePaymentMethod = 'online_gateway';
-        codFeePaidAt = new Date();
-        codFeeTransactionRef = req.body.paymentTxnId;
       } else {
         // Charge + reserve > wallet balance: Supplier must pay or top up to cover fee + reserve
         const shortfall = Math.max(0, totalRequiredForWalletAdjust - availableWallet);
@@ -587,9 +613,31 @@ const createShipment = async (req, res) => {
 
       if (!isPaidUpfront) {
         if (availableWallet >= totalRequiredForPrepaid) {
-          const balBefore = availableWallet;
-          sender.walletBalance = parseFloat(Math.max(0, availableWallet - deliveryCharge).toFixed(2));
-          await sender.save();
+          // Atomic debit with $gte precondition to defeat concurrent TOCTOU double-spends
+          const updatedSender = await User.findOneAndUpdate(
+            { _id: sender._id, walletBalance: { $gte: totalRequiredForPrepaid } },
+            { $inc: { walletBalance: -deliveryCharge } },
+            { new: true }
+          );
+          if (!updatedSender) {
+            const shortfall = Math.max(0, totalRequiredForPrepaid - availableWallet);
+            return res.status(402).json({
+              error: 'INSUFFICIENT_WALLET_BALANCE',
+              code: isReverseShipment ? 'REVERSE_SHIPPING_PAYMENT_REQUIRED' : 'PREPAID_SHIPPING_PAYMENT_REQUIRED',
+              message: `Prepaid shipment requires ₹${deliveryCharge} courier delivery fee. Please top up ₹${shortfall} in your wallet to book this shipment.`,
+              deliveryCharge,
+              totalCharge: deliveryCharge,
+              requiredReserve: 0,
+              activeShipmentsCount,
+              totalRequired: totalRequiredForPrepaid,
+              walletBalance: availableWallet,
+              shortfall,
+              canAdjustWallet: false
+            });
+          }
+          const balAfter = parseFloat(Number(updatedSender.walletBalance).toFixed(2));
+          const balBefore = parseFloat((balAfter + deliveryCharge).toFixed(2));
+          sender.walletBalance = balAfter;
 
           courierChargeDeducted = deliveryCharge;
           courierChargeStatus = 'Deducted';
@@ -605,7 +653,7 @@ const createShipment = async (req, res) => {
               : `Prepaid courier delivery fee for shipment ${shipmentId} (Delivery: ₹${deliveryCharge})`,
             paymentGateway: 'system',
             balanceBefore: balBefore,
-            balanceAfter: sender.walletBalance,
+            balanceAfter: balAfter,
             metadata: { shipmentId, deliveryCharge, requiredReserve: 0, isReverse: isReverseShipment }
           });
         } else {
@@ -862,9 +910,14 @@ const createShipment = async (req, res) => {
     }
 
     try {
-      sender.walletBalance = parseFloat(((sender.walletBalance || 0) + sellerCashback).toFixed(2));
-      sender.totalCashbackEarned = parseFloat(((sender.totalCashbackEarned || 0) + sellerCashback).toFixed(2));
-      await sender.save();
+      const updatedForCashback = await User.findOneAndUpdate(
+        { _id: sender._id },
+        { $inc: { walletBalance: sellerCashback, totalCashbackEarned: sellerCashback } },
+        { new: true }
+      );
+      if (updatedForCashback) {
+        sender.walletBalance = parseFloat(Number(updatedForCashback.walletBalance).toFixed(2));
+      }
 
       shipment.supplierCashbackPaid = sellerCashback;
       shipment.supplierCashbackAmount = sellerCashback;
@@ -1318,7 +1371,7 @@ const paymentWebhookHandler = async (req, res) => {
         return res.status(200).json({ status: 'OK', note: 'Non-success acknowledged' });
       }
 
-      if (phonepeTxId && isPhonepeEventProcessed(phonepeTxId)) {
+      if (phonepeTxId && (await isPhonepeEventProcessed(phonepeTxId))) {
         console.log(`[PhonePe Webhook] Duplicate transaction ignored (idempotent): ${phonepeTxId}`);
         return res.status(200).json({ status: 'OK', note: 'Transaction already processed' });
       }
@@ -1349,7 +1402,7 @@ const paymentWebhookHandler = async (req, res) => {
         }
       }
 
-      if (phonepeTxId) markPhonepeEventProcessed(phonepeTxId);
+      if (phonepeTxId) await markPhonepeEventProcessed(phonepeTxId);
       return res.status(200).json({ status: 'OK' });
     }
 
@@ -3449,6 +3502,11 @@ const uploadWeightShieldProof = async (req, res) => {
     const shipment = await Shipment.findOne({ shipmentId: id });
     if (!shipment) return res.status(404).json({ error: 'Shipment not found' });
 
+    const isOwner = await isAuthorizedSenderOrSupplier(req.user, shipment);
+    if (!isOwner && req.user.role !== 'Admin' && !req.user.isAdmin) {
+      return res.status(403).json({ error: 'Not authorized to update Weight Shield proof for this shipment' });
+    }
+
     if (scalePhotoUrl) {
       shipment.packingScalePhotoUrl = scalePhotoUrl;
       shipment.packingScalePhotoUploadedAt = new Date();
@@ -3497,6 +3555,11 @@ const fileWeightDispute = async (req, res) => {
 
     const shipment = await Shipment.findOne({ shipmentId: id });
     if (!shipment) return res.status(404).json({ error: 'Shipment not found' });
+
+    const isOwner = await isAuthorizedSenderOrSupplier(req.user, shipment);
+    if (!isOwner && req.user.role !== 'Admin' && !req.user.isAdmin) {
+      return res.status(403).json({ error: 'Not authorized to file a weight dispute for this shipment' });
+    }
 
     const reportedWeight = parseFloat(courierReportedWeightKg) || ((shipment.packingDimensions?.volumetricWeightKg || 1) + 1.0);
     const charge = parseFloat(discrepancyCharge) || 120.00;
@@ -3548,6 +3611,12 @@ const getWeightDisputeEvidence = async (req, res) => {
     const shipment = await Shipment.findOne({ shipmentId: id });
     if (!shipment) return res.status(404).json({ error: 'Shipment not found' });
 
+    const isOwner = await isAuthorizedSenderOrSupplier(req.user, shipment);
+    const isReceiver = shipment.receiverId && shipment.receiverId.toString() === req.user._id.toString();
+    if (!isOwner && !isReceiver && req.user.role !== 'Admin' && !req.user.isAdmin) {
+      return res.status(403).json({ error: 'Not authorized to view weight dispute evidence for this shipment' });
+    }
+
     res.json({
       success: true,
       shipmentId: shipment.shipmentId,
@@ -3580,6 +3649,11 @@ const triggerNdrAlert = async (req, res) => {
 
     const shipment = await Shipment.findOne({ shipmentId: id });
     if (!shipment) return res.status(404).json({ error: 'Shipment not found' });
+
+    const isOwner = await isAuthorizedSenderOrSupplier(req.user, shipment);
+    if (!isOwner && req.user.role !== 'Admin' && !req.user.isAdmin) {
+      return res.status(403).json({ error: 'Not authorized to trigger NDR alerts for this shipment' });
+    }
 
     const attempts = (shipment.ndrAttemptCount || 0) + 1;
     const statusEnum = attempts === 1 ? 'Failed_Attempt_1' : (attempts === 2 ? 'Failed_Attempt_2' : 'Failed_Attempt_3');
@@ -3627,10 +3701,20 @@ const triggerNdrAlert = async (req, res) => {
 const publicNdrResolve = async (req, res) => {
   try {
     const id = req.params.id.toUpperCase();
-    const { choice, slot, newAddress, comments } = req.body;
+    const { choice, slot, newAddress, comments, phoneLast4, token } = req.body;
 
     const shipment = await Shipment.findOne({ shipmentId: id });
     if (!shipment) return res.status(404).json({ error: 'Shipment not found' });
+
+    // Security check: require either matching last 4 digits of receiver phone or valid inboxQrToken
+    const receiverDigits = String(shipment.receiverPhone || '').replace(/\D/g, '');
+    const suppliedDigits = String(phoneLast4 || '').replace(/\D/g, '');
+    const hasValidPhone = receiverDigits.length >= 4 && suppliedDigits.length === 4 && receiverDigits.endsWith(suppliedDigits);
+    const hasValidToken = token && shipment.inboxQrToken && String(token) === String(shipment.inboxQrToken);
+
+    if (!hasValidPhone && !hasValidToken) {
+      return res.status(403).json({ error: 'Verification required: provide the last 4 digits of the recipient phone number or a valid tracking token.' });
+    }
 
     shipment.ndrStatus = 'Buyer_Rescheduled';
     shipment.ndrBuyerActionTaken = choice || 'Reschedule_Delivery';
@@ -3713,14 +3797,16 @@ const getPrintableShippingLabel = async (req, res) => {
       return res.status(404).send('<h3>Shipment not found</h3>');
     }
 
-    // Ownership check: only sender, receiver, or admin can access the printable label
-    if (req.user) {
-      const isSender = shipment.senderId && (shipment.senderId._id ? shipment.senderId._id.toString() : shipment.senderId.toString()) === req.user._id.toString();
-      const isReceiver = shipment.receiverId && shipment.receiverId.toString() === req.user._id.toString();
-      const isAdmin = req.user.role === 'Admin' || req.user.role === 'super_admin' || req.user.isAdmin;
-      if (!isSender && !isReceiver && !isAdmin) {
-        return res.status(403).send('<h3>Access denied: Unauthorized to view shipping label</h3>');
-      }
+    if (!req.user) {
+      return res.status(401).send('<h3>Authentication required to view shipping label</h3>');
+    }
+
+    // Ownership check: only sender, linked supplier, receiver, or admin can access the printable label
+    const isSender = await isAuthorizedSenderOrSupplier(req.user, shipment);
+    const isReceiver = shipment.receiverId && shipment.receiverId.toString() === req.user._id.toString();
+    const isAdmin = req.user.role === 'Admin' || req.user.role === 'super_admin' || req.user.isAdmin;
+    if (!isSender && !isReceiver && !isAdmin) {
+      return res.status(403).send('<h3>Access denied: Unauthorized to view shipping label</h3>');
     }
 
     // 0. Direct serve if permanent carrier PDF is saved in MongoDB

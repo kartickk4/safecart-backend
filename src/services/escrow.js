@@ -424,12 +424,51 @@ const cancelEscrow = async (shipmentId, userId, reason = 'Cancelled by user') =>
     throw new Error('Cannot cancel a shipment whose order payment has already been released');
   }
 
-  // Prevent cancellation only if the package has physically been picked up by the courier
+  // Prevent cancellation once the package has been dispatched/picked up, delivered, or locked in dispute
+  const blockedCancelStatuses = [
+    'Cancelled',
+    'Released',
+    'In Transit',
+    'Dispatched',
+    'Picked Up',
+    'Reached Destination Hub',
+    'Out for Delivery',
+    'Delivered',
+    'Locked',
+    'Return Requested',
+    'Return In Transit',
+    'Replacement In Transit'
+  ];
   const isPhysicallyPickedUp = shipment.pickupStatus === 'Picked Up' ||
-    ['Reached Destination Hub', 'Out for Delivery', 'Delivered'].includes(shipment.status);
+    blockedCancelStatuses.slice(2).includes(shipment.status);
 
   if (isPhysicallyPickedUp) {
     throw new Error('Cannot cancel shipment once package has been physically picked up by the carrier. Please file a dispute claim instead.');
+  }
+
+  // Atomic state transition BEFORE refunding wallet to defeat TOCTOU concurrent cancel double-refunds
+  const wasFunded = shipment.escrowStage >= 2 && !['cod', 'paid_offline'].includes(shipment.paymentMode);
+  const atomicCancelled = await Shipment.findOneAndUpdate(
+    {
+      shipmentId: shipment.shipmentId,
+      status: { $nin: blockedCancelStatuses },
+      pickupStatus: { $ne: 'Picked Up' }
+    },
+    {
+      $set: {
+        status: 'Cancelled',
+        escrowStage: -2,
+        pickupStatus: 'Cancelled',
+        cancelledAt: new Date(),
+        cancelReason: reason || 'Cancelled by user',
+        ...(wasFunded ? { principalRefundedToReceiver: shipment.amount } : {})
+      }
+    },
+    { new: true }
+  );
+
+  if (!atomicCancelled) {
+    throw new Error('Shipment is already cancelled or cannot be cancelled in its current state');
   }
 
   // ── Refund Exact Debited Shipment Charges to Seller Wallet ──
@@ -487,24 +526,30 @@ const cancelEscrow = async (shipmentId, userId, reason = 'Cancelled by user') =>
       }
 
       if (refundToSeller > 0) {
-        const sender = await User.findById(shipment.senderId);
-        if (sender) {
-          const balBefore = Number(sender.walletBalance) || 0;
-          sender.walletBalance = parseFloat((balBefore + refundToSeller).toFixed(2));
-          await sender.save();
+        const updatedSender = await User.findOneAndUpdate(
+          { _id: shipment.senderId },
+          { $inc: { walletBalance: refundToSeller } },
+          { new: true }
+        );
+        if (updatedSender) {
+          const balAfter = parseFloat(Number(updatedSender.walletBalance).toFixed(2));
+          const balBefore = parseFloat((balAfter - refundToSeller).toFixed(2));
+          if (balAfter !== updatedSender.walletBalance) {
+            await User.updateOne({ _id: updatedSender._id }, { $set: { walletBalance: balAfter } });
+          }
 
           refundedAmount = refundToSeller;
-          walletBalanceRemaining = sender.walletBalance;
+          walletBalanceRemaining = balAfter;
 
           await recordTransaction({
-            userId: sender._id,
+            userId: updatedSender._id,
             type: 'credit',
             amount: refundToSeller,
             source: 'cancelled_shipment_freight_refund',
             description: `Refund for cancelled shipment ${shipment.shipmentId} courier & upfront charges`,
             paymentGateway: 'system',
             balanceBefore: balBefore,
-            balanceAfter: sender.walletBalance,
+            balanceAfter: balAfter,
             metadata: { shipmentId: shipment.shipmentId, refundedAmount: refundToSeller }
           });
         }
@@ -514,17 +559,22 @@ const cancelEscrow = async (shipmentId, userId, reason = 'Cancelled by user') =>
     console.warn(`[SELLER FREIGHT REFUND WARNING] for ${shipmentId}:`, refundErr.message);
   }
 
-  const wasFunded = shipment.escrowStage >= 2 && !['cod', 'paid_offline'].includes(shipment.paymentMode);
-
+  // Persist refunded charge flags on the already-cancelled shipment
+  await Shipment.updateOne(
+    { _id: shipment._id },
+    {
+      $set: {
+        codFeePaid: shipment.codFeePaid,
+        courierChargeStatus: shipment.courierChargeStatus,
+        returnShippingChargeStatus: shipment.returnShippingChargeStatus
+      }
+    }
+  );
   shipment.status = 'Cancelled';
   shipment.escrowStage = -2;
   shipment.pickupStatus = 'Cancelled';
-  shipment.cancelledAt = new Date();
-  shipment.cancelReason = reason || 'Cancelled by user';
-  if (wasFunded) {
-    shipment.principalRefundedToReceiver = shipment.amount;
-  }
-  await shipment.save();
+  shipment.cancelledAt = atomicCancelled.cancelledAt;
+  shipment.cancelReason = atomicCancelled.cancelReason;
 
   // ── Background Side Effects: Courier API Cancel, Journey Timeline & Notifications ──
   // Run asynchronously so the cancellation API responds instantaneously without waiting on external courier APIs
@@ -912,11 +962,9 @@ const approveReturnEscrow = async (shipmentId, courierData = {}, supplierId = nu
     throw new Error('Shipment not found');
   }
 
-  // Authorization check: Verify caller identity matches shipment participant
-  if (receiverId && shipment.receiverId && shipment.receiverId.toString() !== receiverId.toString()) {
-    if (shipment.senderId && shipment.senderId.toString() !== receiverId.toString()) {
-      throw new Error('Unauthorized: User is not authorized to release this shipment payment');
-    }
+  // Authorization check: Verify caller identity matches shipment supplier/sender
+  if (supplierId && shipment.senderId && shipment.senderId.toString() !== supplierId.toString()) {
+    throw new Error('Unauthorized: Only the shipment supplier can approve this return');
   }
 
   // In partial discount returns, reverse courier is ONLY needed if buyer rejected the offer
@@ -1062,18 +1110,20 @@ const approveReturnEscrow = async (shipmentId, courierData = {}, supplierId = nu
 /**
  * Confirms receipt of returned package at supplier warehouse and refunds principal to receiver.
  */
-const confirmReturnReceivedEscrow = async (shipmentId) => {
+const confirmReturnReceivedEscrow = async (shipmentId, callerId = null) => {
   const shipment = await Shipment.findOne({ shipmentId: shipmentId.toUpperCase() });
 
   if (!shipment) {
     throw new Error('Shipment not found');
   }
 
-  // Authorization check: Verify caller identity matches shipment participant
-  if (receiverId && shipment.receiverId && shipment.receiverId.toString() !== receiverId.toString()) {
-    if (shipment.senderId && shipment.senderId.toString() !== receiverId.toString()) {
-      throw new Error('Unauthorized: User is not authorized to release this shipment payment');
-    }
+  if (shipment.returnStatus === 'Returned & Refunded' || shipment.status === 'Returned & Refunded') {
+    throw new Error('Return receipt has already been confirmed and refunded');
+  }
+
+  // Authorization check: Verify caller identity matches shipment supplier/sender
+  if (callerId && shipment.senderId && shipment.senderId.toString() !== callerId.toString()) {
+    throw new Error('Unauthorized: Only the shipment supplier can confirm return receipt');
   }
 
   // Calculate days held

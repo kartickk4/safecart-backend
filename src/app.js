@@ -137,27 +137,30 @@ const corsOptions = {
       return callback(new Error('Invalid CORS configuration'));
     }
 
-    // Allow Capacitor Mobile App origins (Android & iOS)
+    // Allow Capacitor Mobile App origins (Android & iOS); only allow plain http://localhost in dev
     if (
-      origin === 'https://localhost' || 
-      origin === 'http://localhost' || 
+      origin === 'https://localhost' ||
+      (!isProd && origin === 'http://localhost') ||
       origin.startsWith('capacitor://') ||
       origin.startsWith('ionic://')
     ) {
       return callback(null, true);
     }
 
-    // Strict domain matching for production domains
+    // Strict domain matching for production domains (no wildcard *.pages.dev / *.onrender.com)
     const isExactSecureKaro = /^https:\/\/([a-zA-Z0-9-]+\.)?securekaro\.in$/.test(origin);
-    const isCloudflarePages = /^https:\/\/([a-zA-Z0-9-]+\.)?pages\.dev$/.test(origin);
-    const isRenderOrigin = /^https:\/\/([a-zA-Z0-9-]+\.)?onrender\.com$/.test(origin);
+    const isAllowedProjectOrigin = [
+      'https://safecart-frontend.pages.dev',
+      'https://securekaro-frontend.pages.dev',
+      'https://safecart-frontend.onrender.com',
+      'https://securekaro-frontend.onrender.com'
+    ].includes(origin);
     const isConfiguredFrontend = process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL;
 
     if (
-      allowedOrigins.includes(origin) || 
+      allowedOrigins.includes(origin) ||
       isExactSecureKaro ||
-      isCloudflarePages ||
-      isRenderOrigin ||
+      isAllowedProjectOrigin ||
       isConfiguredFrontend
     ) {
       return callback(null, true);
@@ -214,10 +217,12 @@ const getClientIp = (req) => {
 };
 
 const rateLimitKeyGenerator = (req) => {
-  // If user is authenticated, use token signature to isolate quota per user
+  // Hash full Bearer token so each user gets an isolated rate-limit bucket (not shared JWT header prefix)
   const authHeader = req.headers?.authorization;
   if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
-    return 'user_' + authHeader.substring(7, 30);
+    const crypto = require('crypto');
+    const tokenHash = crypto.createHash('sha256').update(authHeader.slice(7)).digest('hex').slice(0, 24);
+    return 'user_' + tokenHash;
   }
   return getClientIp(req);
 };
@@ -372,7 +377,23 @@ const agentLimiter = rateLimit({
   skip: shouldSkipRateLimit
 });
 
+// Strict OTP / Password Reset / 2FA limiter (counts ALL requests including 200 OK to prevent SMS/email/TOTP bombing)
+const otpStrictLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 12,
+  message: { error: 'Too many OTP or verification requests. Please try again after 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: getClientIp,
+  store: createRedisLimiterStore('otp_strict'),
+  skip: shouldSkipRateLimit
+});
+
 // App Router Declarations (Standard v1 prefix)
+app.use('/api/v1/auth/send-otp', otpStrictLimiter);
+app.use('/api/v1/auth/send-email-otp', otpStrictLimiter);
+app.use('/api/v1/auth/forgot-password', otpStrictLimiter);
+app.use('/api/v1/auth/admin/2fa', otpStrictLimiter, adminTwoFARoutes);
 app.use('/api/v1/auth', authLimiter, authRoutes);
 app.use('/api/v1/profile', profileRoutes);
 app.use('/api/v1/shipments', shipmentRoutes);
@@ -383,11 +404,13 @@ app.use('/api/v1/rewards', rewardRoutes);
 app.use('/api/v1/wallet', walletRoutes);
 app.use('/api/v1/agent', agentLimiter, agentRoutes);
 app.use('/api/v1/admin', adminRoutes);
-app.use('/api/v1/auth/admin/2fa', adminTwoFARoutes);
 app.use('/api/v1/whatsapp', whatsappRoutes);
 app.use('/api/v1/upload', uploadRoutes);
 
 // Backward-compatibility and direct-route aliases (prevents 404 if /api/v1 is omitted)
+app.use('/auth/send-otp', otpStrictLimiter);
+app.use('/auth/send-email-otp', otpStrictLimiter);
+app.use('/auth/forgot-password', otpStrictLimiter);
 app.use('/auth', authLimiter, authRoutes);
 app.use('/profile', profileRoutes);
 app.use('/shipments', shipmentRoutes);
@@ -396,7 +419,7 @@ app.use('/claims', claimRoutes);
 app.use('/notifications', notificationRoutes);
 app.use('/rewards', rewardRoutes);
 app.use('/wallet', walletRoutes);
-app.use('/agent', agentRoutes);
+app.use('/agent', agentLimiter, agentRoutes);
 app.use('/admin', adminRoutes);
 app.use('/upload', uploadRoutes);
 

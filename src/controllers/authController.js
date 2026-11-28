@@ -1046,26 +1046,42 @@ const googleAuth = async (req, res) => {
         // Not a direct Google OAuth token or tokeninfo rejected it, proceed to Firebase check
       }
 
-      // Method 2: Firebase Auth ID Token verification
+      // Method 2: Cryptographic Firebase Auth ID Token verification using Google's official X.509 public certs
       try {
-        const decoded = jwt.decode(trimmed, { complete: true });
-        if (decoded && decoded.payload) {
-          const payload = decoded.payload;
-          const now = Math.floor(Date.now() / 1000);
-          const iss = String(payload.iss || '');
-          const isGoogleOrFirebaseIss = iss.startsWith('https://securetoken.google.com/') || iss.includes('google.com') || iss === 'accounts.google.com' || iss === 'https://accounts.google.com';
-          const tokenEmail = (payload.email || '').toLowerCase().trim();
-          const isNotExpired = !payload.exp || payload.exp > (now - 300); // 5 min skew allowance
-          const isGoogleProvider = payload.firebase?.sign_in_provider === 'google.com' || payload.sub;
+        const unverified = jwt.decode(trimmed, { complete: true });
+        const kid = unverified?.header?.kid;
+        const alg = unverified?.header?.alg;
+        const iss = String(unverified?.payload?.iss || '');
+        const aud = String(unverified?.payload?.aud || '');
+        const expectedProjectId = process.env.FIREBASE_PROJECT_ID || aud;
 
-          if (isGoogleOrFirebaseIss && tokenEmail === normalizedEmail && isNotExpired && (payload.email_verified === true || isGoogleProvider)) {
-            isVerified = true;
-            verifiedEmail = tokenEmail;
-            break;
+        if (
+          kid &&
+          alg === 'RS256' &&
+          expectedProjectId &&
+          iss === `https://securetoken.google.com/${expectedProjectId}`
+        ) {
+          const certsRes = await axios.get(
+            'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com',
+            { timeout: 6000 }
+          );
+          const cert = certsRes.data?.[kid];
+          if (cert) {
+            const payload = jwt.verify(trimmed, cert, {
+              algorithms: ['RS256'],
+              audience: expectedProjectId,
+              issuer: `https://securetoken.google.com/${expectedProjectId}`
+            });
+            const tokenEmail = (payload.email || '').toLowerCase().trim();
+            if (tokenEmail && tokenEmail === normalizedEmail && payload.email_verified === true && payload.sub) {
+              isVerified = true;
+              verifiedEmail = tokenEmail;
+              break;
+            }
           }
         }
       } catch (jwtErr) {
-        console.warn('[Security Alert] JWT decode error:', jwtErr.message);
+        console.warn('[Security Alert] Firebase JWT verification failed:', jwtErr.message);
       }
     }
 

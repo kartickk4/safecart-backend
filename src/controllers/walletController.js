@@ -94,19 +94,22 @@ const verifyPayment = async (req, res) => {
     }
     const effectivePaymentId = paymentId.trim();
 
-    // Fee calculation for transaction ledger & receipt
+    // Server-side fee calculation (ignore client-supplied fee/totalPaid to prevent surcharge bypass)
     const normalizedMode = (paymentMode || '').toLowerCase();
     const isCardOrNetbanking = normalizedMode === 'card' || normalizedMode === 'netbanking' || normalizedMode === 'debit';
-    const calculatedFee = fee !== undefined ? parseFloat(fee) : (isCardOrNetbanking ? parseFloat((numAmount * 0.019).toFixed(2)) : 0);
-    const calculatedTotal = totalPaid !== undefined ? parseFloat(totalPaid) : parseFloat((numAmount + calculatedFee).toFixed(2));
+    const calculatedFee = isCardOrNetbanking ? parseFloat((numAmount * 0.019).toFixed(2)) : 0;
+    const calculatedTotal = parseFloat((numAmount + calculatedFee).toFixed(2));
 
-    // 1. Idempotency Check: prevent duplicate crediting of same paymentId
+    // 1. Idempotency Check: scope to current user & prevent duplicate crediting of same paymentId
     const existingTx = await WalletTransaction.findOne({
       gatewayPaymentId: effectivePaymentId,
       status: 'success'
     });
 
     if (existingTx) {
+      if (existingTx.userId && existingTx.userId.toString() !== req.user._id.toString()) {
+        return res.status(409).json({ error: 'Payment reference already claimed.' });
+      }
       const user = await User.findById(req.user._id).select('walletBalance fullName email');
       return res.json({
         success: true,
@@ -119,59 +122,79 @@ const verifyPayment = async (req, res) => {
 
     // 2. Gateway Verification: Never trust client-side claims alone (PhonePe Gateway)
     const verification = await phonepeService.verifyPaymentWithGateway({
-        orderId: orderId || effectivePaymentId,
-        paymentId: effectivePaymentId,
-        expectedAmount: calculatedTotal || numAmount,
-        expectedCurrency: 'INR'
-      });
+      orderId: orderId || effectivePaymentId,
+      paymentId: effectivePaymentId,
+      expectedAmount: calculatedTotal || numAmount,
+      expectedCurrency: 'INR'
+    });
 
-      if (!verification.verified) {
-        console.warn(`[Wallet Recharge Security] Payment verification failed for user ${req.user._id}: ${verification.error}`);
-        return res.status(400).json({
-          error: verification.error || 'Payment verification failed with PhonePe gateway. Wallet was not credited.'
+    if (!verification.verified) {
+      console.warn(`[Wallet Recharge Security] Payment verification failed for user ${req.user._id}: ${verification.error}`);
+      return res.status(400).json({
+        error: verification.error || 'Payment verification failed with PhonePe gateway. Wallet was not credited.'
+      });
+    }
+
+    // 3. Create unique pending WalletTransaction BEFORE crediting wallet to defeat TOCTOU concurrent double-credits
+    let transaction;
+    try {
+      transaction = await WalletTransaction.create({
+        userId: req.user._id,
+        sellerId: req.user._id,
+        walletType: 'seller',
+        type: 'credit',
+        amount: numAmount,
+        source: 'recharge',
+        description: isCardOrNetbanking
+          ? `Wallet top-up of ₹${numAmount.toFixed(2)} via ${paymentMode.toUpperCase()} (₹${calculatedFee.toFixed(2)} gateway fee applied)`
+          : `Wallet top-up of ₹${numAmount.toFixed(2)} via UPI Instant (Zero Fee)`,
+        paymentGateway: gateway,
+        gatewayOrderId: orderId || `ORD_${Date.now()}`,
+        gatewayPaymentId: effectivePaymentId,
+        gatewaySignature: signature || '',
+        balanceBefore: 0,
+        balanceAfter: 0,
+        status: 'pending',
+        metadata: {
+          paymentMode,
+          rechargeAmount: numAmount,
+          gatewayFee: calculatedFee,
+          totalPaid: calculatedTotal,
+          feeRate: isCardOrNetbanking ? '1.9%' : '0%',
+          timestamp: new Date().toISOString()
+        }
+      });
+    } catch (dupErr) {
+      if (dupErr && dupErr.code === 11000) {
+        const user = await User.findById(req.user._id).select('walletBalance');
+        return res.json({
+          success: true,
+          alreadyProcessed: true,
+          walletBalance: user ? user.walletBalance : 0,
+          message: 'Payment already verified and credited.'
         });
       }
+      throw dupErr;
+    }
 
-    // 3. Atomic credit to User wallet with returnOriginal/new: false to eliminate TOCTOU race conditions
+    // 4. Atomic credit to User wallet
     const userBefore = await User.findOneAndUpdate(
       { _id: req.user._id },
       { $inc: { walletBalance: numAmount } },
       { new: false }
     );
     if (!userBefore) {
+      await WalletTransaction.deleteOne({ _id: transaction._id });
       return res.status(404).json({ error: 'User not found.' });
     }
     const balanceBefore = parseFloat((Number(userBefore.walletBalance) || 0).toFixed(2));
     const balanceAfter = parseFloat((balanceBefore + numAmount).toFixed(2));
     const user = { ...userBefore.toObject(), walletBalance: balanceAfter };
 
-    // 3. Record in WalletTransaction ledger
-    const transaction = await WalletTransaction.create({
-      userId: user._id,
-      sellerId: user._id,
-      walletType: 'seller',
-      type: 'credit',
-      amount: numAmount,
-      source: 'recharge',
-      description: isCardOrNetbanking
-        ? `Wallet top-up of ₹${numAmount.toFixed(2)} via ${paymentMode.toUpperCase()} (₹${calculatedFee.toFixed(2)} gateway fee applied)`
-        : `Wallet top-up of ₹${numAmount.toFixed(2)} via UPI Instant (Zero Fee)`,
-      paymentGateway: gateway,
-      gatewayOrderId: orderId || `ORD_${Date.now()}`,
-      gatewayPaymentId: effectivePaymentId,
-      gatewaySignature: signature || '',
-      balanceBefore,
-      balanceAfter,
-      status: 'success',
-      metadata: {
-        paymentMode,
-        rechargeAmount: numAmount,
-        gatewayFee: calculatedFee,
-        totalPaid: calculatedTotal,
-        feeRate: isCardOrNetbanking ? '1.9%' : '0%',
-        timestamp: new Date().toISOString()
-      }
-    });
+    transaction.balanceBefore = balanceBefore;
+    transaction.balanceAfter = balanceAfter;
+    transaction.status = 'success';
+    await transaction.save();
 
     console.log(`[Wallet] Seller ${user._id} recharged ₹${numAmount} (Total paid: ₹${calculatedTotal}). Balance: ₹${balanceBefore} -> ₹${balanceAfter}`);
 
@@ -719,8 +742,9 @@ const withdrawWallet = async (req, res) => {
 const handleWebhook = async (req, res) => {
   try {
     const xVerify = req.headers['x-verify'];
-    if (xVerify && !phonepeService.verifyPhonePeWebhookSignature(req.body, xVerify)) {
-      console.warn('[Wallet Webhook Security] Invalid signature rejected');
+    const base64Response = req.body?.response;
+    if (!xVerify || !base64Response || !phonepeService.verifyPhonePeWebhookSignature(base64Response, xVerify)) {
+      console.warn('[Wallet Webhook Security] Missing or invalid signature rejected');
       return res.status(401).json({ error: 'Invalid webhook signature' });
     }
     const event = req.body;
