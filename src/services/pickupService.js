@@ -194,7 +194,7 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
     shipment.autoCarrierSelected = true;
     shipment.pickupScheduledAt = new Date();
     shipment.pickupToken = pickupToken;
-    shipment.pickupSlot = pickupSlot;
+    shipment.pickupSlot = '';
     shipment.pickupStatus = 'Ready to Ship';
     shipment.pickupCarrier = assignedCarrierName;
     shipment.pickupCarrierSlug = assignedCarrierSlug;
@@ -338,6 +338,7 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
     }
 
     shipment.pickupStatus = isPickupConfirmed ? 'Scheduled' : 'Ready to Ship';
+    shipment.pickupSlot = isPickupConfirmed ? pickupSlot : '';
 
     if (typeof shipment.save === 'function') {
       await shipment.save();
@@ -362,7 +363,7 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
       const milestoneStatus = isPickupConfirmed ? 'Pickup Scheduled' : 'Manifest Ready to Ship (Pickup Pending)';
       const milestoneDetail = isPickupConfirmed
         ? `Confirmed ${assignedCarrierName} pickup for slot: ${pickupSlot}. ${comparisonText} Courier Reference: ${pickupToken}. Pickup Executive: ${executive.name} (${executive.phone}).`
-        : `Manifest generated on ${assignedCarrierName} network (AWB: ${shipment.awbCode || pickupToken}). Pickup dispatch slot: ${pickupSlot}. ${comparisonText} Executive: ${executive.name} (${executive.phone}).`;
+        : `Manifest generated on ${assignedCarrierName} network (AWB: ${shipment.awbCode || pickupToken}). Pickup not yet scheduled by courier partner. ${comparisonText}`;
 
       journey.milestones.push({
         status: milestoneStatus,
@@ -382,18 +383,20 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
         sender?._id || shipment.senderId,
         'local_shipping',
         `Courier ${isPickupConfirmed ? 'Pickup Scheduled' : 'Manifest Generated'}: ${shipment.shipmentId}`,
-        `SecureKaro Hybrid Logistics Engine compared ${comparison.length} popular courier partners and manifested with ${assignedCarrierName} (rate: ₹${assignedRate}). Pickup slot: ${pickupSlot}. Courier Ref: ${pickupToken}. Executive: ${executive.name} (${executive.phone}).`,
+        isPickupConfirmed
+          ? `Manifested with ${assignedCarrierName} (rate: ₹${assignedRate}). Confirmed pickup slot: ${pickupSlot}. Courier Ref: ${pickupToken}.`
+          : `Manifested with ${assignedCarrierName} (rate: ₹${assignedRate}). AWB generated (${shipment.awbCode || pickupToken}); awaiting courier pickup confirmation.`,
         'shipping'
       );
     }
 
     // SECURITY: Log without pickup token (sensitive credential)
-    console.log(`[PICKUP SERVICE] Successfully auto-scheduled ${assignedCarrierName} pickup for ${shipment.shipmentId}. Slot: ${pickupSlot}, Rate: ₹${assignedRate}`);
+    console.log(`[PICKUP SERVICE] ${isPickupConfirmed ? 'Scheduled' : 'Manifested'} ${assignedCarrierName} for ${shipment.shipmentId}. Confirmed: ${isPickupConfirmed}, Rate: ₹${assignedRate}`);
 
     return {
       success: true,
       pickupToken,
-      pickupSlot,
+      pickupSlot: isPickupConfirmed ? pickupSlot : '',
       carrier: assignedCarrierName,
       carrierSlug: assignedCarrierSlug,
       rate: assignedRate,
