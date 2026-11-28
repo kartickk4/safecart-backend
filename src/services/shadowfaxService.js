@@ -255,51 +255,54 @@ const createShadowfaxDirectOrder = async (shipment, senderUser) => {
   const totalAmount = parseFloat(shipment.amount || shipment.codAmount || shipment.escrowAmount || shipment.totalAmount || 1000);
   const cleanOrderId = shipment.shipmentId || `SFX_${Date.now()}`;
 
+  const pickupState = (senderUser?.pickupAddress?.state || senderUser?.state || 'West Bengal').trim();
+  const deliveryState = (shipment.receiverState || 'West Bengal').trim();
+  const weightGrams = Math.max(100, Math.round((parseFloat(shipment.parcelWeight) || 0.5) * 1000));
+  const l = parseFloat(shipment.parcelLength) || 15;
+  const w = parseFloat(shipment.parcelWidth) || 10;
+  const h = parseFloat(shipment.parcelHeight) || 5;
+  const volGrams = Math.max(weightGrams, Math.round(((l * w * h) / 5000) * 1000));
+
   const payload = {
+    order_details: {
+      client_order_id: cleanOrderId,
+      customer_order_id: cleanOrderId,
+      actual_weight: weightGrams,
+      volumetric_weight: volGrams,
+      product_value: totalAmount,
+      payment_mode: isCod ? 'COD' : 'Prepaid',
+      cod_amount: isCod ? String(totalAmount) : '0',
+      total_amount: totalAmount,
+      order_service: 'regular'
+    },
     customer_details: {
       name: deliveryName,
       contact: deliveryPhone,
-      address: deliveryAddress,
+      address_line_1: deliveryAddress,
       city: deliveryCity,
+      state: deliveryState,
       pincode: parseInt(deliveryPincode, 10)
     },
-    fwd_order: {
-      order_details: {
-        client_order_id: cleanOrderId,
-        product_value: totalAmount,
-        payment_mode: isCod ? 'cod' : 'prepaid',
-        cod_amount: isCod ? totalAmount : 0,
-        order_service: 'Regular'
-      },
-      pickup_details: {
-        pickup_type: 'seller',
-        name: pickupName,
-        contact: pickupPhone,
-        address: pickupAddress,
-        city: pickupCity,
-        pincode: parseInt(pickupPincode, 10)
-      },
-      return_details: {
-        return_type: 'seller',
-        name: pickupName,
-        contact: pickupPhone,
-        address: pickupAddress,
-        city: pickupCity,
-        pincode: parseInt(pickupPincode, 10)
-      },
-      sku_details: [
-        {
-          sku_name: shipment.description || shipment.itemDescription || 'Merchandise Goods',
-          sku_id: `SKU_${cleanOrderId}`,
-          price: totalAmount,
-          category: 'Retail'
-        }
-      ]
+    pickup_details: {
+      name: pickupName,
+      contact: pickupPhone,
+      address_line_1: pickupAddress,
+      city: pickupCity,
+      state: pickupState,
+      pincode: parseInt(pickupPincode, 10)
+    },
+    rts_details: {
+      name: pickupName,
+      contact: pickupPhone,
+      address_line_1: pickupAddress,
+      city: pickupCity,
+      state: pickupState,
+      pincode: parseInt(pickupPincode, 10)
     }
   };
 
   try {
-    const res = await axios.post(`${BASE_URL}/api/v4/clients/orders/`, payload, {
+    const res = await axios.post(`${BASE_URL}/api/v3/clients/orders/`, payload, {
       headers: {
         'Authorization': `Token ${SHADOWFAX_API_KEY}`,
         'Content-Type': 'application/json'
@@ -307,18 +310,19 @@ const createShadowfaxDirectOrder = async (shipment, senderUser) => {
       timeout: 15000
     });
 
+    const isFailure = String(res.data?.message || '').toLowerCase() === 'failure' || res.data?.errors;
     const awb = res.data?.data?.awb_number || res.data?.awb_number || res.data?.data?.tracking_number || '';
-    if (!awb) {
-      const apiMsg = res.data?.message || JSON.stringify(res.data || {});
-      console.warn(`[Shadowfax Direct Order] No AWB returned for ${cleanOrderId}:`, apiMsg);
+    if (isFailure || !awb) {
+      const apiMsg = res.data?.errors ? JSON.stringify(res.data.errors) : (res.data?.message || JSON.stringify(res.data || {}));
+      console.warn(`[Shadowfax Direct Order v3] Rejected for ${cleanOrderId}:`, apiMsg);
       return {
         success: false,
-        error: `Shadowfax API did not return an AWB: ${apiMsg}`,
+        error: `Shadowfax v3 API rejected order: ${apiMsg}`,
         data: res.data
       };
     }
 
-    console.log(`✅ [Shadowfax Direct Order]: Successfully placed order for ${cleanOrderId}, AWB: ${awb}`);
+    console.log(`✅ [Shadowfax Direct Order v3]: Successfully placed order for ${cleanOrderId}, AWB: ${awb}`);
 
     return {
       success: true,
@@ -327,7 +331,7 @@ const createShadowfaxDirectOrder = async (shipment, senderUser) => {
       courierName: 'Shadowfax Technologies (Direct)',
       bookingRef: cleanOrderId,
       status: 'BOOKED',
-      labelUrl: `https://dale.shadowfax.in/api/v4/clients/orders/${awb}/shipping_label/`,
+      labelUrl: `https://dale.shadowfax.in/api/v3/clients/orders/${awb}/shipping_label/`,
       data: res.data
     };
 
