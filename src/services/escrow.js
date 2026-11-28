@@ -432,36 +432,82 @@ const cancelEscrow = async (shipmentId, userId, reason = 'Cancelled by user') =>
     throw new Error('Cannot cancel shipment once package has been physically picked up by the carrier. Please file a dispute claim instead.');
   }
 
-  // ── Refund Freight & Upfront COD Charges to Seller Wallet if Deducted ──
+  // ── Refund Exact Debited Shipment Charges to Seller Wallet ──
+  let refundedAmount = 0;
+  let walletBalanceRemaining;
   try {
-    let refundToSeller = 0;
-    if (shipment.codFeePaid && shipment.codFeePaymentMethod === 'wallet_adjustment' && Number(shipment.codUpfrontFee) > 0) {
-      refundToSeller += Number(shipment.codUpfrontFee);
-      shipment.codFeePaid = false;
-    }
-    if (shipment.courierChargeStatus === 'Deducted' && Number(shipment.courierChargeDeducted) > 0) {
-      refundToSeller += Number(shipment.courierChargeDeducted);
-      shipment.courierChargeStatus = 'Refunded';
-    }
+    // 1. Idempotency guard: check if this shipment was already refunded in the wallet ledger
+    const existingRefund = await WalletTransaction.findOne({
+      type: 'credit',
+      source: 'cancelled_shipment_freight_refund',
+      status: 'success',
+      'metadata.shipmentId': shipment.shipmentId
+    }).lean();
 
-    if (refundToSeller > 0 && shipment.senderId) {
-      const sender = await User.findById(shipment.senderId);
-      if (sender) {
-        const balBefore = Number(sender.walletBalance) || 0;
-        sender.walletBalance = parseFloat((balBefore + refundToSeller).toFixed(2));
-        await sender.save();
+    if (!existingRefund && shipment.senderId) {
+      // 2. Query exact wallet debit entries for this shipmentId from WalletTransaction ledger
+      const debitTxs = await WalletTransaction.find({
+        userId: shipment.senderId,
+        type: 'debit',
+        status: 'success',
+        source: { $in: ['cod_fee_deduction', 'shipping_fee_deduction', 'reverse_shipping_fee_deduction', 'freight_deduction'] },
+        $or: [
+          { 'metadata.shipmentId': shipment.shipmentId },
+          { description: new RegExp(`\\b${shipment.shipmentId}\\b`, 'i') }
+        ]
+      }).lean();
 
-        await recordTransaction({
-          userId: sender._id,
-          type: 'credit',
-          amount: refundToSeller,
-          source: 'cancelled_shipment_freight_refund',
-          description: `Refund for cancelled shipment ${shipment.shipmentId} courier & upfront charges`,
-          paymentGateway: 'system',
-          balanceBefore: balBefore,
-          balanceAfter: sender.walletBalance,
-          metadata: { shipmentId: shipment.shipmentId, refundedAmount: refundToSeller }
-        });
+      const ledgerDebitedAmount = parseFloat(
+        debitTxs.reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0).toFixed(2)
+      );
+
+      // 3. Fallback calculation from Shipment fields if ledger entry is missing
+      let shipmentFieldAmount = 0;
+      if (shipment.codFeePaid && shipment.codFeePaymentMethod === 'wallet_adjustment' && Number(shipment.codUpfrontFee) > 0) {
+        shipmentFieldAmount += Number(shipment.codUpfrontFee);
+      }
+      if (shipment.courierChargeStatus === 'Deducted' && Number(shipment.courierChargeDeducted) > 0) {
+        shipmentFieldAmount += Number(shipment.courierChargeDeducted);
+      } else if (shipment.isReverse && shipment.returnShippingChargeStatus === 'Deducted' && Number(shipment.returnShippingChargeDeducted) > 0) {
+        shipmentFieldAmount += Number(shipment.returnShippingChargeDeducted);
+      }
+      shipmentFieldAmount = parseFloat(shipmentFieldAmount.toFixed(2));
+
+      // Exact debited amount from wallet ledger takes priority
+      const refundToSeller = ledgerDebitedAmount > 0 ? ledgerDebitedAmount : shipmentFieldAmount;
+
+      if (shipment.codFeePaid && shipment.codFeePaymentMethod === 'wallet_adjustment') {
+        shipment.codFeePaid = false;
+      }
+      if (shipment.courierChargeStatus === 'Deducted') {
+        shipment.courierChargeStatus = 'Refunded';
+      }
+      if (shipment.returnShippingChargeStatus === 'Deducted') {
+        shipment.returnShippingChargeStatus = 'Refunded';
+      }
+
+      if (refundToSeller > 0) {
+        const sender = await User.findById(shipment.senderId);
+        if (sender) {
+          const balBefore = Number(sender.walletBalance) || 0;
+          sender.walletBalance = parseFloat((balBefore + refundToSeller).toFixed(2));
+          await sender.save();
+
+          refundedAmount = refundToSeller;
+          walletBalanceRemaining = sender.walletBalance;
+
+          await recordTransaction({
+            userId: sender._id,
+            type: 'credit',
+            amount: refundToSeller,
+            source: 'cancelled_shipment_freight_refund',
+            description: `Refund for cancelled shipment ${shipment.shipmentId} courier & upfront charges`,
+            paymentGateway: 'system',
+            balanceBefore: balBefore,
+            balanceAfter: sender.walletBalance,
+            metadata: { shipmentId: shipment.shipmentId, refundedAmount: refundToSeller }
+          });
+        }
       }
     }
   } catch (refundErr) {
@@ -534,7 +580,11 @@ const cancelEscrow = async (shipmentId, userId, reason = 'Cancelled by user') =>
     })();
   });
 
-  return shipment;
+  return {
+    ...shipmentSnapshot,
+    refundedAmount,
+    ...(walletBalanceRemaining !== undefined ? { walletBalanceRemaining } : {})
+  };
 };
 
 /**
