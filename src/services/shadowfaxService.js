@@ -242,17 +242,17 @@ const createShadowfaxDirectOrder = async (shipment, senderUser) => {
   const pickupAddress = (shipment.senderAddress || senderUser?.pickupAddress?.street || senderUser?.address || 'Seller Doorstep').trim();
   const pickupName = (shipment.senderName || senderUser?.businessName || senderUser?.fullName || 'SecureKaro Seller').trim();
   const pickupPhone = String(shipment.senderPhone || senderUser?.phone || '9999999999').replace(/\D/g, '').slice(-10);
-  const pickupCity = shipment.senderCity || senderUser?.pickupAddress?.city || senderUser?.city || 'City';
+  const pickupCity = (shipment.senderCity || senderUser?.pickupAddress?.city || senderUser?.city || 'Kolkata').trim();
 
   // 2. Buyer Delivery Details
   const deliveryPincode = String(shipment.receiverPincode || '110001').replace(/\D/g, '').slice(0, 6);
   const deliveryAddress = (shipment.receiverAddress || 'Buyer Address').trim();
   const deliveryName = (shipment.receiverName || 'Buyer').trim();
   const deliveryPhone = String(shipment.receiverPhone || '9876543210').replace(/\D/g, '').slice(-10);
-  const deliveryCity = shipment.receiverCity || 'City';
+  const deliveryCity = (shipment.receiverCity || shipment.city || 'Kolkata').trim();
 
-  const isCod = Boolean(shipment.paymentMethod === 'cod' || shipment.isCod);
-  const totalAmount = parseFloat(shipment.escrowAmount || shipment.totalAmount || shipment.itemPrice || 1000);
+  const isCod = Boolean(shipment.paymentMode === 'cod' || shipment.paymentMethod === 'cod' || shipment.isCod || shipment.isPrepaid === false);
+  const totalAmount = parseFloat(shipment.amount || shipment.codAmount || shipment.escrowAmount || shipment.totalAmount || 1000);
   const cleanOrderId = shipment.shipmentId || `SFX_${Date.now()}`;
 
   const payload = {
@@ -289,7 +289,7 @@ const createShadowfaxDirectOrder = async (shipment, senderUser) => {
       },
       sku_details: [
         {
-          sku_name: shipment.itemDescription || 'Merchandise Goods',
+          sku_name: shipment.description || shipment.itemDescription || 'Merchandise Goods',
           sku_id: `SKU_${cleanOrderId}`,
           price: totalAmount,
           category: 'Retail'
@@ -307,7 +307,17 @@ const createShadowfaxDirectOrder = async (shipment, senderUser) => {
       timeout: 15000
     });
 
-    const awb = res.data?.data?.awb_number || res.data?.awb_number || `SFX${Date.now()}`;
+    const awb = res.data?.data?.awb_number || res.data?.awb_number || res.data?.data?.tracking_number || '';
+    if (!awb) {
+      const apiMsg = res.data?.message || JSON.stringify(res.data || {});
+      console.warn(`[Shadowfax Direct Order] No AWB returned for ${cleanOrderId}:`, apiMsg);
+      return {
+        success: false,
+        error: `Shadowfax API did not return an AWB: ${apiMsg}`,
+        data: res.data
+      };
+    }
+
     console.log(`✅ [Shadowfax Direct Order]: Successfully placed order for ${cleanOrderId}, AWB: ${awb}`);
 
     return {
@@ -322,17 +332,11 @@ const createShadowfaxDirectOrder = async (shipment, senderUser) => {
     };
 
   } catch (err) {
-    console.warn('[Shadowfax Order Creation Notice]:', err.response?.data || err.message);
-    // Graceful fallback to verified tracking simulation if sandbox client order mode
-    const simAwb = `SFX${Math.floor(1000000000 + Math.random() * 9000000000)}`;
+    const errDetail = err.response?.data?.message || err.response?.data?.error || (err.response?.data ? JSON.stringify(err.response.data) : err.message);
+    console.warn('[Shadowfax Order Creation Error]:', errDetail);
     return {
-      success: true,
-      awbCode: simAwb,
-      carrierSlug: 'shadowfax',
-      courierName: 'Shadowfax Technologies (Direct)',
-      bookingRef: cleanOrderId,
-      status: 'BOOKED',
-      isSimulated: true
+      success: false,
+      error: `Shadowfax API Error: ${errDetail}`
     };
   }
 };

@@ -274,7 +274,7 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
       try {
         const { createShadowfaxDirectOrder } = require('./shadowfaxService');
         sfRes = await createShadowfaxDirectOrder(shipment, sender);
-        if (sfRes?.awbCode) {
+        if (sfRes?.success && sfRes?.awbCode) {
           shipment.awbCode = sfRes.awbCode;
           shipment.shadowfaxAwb = sfRes.awbCode;
           pickupToken = `SFX-${sfRes.awbCode}`;
@@ -284,6 +284,9 @@ const autoScheduleCourierPickup = async (shipment, sender, preferredCarrierSlug)
             shipment.shippingLabelUrl = sfRes.labelUrl;
           }
           console.log(`✅ [Shadowfax Direct Dispatch] Successfully booked AWB: ${sfRes.awbCode} for ${shipment.shipmentId}`);
+        } else if (sfRes?.error) {
+          shipment.pickupError = sfRes.error;
+          console.warn(`⚠️ [Shadowfax Direct Dispatch] Failed for ${shipment.shipmentId}: ${sfRes.error}`);
         }
       } catch (sfErr) {
         console.warn('[SHADOWFAX DIRECT SYNC NOTICE]:', sfErr.message);
